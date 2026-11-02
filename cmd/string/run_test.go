@@ -35,10 +35,11 @@ func invoke(t *testing.T, list []string, baseURL, key string) result {
 			value, ok := env[name]
 			return value, ok
 		},
-		client: http.DefaultClient,
-		stdin:  strings.NewReader(""),
-		stdout: &stdout,
-		stderr: &stderr,
+		lookPath: func(string) (string, error) { return "/usr/local/bin/string", nil },
+		client:   http.DefaultClient,
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
 	})
 	return result{status, stdout.String(), stderr.String()}
 }
@@ -219,5 +220,45 @@ func TestMissingKeyAndAPIErrorsFailWithoutPrintingTheKey(t *testing.T) {
 	malformed := invoke(t, []string{"fetch", "https://example.com"}, baseURL, "private\nkey")
 	if malformed.status != 1 || !strings.Contains(malformed.errors, "STRING_API_KEY contains characters") || strings.Contains(malformed.errors, "private") {
 		t.Errorf("malformed %+v", malformed)
+	}
+}
+
+func TestInitInstallsTheSkillForDetectedAgentsOnly(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"HOME": home}
+	var stdout, stderr bytes.Buffer
+	rt := runtime{
+		env: func(name string) (string, bool) {
+			value, ok := env[name]
+			return value, ok
+		},
+		lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		stdout:   &stdout,
+		stderr:   &stderr,
+	}
+
+	if status := run([]string{"init"}, rt); status != 0 {
+		t.Fatalf("status %d: %s", status, stderr.String())
+	}
+	for _, dir := range []string{".agents/skills", ".claude/skills"} {
+		if _, err := os.Stat(filepath.Join(home, dir, "string-cli", "SKILL.md")); err != nil {
+			t.Errorf("%s: %v", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor")); !os.IsNotExist(err) {
+		t.Errorf("created a skills directory for an agent that is not installed: %v", err)
+	}
+	for _, hint := range []string{"npm install -g @usestring/cli", "Set STRING_API_KEY"} {
+		if !strings.Contains(stdout.String(), hint) {
+			t.Errorf("output lacks %q:\n%s", hint, stdout.String())
+		}
+	}
+
+	stderr.Reset()
+	if status := run([]string{"init", "--agent", "cursor,nope"}, rt); status != 1 || !strings.Contains(stderr.String(), "Unknown agent: nope") {
+		t.Errorf("status %d: %s", status, stderr.String())
 	}
 }

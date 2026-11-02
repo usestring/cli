@@ -5,10 +5,14 @@ package main
 import (
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
 )
+
+// version is stamped by release builds with -ldflags "-X main.version=...".
+var version = "dev"
 
 func main() {
 	// A closed pipe (string search ... | head) ends the command quietly with
@@ -19,10 +23,11 @@ func main() {
 	// minutes; without this a stalled request would hang forever.
 	transport.ResponseHeaderTimeout = 5 * time.Minute
 	os.Exit(run(os.Args[1:], runtime{
-		env:    os.LookupEnv,
-		client: &http.Client{Transport: transport},
-		stdin:  os.Stdin,
-		stdout: os.Stdout,
-		stderr: os.Stderr,
+		env:      os.LookupEnv,
+		lookPath: exec.LookPath,
+		client:   &http.Client{Transport: transport},
+		stdin:    os.Stdin,
+		stdout:   os.Stdout,
+		stderr:   os.Stderr,
 	}))
 }

@@ -66,3 +66,13 @@ string sitemap cancel JOB_ID
 ```
 
 `string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint. HTTP errors go to stderr and return a nonzero exit status.
+
+## Agent skills
+
+`skills/string-cli` is an [Agent Skills](https://agentskills.io) skill that teaches a coding agent the `string` commands. The native binary carries it, and `string init` installs it into `~/.agents/skills` (read by Codex and others) and into every agent it finds on the machine: Claude Code, Cursor, Gemini CLI, OpenCode, GitHub Copilot, Windsurf, Goose, Droid, Kiro CLI, Qwen Code, Grok Build, OpenClaw and Hermes Agent. Run it again after an upgrade to update the skill.
+
+```bash
+string init                            # the shared directory and every agent found
+string init --agent claude-code,codex  # only these
+npx skills add usestring/cli           # the same skill through the skills installer
+```
