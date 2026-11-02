@@ -1,0 +1,93 @@
+# Release builds for the native CLI. Pushing a v* tag runs this through
+# .github/workflows/release.yml; `goreleaser release --snapshot --clean`
+# builds everything locally without publishing.
+version: 2
+
+project_name: string
+
+builds:
+  - main: ./cmd/string
+    binary: string
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  # Version-free names let install.sh fetch releases/latest/download/<name>.
+  - name_template: "string_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [README.md, LICENSE]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native
+
+release:
+  github:
+    owner: usestring
+    name: cli
+
+# Each channel publishes only when its token is set, so a release can go out
+# before every channel's repository exists.
+homebrew_casks:
+  - name: string
+    binaries: [string]
+    homepage: https://usestring.ai
+    description: Search the web, fetch pages as Markdown and map sites from the terminal
+    license: MIT
+    repository:
+      owner: usestring
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    skip_upload: '{{ if not (index .Env "HOMEBREW_TAP_TOKEN") }}true{{ end }}'
+    hooks:
+      post:
+        # The binary is not notarized, so clear the quarantine flag macOS
+        # puts on downloads; otherwise Gatekeeper refuses to run it.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/string"]
+          end
+
+scoops:
+  - name: string
+    homepage: https://usestring.ai
+    description: Search the web, fetch pages as Markdown and map sites from the terminal
+    license: MIT
+    repository:
+      owner: usestring
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    skip_upload: '{{ if not (index .Env "SCOOP_BUCKET_TOKEN") }}true{{ end }}'
+
+winget:
+  - name: string
+    publisher: String
+    package_identifier: usestring.string
+    publisher_url: https://usestring.ai
+    homepage: https://usestring.ai
+    short_description: Search the web, fetch pages as Markdown and map sites from the terminal
+    license: MIT
+    license_url: https://github.com/usestring/cli/blob/main/LICENSE
+    repository:
+      owner: usestring
+      name: winget-pkgs
+      branch: "string-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+    skip_upload: '{{ if not (index .Env "WINGET_TOKEN") }}true{{ end }}'

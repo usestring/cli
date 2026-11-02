@@ -1,17 +1,26 @@
 # Releasing the CLI
 
-After the CLI change is merged, prepare a release from a clean checkout of `main`:
+A release is a signed `v*` tag on `main`. Pushing it runs `.github/workflows/release.yml`, which tests, builds the binaries with GoReleaser and publishes them to:
+
+- the GitHub release, with `checksums.txt` (what `install.sh` downloads);
+- `usestring/homebrew-tap` (`HOMEBREW_TAP_TOKEN`) and `usestring/scoop-bucket` (`SCOOP_BUCKET_TOKEN`);
+- a pull request from the `usestring/winget-pkgs` fork to `microsoft/winget-pkgs` (`WINGET_TOKEN`);
+- npm (`NPM_TOKEN`): one `@usestring/cli-<os>-<cpu>` package per platform, then `@usestring/cli`, which installs the one that fits.
+
+A channel whose token secret is unset is skipped, so the first releases can go out before every channel is set up. Each token needs contents write on its repository; the winget token also opens the pull request. The npm token needs publish access to `@usestring/cli` and its platform packages.
+
+Every release is public, so it needs explicit approval for that version before the tag is pushed. Check the build locally first; nothing here publishes:
 
 ```bash
-./scripts/release.sh prepare
+goreleaser release --snapshot --clean
+node npm/build.mjs dist npm-dist
 ```
 
-The script builds, typechecks, tests, packs, records the source commit and SHA-256 checksum, then installs the tarball in a clean temporary directory and runs `string --help`. It prints the release directory. Check its tarball, checksum, and package metadata before approval.
-
-Public npm publishing requires explicit approval for that exact artifact and an npm account with publish access to the `@usestring` scope. Once approved, publish the reviewed release directory:
+Then, from an up-to-date `main`:
 
 ```bash
-./scripts/release.sh publish release/0.1.0.EXAMPLE APPROVED_SHA256
+git tag -s v0.2.0 -m v0.2.0
+git push origin v0.2.0
 ```
 
-Replace `release/0.1.0.EXAMPLE` with the directory printed by `prepare`, and `APPROVED_SHA256` with the approved checksum that `prepare` printed. Take the checksum from the approval record, not from the release directory. That directory is ignored and mutable, so its own `SHA256SUMS` cannot vouch for the tarball. The publish command refuses a tarball whose digest differs from the approved one. It also checks the recorded source commit against the current `origin/main` commit. It does not rebuild or change the artifact. After publishing, verify the version with `npm view @usestring/cli version` and install it from npm in a clean directory.
+Afterwards, check the GitHub release, `brew install usestring/tap/string`, `npm view @usestring/cli version` and `npx -y @usestring/cli --version`.
