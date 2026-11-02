@@ -22,13 +22,13 @@ winget install usestring.string
 
 `install.sh` puts the binary in `~/.local/bin` (`STRING_INSTALL_DIR` changes it), checks it against the release checksums, then runs `string init` so your coding agents get the skill below. Pass `init` options after `sh -s --`, or `--no-init` to skip it. Release binaries are also attached to each [GitHub release](https://github.com/usestring/cli/releases).
 
-Create an API key in [String settings](https://portal.usestring.ai/settings) and set it in your shell:
+Sign in with `string login`. It prints a code and opens String in your browser. Once you approve and choose an API key, the CLI saves that key in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string whoami` shows which key commands use, and `string logout` deletes the saved one.
+
+You can also create an API key in [String settings](https://portal.usestring.ai/settings) and set it in your shell. `STRING_API_KEY` takes precedence over a saved key, and the CLI never writes it to a file:
 
 ```bash
 export STRING_API_KEY="your-api-key"
 ```
-
-The CLI reads the key from the environment and does not save it to a file.
 
 ### Build from source
 

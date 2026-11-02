@@ -15,9 +15,10 @@ stderr with exit status 1.
 ## Before the first call
 
 - `string --help` lists the commands. If `string` is missing, install it: `npm install -g @usestring/cli`.
-- The key comes from `STRING_API_KEY`. If a command prints `Set STRING_API_KEY`, ask the user for
-  a key from https://portal.usestring.ai/settings. Never put a key in a URL, a query, a header
-  value or a file you commit.
+- Commands use `STRING_API_KEY`, or the key `string login` saved; `string whoami` says which. If a
+  command prints `Set STRING_API_KEY`, ask the user to run `string login`, which opens their
+  browser, or to give you a key from https://portal.usestring.ai/settings. Never put a key in a
+  URL, a query, a header value or a file you commit.
 
 ## Pick the command
 
@@ -111,7 +112,7 @@ The error is `HTTP <status>: <body>` on stderr.
 | Status | What to do |
 | --- | --- |
 | `400` | The request is invalid; the body names the field. Fix it, don't retry as is. |
-| `401` | The key is missing or wrong. Ask the user for a valid key. |
+| `401` | The key is missing or wrong. Ask the user to run `string login` again or give you a valid key. |
 | `402` | The account balance is too low. Tell the user. |
 | `403` | The destination needs approval for this account. Tell the user what the body says. |
 | `429` | Rate limited. Wait and retry. |

@@ -134,8 +134,8 @@ func initCommand(list []string, rt runtime) error {
 	if _, err := rt.lookPath("string"); err != nil {
 		report.WriteString("\nAgents run the skill's commands as `string`, which is not on your PATH. Install it with:\n  npm install -g @usestring/cli\n")
 	}
-	if key, _ := rt.env("STRING_API_KEY"); key == "" {
-		report.WriteString("\nSet STRING_API_KEY to an API key from https://portal.usestring.ai/settings.\n")
+	if _, err := apiKey(rt.env); err != nil {
+		report.WriteString("\nRun string login to sign in, or set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.\n")
 	}
 	return write(rt.stdout, []byte(report.String()))
 }
