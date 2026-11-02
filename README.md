@@ -4,13 +4,23 @@ Use String Web Access from a terminal. The CLI supports fetch, search, direct HT
 
 ## Install
 
-Requires Node.js 22 or newer. Once `@usestring/cli` is published:
+Pick whichever fits. Each installs the same native binary, `string`.
 
 ```bash
-npm install -g @usestring/cli
+# macOS and Linux
+brew install usestring/tap/string
+curl -fsSL https://raw.githubusercontent.com/usestring/cli/main/install.sh | sh
+
+# Anywhere with Node.js
+npx -y @usestring/cli init      # or: npm install -g @usestring/cli
+
+# Windows
+scoop bucket add usestring https://github.com/usestring/scoop-bucket
+scoop install string
+winget install usestring.string
 ```
 
-To try the source package before release, run `bun run build` in this directory, then `npm install -g .`.
+`install.sh` puts the binary in `~/.local/bin` (`STRING_INSTALL_DIR` changes it), checks it against the release checksums, then runs `string init` so your coding agents get the skill below. Pass `init` options after `sh -s --`, or `--no-init` to skip it. Release binaries are also attached to each [GitHub release](https://github.com/usestring/cli/releases).
 
 Create an API key in [String settings](https://portal.usestring.ai/settings) and set it in your shell:
 
@@ -20,9 +30,7 @@ export STRING_API_KEY="your-api-key"
 
 The CLI reads the key from the environment and does not save it to a file.
 
-### Native binary
-
-`cmd/string` is the same CLI in Go, built as one static binary with no Node.js dependency. It takes the same commands, flags and environment variables, and gives the same output and exit codes. Go binaries are not published yet; build one from a checkout:
+### Build from source
 
 ```bash
 CGO_ENABLED=0 go build -trimpath -o string ./cmd/string
