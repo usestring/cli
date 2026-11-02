@@ -20,6 +20,15 @@ export STRING_API_KEY="your-api-key"
 
 The CLI reads the key from the environment and does not save it to a file.
 
+### Native binary
+
+`cmd/string` is the same CLI in Go, built as one static binary with no Node.js dependency. It takes the same commands, flags and environment variables, and gives the same output and exit codes. Go binaries are not published yet; build one from a checkout:
+
+```bash
+CGO_ENABLED=0 go build -trimpath -o string ./cmd/string
+go test ./...
+```
+
 ## Commands
 
 ```bash
