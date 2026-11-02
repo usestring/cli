@@ -19,11 +19,12 @@ import (
 )
 
 type runtime struct {
-	env    func(string) (string, bool)
-	client *http.Client
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	env      func(string) (string, bool)
+	lookPath func(string) (string, error)
+	client   *http.Client
+	stdin    io.Reader
+	stdout   io.Writer
+	stderr   io.Writer
 }
 
 const help = `String Web Access CLI
@@ -38,7 +39,10 @@ Usage:
   string sitemap results JOB_ID [--limit N] [--offset N]
   string sitemap list [--limit N] [--offset N]
   string sitemap cancel JOB_ID
+  string init [--agent NAME[,NAME...]]
+  string --version
 
+init installs the string-cli skill for the coding agents found on this machine.
 Set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 --input reads additional request fields from a JSON object in FILE, or from stdin with -.
@@ -565,6 +569,12 @@ func run(list []string, rt runtime) int {
 func execute(list []string, rt runtime) error {
 	if len(list) == 0 || slices.Contains([]string{"", "--help", "-h", "help"}, list[0]) {
 		return write(rt.stdout, []byte(help))
+	}
+	switch list[0] {
+	case "--version":
+		return write(rt.stdout, []byte("string "+version+"\n"))
+	case "init":
+		return initCommand(list[1:], rt)
 	}
 	op, err := operationFor(list[0], list[1:], rt.stdin)
 	if err != nil {
