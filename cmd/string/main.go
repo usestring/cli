@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	goruntime "runtime"
 	"syscall"
 	"time"
 )
@@ -29,5 +30,26 @@ func main() {
 		stdin:    os.Stdin,
 		stdout:   os.Stdout,
 		stderr:   os.Stderr,
+		openURL:  openBrowser,
+		sleep:    time.Sleep,
 	}))
+}
+
+// openBrowser shows link in the default browser. string login prints the link
+// too, so a machine without a browser only loses the convenience.
+func openBrowser(link string) error {
+	var command *exec.Cmd
+	switch goruntime.GOOS {
+	case "darwin":
+		command = exec.Command("open", link)
+	case "windows":
+		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", link)
+	default:
+		command = exec.Command("xdg-open", link)
+	}
+	if err := command.Start(); err != nil {
+		return err
+	}
+	go command.Wait()
+	return nil
 }
