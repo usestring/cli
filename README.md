@@ -18,9 +18,12 @@ npx -y @usestring/cli init      # or: npm install -g @usestring/cli
 scoop bucket add usestring https://github.com/usestring/scoop-bucket
 scoop install string
 winget install usestring.string
+
+# Docker, e.g. in CI
+docker run --rm -e STRING_API_KEY ghcr.io/usestring/cli search "your query"
 ```
 
-`install.sh` puts the binary in `~/.local/bin` (`STRING_INSTALL_DIR` changes it), checks it against the release checksums, then runs `string init` so your coding agents get the skill below. Pass `init` options after `sh -s --`, or `--no-init` to skip it. Release binaries are also attached to each [GitHub release](https://github.com/usestring/cli/releases).
+`install.sh` puts the binary in `~/.local/bin` (`STRING_INSTALL_DIR` changes it), checks it against the release checksums, then runs `string init` so your coding agents get the skill below. Pass `init` options after `sh -s --`, or `--no-init` to skip it. Each [GitHub release](https://github.com/usestring/cli/releases) also has the binaries and `.deb`, `.rpm` and `.apk` packages for Debian, Fedora and Alpine.
 
 Create an API key in [String settings](https://portal.usestring.ai/settings) and set it in your shell:
 

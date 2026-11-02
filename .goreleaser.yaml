@@ -37,6 +37,25 @@ release:
     owner: usestring
     name: cli
 
+nfpms:
+  - package_name: string
+    homepage: https://usestring.ai
+    description: Search the web, fetch pages as Markdown and map sites from the terminal
+    maintainer: String <support@usestring.ai>
+    vendor: String
+    license: MIT
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+
+dockers_v2:
+  - images: [ghcr.io/usestring/cli]
+    tags: ["{{ .Version }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.source: https://github.com/usestring/cli
+      org.opencontainers.image.description: String Web Access CLI
+      org.opencontainers.image.licenses: MIT
+
 # Each channel publishes only when its token is set, so a release can go out
 # before every channel's repository exists.
 homebrew_casks:

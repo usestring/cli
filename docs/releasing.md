@@ -2,7 +2,8 @@
 
 A release is a signed `v*` tag on `main`. Pushing it runs `.github/workflows/release.yml`, which tests, builds the binaries with GoReleaser and publishes them to:
 
-- the GitHub release, with `checksums.txt` (what `install.sh` downloads);
+- the GitHub release, with `checksums.txt` (what `install.sh` downloads) and `.deb`, `.rpm` and `.apk` packages;
+- `ghcr.io/usestring/cli`, tagged with the version and `latest`, for linux/amd64 and linux/arm64 (the workflow's `GITHUB_TOKEN`);
 - `usestring/homebrew-tap` (`HOMEBREW_TAP_TOKEN`) and `usestring/scoop-bucket` (`SCOOP_BUCKET_TOKEN`);
 - a pull request from the `usestring/winget-pkgs` fork to `microsoft/winget-pkgs` (`WINGET_TOKEN`);
 - npm (`NPM_TOKEN`): one `@usestring/cli-<os>-<cpu>` package per platform, then `@usestring/cli`, which installs the one that fits.
@@ -23,4 +24,4 @@ git tag -s v0.2.0 -m v0.2.0
 git push origin v0.2.0
 ```
 
-Afterwards, check the GitHub release, `brew install usestring/tap/string`, `npm view @usestring/cli version` and `npx -y @usestring/cli --version`.
+Afterwards, check the GitHub release, `docker run --rm ghcr.io/usestring/cli --version`, `brew install usestring/tap/string`, `npm view @usestring/cli version` and `npx -y @usestring/cli --version`.
