@@ -157,7 +157,7 @@ func httpFailure(response *http.Response, data []byte, keyless bool) *failure {
 	}
 	var body refusal
 	_ = json.Unmarshal(data, &body)
-	keylessRefusal := keyless && strings.HasPrefix(body.Error, "Keyless")
+	keylessRefusal := keyless && (strings.HasPrefix(body.Error, "Keyless") || strings.HasPrefix(body.Code, "keyless_"))
 	switch {
 	case keylessRefusal && status != http.StatusServiceUnavailable:
 		f.exit, f.code = exitAuth, "keyless_refused"
@@ -198,28 +198,44 @@ func httpFailure(response *http.Response, data []byte, keyless bool) *failure {
 	}
 	f.nextActions = body.NextActions
 	f.helpURL = body.HelpURL
-	f.nextStep = nextCommand(body.NextActions)
+	// The CLI's own hint wins on key refusals: an API next action of
+	// `string login` can't fix a bad STRING_API_KEY, which overrides any saved key.
 	switch {
-	case f.nextStep != "":
 	case keyless && (keylessRefusal || status == http.StatusUnauthorized):
 		f.nextStep, f.helpURL = needsKey, helpURL
 	case status == http.StatusUnauthorized:
 		f.nextStep = "check STRING_API_KEY, or run `string login` to save a new key"
-	case status == http.StatusPaymentRequired && body.TopUpURL != "":
-		f.nextStep = "add credit at " + body.TopUpURL
+	default:
+		f.nextStep = apiNextStep(body.NextActions)
+		if f.nextStep == "" && status == http.StatusPaymentRequired && body.TopUpURL != "" {
+			f.nextStep = "add credit at " + body.TopUpURL
+		}
 	}
 	return f
 }
 
-// nextCommand is the first command among the API's next_actions.
-func nextCommand(actions json.RawMessage) string {
+var billingSteps = map[string]string{
+	"top_up":                "add credit at ",
+	"choose_plan":           "choose a plan at ",
+	"update_payment_method": "update the payment method at ",
+}
+
+// apiNextStep is the first of the API's next_actions that reads as a step: a
+// command, or a billing page.
+func apiNextStep(actions json.RawMessage) string {
 	var list []struct {
+		Type    string `json:"type"`
 		Command string `json:"command"`
+		Action  string `json:"action"`
+		URL     string `json:"url"`
 	}
 	_ = json.Unmarshal(actions, &list)
 	for _, action := range list {
 		if action.Command != "" {
 			return action.Command
+		}
+		if prefix, ok := billingSteps[action.Action]; ok && action.Type == "billing" && action.URL != "" {
+			return prefix + action.URL
 		}
 	}
 	return ""

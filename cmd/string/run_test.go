@@ -205,11 +205,11 @@ func TestAPIBaseURLsWithEmptyQueryOrFragmentAreRejected(t *testing.T) {
 func TestAPIErrorsFailWithoutPrintingTheKey(t *testing.T) {
 	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		io.WriteString(w, `{"error":"bad key"}`)
+		io.WriteString(w, `{"error":"bad key","code":"invalid_api_key","next_actions":[{"type":"login","command":"string login"}]}`)
 	})
 
 	rejected := invoke(t, []string{"fetch", "https://example.com"}, baseURL, "private-key")
-	if rejected.status != 3 || !strings.Contains(rejected.errors, "HTTP 401") || strings.Contains(rejected.errors, "private-key") {
+	if rejected.status != 3 || !strings.Contains(rejected.errors, "HTTP 401") || !strings.Contains(rejected.errors, "Next: check STRING_API_KEY") || strings.Contains(rejected.errors, "private-key") {
 		t.Errorf("rejected %+v", rejected)
 	}
 
