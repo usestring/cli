@@ -4,47 +4,33 @@ Use String Web Access from a terminal. The CLI supports fetch, search, direct HT
 
 ## Install
 
-### Homebrew
-
-Install the native CLI from this repository's first-party tap:
+Pick whichever fits. Each installs the same native binary, `string`.
 
 ```bash
-brew tap usestring/cli https://github.com/usestring/cli.git
-brew install usestring/cli/string
+# Anywhere with Node.js: installs string, adds the skill to your coding agents and signs you in
+npx -y @usestring/cli init      # or: npm install -g @usestring/cli
+
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/usestring/cli/main/install.sh | sh
+brew tap usestring/cli https://github.com/usestring/cli && brew install usestring/cli/string
+
+# Docker, e.g. in CI
+docker run --rm -e STRING_API_KEY ghcr.io/usestring/cli search "your query"
 ```
 
-This builds the Go CLI without a Node.js runtime dependency. Go is needed only while building. This tap is maintained by String; it is separate from Homebrew's official `homebrew/core` repository.
+Homebrew builds the binary from the release's source archive, so Go is needed only while it builds. If an npm installation already provides `string`, remove it with `npm uninstall -g @usestring/cli` first; both provide the same command. Upgrade with `brew update && brew upgrade usestring/cli/string`.
 
-If an npm installation already provides `string`, remove it with `npm uninstall -g @usestring/cli` before installing the Homebrew formula. Both packages provide the same command.
+`install.sh` puts the binary in `~/.local/bin` (`STRING_INSTALL_DIR` changes it), checks it against the release checksums, then runs `string init` so your coding agents get the skill below. Pass `init` options after `sh -s --`, or `--no-init` to skip it. Each [GitHub release](https://github.com/usestring/cli/releases) also has the binaries for macOS, Linux and Windows, and `.deb`, `.rpm` and `.apk` packages for Debian, Fedora and Alpine.
 
-Upgrade with:
+`string init` signs you in when you run it from a terminal and no key is set. You can also sign in at any time with `string login`. It prints a code and opens String in your browser. Once you approve and choose an API key, the CLI saves that key in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string whoami` shows which key commands use, and `string logout` deletes the saved one.
 
-```bash
-brew update
-brew upgrade usestring/cli/string
-```
-
-### npm
-
-Requires Node.js 22 or newer:
-
-```bash
-npm install -g @usestring/cli
-```
-
-To try the source package before release, run `bun run build` in this directory, then `npm install -g .`.
-
-Create an API key in [String settings](https://portal.usestring.ai/settings) and set it in your shell:
+You can also create an API key in [String settings](https://portal.usestring.ai/settings) and set it in your shell. `STRING_API_KEY` takes precedence over a saved key, and the CLI never writes it to a file:
 
 ```bash
 export STRING_API_KEY="your-api-key"
 ```
 
-The CLI reads the key from the environment and does not save it to a file.
-
-### Native binary
-
-`cmd/string` is the same CLI in Go, built as one static binary with no Node.js dependency. It takes the same commands, flags and environment variables, and gives the same output and exit codes. Stable source releases and SHA-256 checksums are available from [GitHub releases](https://github.com/usestring/cli/releases). Standalone binary downloads are not published; build one from a checkout with Go 1.25 or newer:
+### Build from source
 
 ```bash
 CGO_ENABLED=0 go build -trimpath -o string ./cmd/string
@@ -88,6 +74,16 @@ string sitemap cancel JOB_ID
 ```
 
 `string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint. HTTP errors go to stderr and return a nonzero exit status.
+
+## Agent skills
+
+`skills/string-cli` is an [Agent Skills](https://agentskills.io) skill that teaches a coding agent the `string` commands. The native binary carries it, and `string init` installs it into `~/.agents/skills` (read by Codex and others) and into every agent it finds on the machine: Claude Code, Cursor, Gemini CLI, OpenCode, GitHub Copilot, Windsurf, Goose, Droid, Kiro CLI, Qwen Code, Grok Build, OpenClaw and Hermes Agent. Run it again after an upgrade to update the skill.
+
+```bash
+string init                            # the shared directory and every agent found
+string init --agent claude-code,codex  # only these
+npx skills add usestring/cli           # the same skill through the skills installer
+```
 
 ## Project and releases
 

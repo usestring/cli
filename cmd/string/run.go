@@ -14,16 +14,22 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf16"
 	"unicode/utf8"
 )
 
 type runtime struct {
-	env    func(string) (string, bool)
-	client *http.Client
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	env      func(string) (string, bool)
+	lookPath func(string) (string, error)
+	client   *http.Client
+	stdin    io.Reader
+	stdout   io.Writer
+	stderr   io.Writer
+	openURL  func(string) error
+	sleep    func(time.Duration)
+	// terminal is true when a person is at the keyboard, so init can sign in.
+	terminal bool
 }
 
 const help = `String Web Access CLI
@@ -38,8 +44,16 @@ Usage:
   string sitemap results JOB_ID [--limit N] [--offset N]
   string sitemap list [--limit N] [--offset N]
   string sitemap cancel JOB_ID
+  string init [--agent NAME[,NAME...]]
+  string login
+  string logout
+  string whoami
+  string --version
 
-Set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.
+init installs the string-cli skill for the coding agents found on this machine,
+then signs in when run from a terminal with no key set.
+login signs in through your browser and saves the API key you choose. Or set
+STRING_API_KEY to an API key from https://portal.usestring.ai/settings; it wins over a saved key.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 --input reads additional request fields from a JSON object in FILE, or from stdin with -.
 Responses are written to stdout as JSON by default. Fetch and request also support
@@ -566,6 +580,18 @@ func execute(list []string, rt runtime) error {
 	if len(list) == 0 || slices.Contains([]string{"", "--help", "-h", "help"}, list[0]) {
 		return write(rt.stdout, []byte(help))
 	}
+	switch list[0] {
+	case "--version":
+		return write(rt.stdout, []byte("string "+version+"\n"))
+	case "init":
+		return initCommand(list[1:], rt)
+	case "login":
+		return loginCommand(list[1:], rt)
+	case "logout":
+		return logoutCommand(list[1:], rt)
+	case "whoami":
+		return whoamiCommand(list[1:], rt)
+	}
 	op, err := operationFor(list[0], list[1:], rt.stdin)
 	if err != nil {
 		return err
@@ -573,12 +599,9 @@ func execute(list []string, rt runtime) error {
 	if op == nil {
 		return write(rt.stdout, []byte(help))
 	}
-	key, _ := rt.env("STRING_API_KEY")
-	if key == "" {
-		return errors.New("Set STRING_API_KEY to a String Web Access API key")
-	}
-	if strings.IndexFunc(key, func(r rune) bool { return r < 0x21 || r > 0x7e }) >= 0 {
-		return errors.New("STRING_API_KEY contains characters that are not valid in an API key")
+	key, err := apiKey(rt.env)
+	if err != nil {
+		return err
 	}
 	base, err := apiBaseURL(rt.env)
 	if err != nil {

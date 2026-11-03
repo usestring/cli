@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func api(t *testing.T, handler http.HandlerFunc) string {
@@ -35,10 +36,11 @@ func invoke(t *testing.T, list []string, baseURL, key string) result {
 			value, ok := env[name]
 			return value, ok
 		},
-		client: http.DefaultClient,
-		stdin:  strings.NewReader(""),
-		stdout: &stdout,
-		stderr: &stderr,
+		lookPath: func(string) (string, error) { return "/usr/local/bin/string", nil },
+		client:   http.DefaultClient,
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
 	})
 	return result{status, stdout.String(), stderr.String()}
 }
@@ -219,5 +221,156 @@ func TestMissingKeyAndAPIErrorsFailWithoutPrintingTheKey(t *testing.T) {
 	malformed := invoke(t, []string{"fetch", "https://example.com"}, baseURL, "private\nkey")
 	if malformed.status != 1 || !strings.Contains(malformed.errors, "STRING_API_KEY contains characters") || strings.Contains(malformed.errors, "private") {
 		t.Errorf("malformed %+v", malformed)
+	}
+}
+
+func TestInitInstallsTheSkillForDetectedAgentsOnly(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"HOME": home}
+	var stdout, stderr bytes.Buffer
+	rt := runtime{
+		env: func(name string) (string, bool) {
+			value, ok := env[name]
+			return value, ok
+		},
+		lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		stdout:   &stdout,
+		stderr:   &stderr,
+	}
+
+	if status := run([]string{"init"}, rt); status != 0 {
+		t.Fatalf("status %d: %s", status, stderr.String())
+	}
+	for _, dir := range []string{".agents/skills", ".claude/skills"} {
+		if _, err := os.Stat(filepath.Join(home, dir, "string-cli", "SKILL.md")); err != nil {
+			t.Errorf("%s: %v", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor")); !os.IsNotExist(err) {
+		t.Errorf("created a skills directory for an agent that is not installed: %v", err)
+	}
+	for _, hint := range []string{"npm install -g @usestring/cli", "Run string login"} {
+		if !strings.Contains(stdout.String(), hint) {
+			t.Errorf("output lacks %q:\n%s", hint, stdout.String())
+		}
+	}
+
+	stderr.Reset()
+	if status := run([]string{"init", "--agent", "cursor,nope"}, rt); status != 1 || !strings.Contains(stderr.String(), "Unknown agent: nope") {
+		t.Errorf("status %d: %s", status, stderr.String())
+	}
+}
+
+func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
+	var tokenAnswers []string
+	var fetchAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		switch r.URL.Path {
+		case "/oauth/device_authorization":
+			if r.Form.Get("client_id") != "test-client" || !strings.Contains(r.Form.Get("scope"), "web_access") {
+				t.Errorf("device authorization form %v", r.Form)
+			}
+			io.WriteString(w, `{"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri":"https://example.test/device","verification_uri_complete":"https://example.test/device?code=ABCD-EFGH","expires_in":600,"interval":5}`)
+		case "/oauth/token":
+			if r.Form.Get("device_code") != "device-1" {
+				t.Errorf("token form %v", r.Form)
+			}
+			answer := tokenAnswers[0]
+			tokenAnswers = tokenAnswers[1:]
+			if strings.Contains(answer, "error") {
+				w.WriteHeader(http.StatusBadRequest)
+			}
+			io.WriteString(w, answer)
+		case "/api/oauth/api-key":
+			if r.Header.Get("Authorization") != "Bearer access-1" {
+				w.WriteHeader(http.StatusUnauthorized)
+				io.WriteString(w, `{"error":"Invalid or expired access token"}`)
+				return
+			}
+			io.WriteString(w, `{"apiKey":"released-key"}`)
+		case "/v1/fetch":
+			fetchAuthorization = r.Header.Get("Authorization")
+			io.WriteString(w, `{"ok":true}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	defer func(a, p, c string) { authURL, portalURL, oauthClientID = a, p, c }(authURL, portalURL, oauthClientID)
+	authURL, portalURL, oauthClientID = server.URL, server.URL, "test-client"
+
+	home := t.TempDir()
+	env := map[string]string{"HOME": home, "STRING_API_BASE_URL": server.URL + "/v1"}
+	var stdout, stderr bytes.Buffer
+	var opened []string
+	var waits []time.Duration
+	rt := runtime{
+		env: func(name string) (string, bool) {
+			value, ok := env[name]
+			return value, ok
+		},
+		client:  http.DefaultClient,
+		stdout:  &stdout,
+		stderr:  &stderr,
+		openURL: func(link string) error { opened = append(opened, link); return nil },
+		sleep:   func(d time.Duration) { waits = append(waits, d) },
+	}
+
+	tokenAnswers = []string{`{"error":"authorization_pending"}`, `{"error":"slow_down"}`, `{"access_token":"access-1","token_type":"Bearer"}`}
+	if status := run([]string{"login"}, rt); status != 0 {
+		t.Fatalf("login status %d: %s", status, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ABCD-EFGH") || !reflect.DeepEqual(opened, []string{"https://example.test/device?code=ABCD-EFGH"}) {
+		t.Errorf("output %q, opened %v", stdout.String(), opened)
+	}
+	if want := []time.Duration{5 * time.Second, 5 * time.Second, 10 * time.Second}; !reflect.DeepEqual(waits, want) {
+		t.Errorf("waits %v, want %v", waits, want)
+	}
+	path := filepath.Join(home, ".config", "string", "credentials.json")
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("credentials file %v, %v", info, err)
+	}
+
+	if status := run([]string{"fetch", "https://example.com"}, rt); status != 0 || fetchAuthorization != "Bearer released-key" {
+		t.Errorf("fetch status %d, authorization %q: %s", status, fetchAuthorization, stderr.String())
+	}
+	stdout.Reset()
+	if status := run([]string{"whoami"}, rt); status != 0 || !strings.Contains(stdout.String(), path) {
+		t.Errorf("whoami status %d: %s", status, stdout.String())
+	}
+	if status := run([]string{"logout"}, rt); status != 0 {
+		t.Errorf("logout status %d: %s", status, stderr.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("credentials file still there: %v", err)
+	}
+	stderr.Reset()
+	if status := run([]string{"whoami"}, rt); status != 1 || !strings.Contains(stderr.String(), "Not logged in") {
+		t.Errorf("whoami after logout status %d: %s", status, stderr.String())
+	}
+
+	stderr.Reset()
+	tokenAnswers = []string{`{"error":"access_denied"}`}
+	if status := run([]string{"login"}, rt); status != 1 || !strings.Contains(stderr.String(), "Sign-in was denied") {
+		t.Errorf("denied login status %d: %s", status, stderr.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("a denied login saved a key: %v", err)
+	}
+
+	stdout.Reset()
+	rt.terminal = true
+	rt.lookPath = func(string) (string, error) { return "/usr/local/bin/string", nil }
+	tokenAnswers = []string{`{"access_token":"access-1","token_type":"Bearer"}`}
+	if status := run([]string{"init"}, rt); status != 0 || !strings.Contains(stdout.String(), "Logged in") {
+		t.Errorf("init from a terminal status %d: %s%s", status, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("init from a terminal saved no key: %v", err)
 	}
 }
