@@ -103,16 +103,16 @@ func targets(names string, home string, env func(string) (string, bool)) ([]agen
 func initCommand(list []string, rt runtime) error {
 	parsed, err := parseArgs(list, "agent")
 	if err != nil {
-		return err
+		return usage(err)
 	}
 	if parsed.help {
 		return write(rt.stdout, []byte(help))
 	}
 	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]]"); err != nil {
-		return err
+		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
-		return errors.New("--input does not apply to init")
+		return usage(errors.New("--input does not apply to init"))
 	}
 	home, err := homeDir(rt.env)
 	if err != nil {
@@ -121,7 +121,7 @@ func initCommand(list []string, rt runtime) error {
 	names, _ := parsed.value("agent")
 	chosen, err := targets(names, home, rt.env)
 	if err != nil {
-		return err
+		return usage(err)
 	}
 	var report strings.Builder
 	for _, a := range chosen {
@@ -134,7 +134,7 @@ func initCommand(list []string, rt runtime) error {
 	if _, err := rt.lookPath("string"); err != nil {
 		report.WriteString("\nAgents run the skill's commands as `string`, which is not on your PATH. Install it with:\n  npm install -g @usestring/cli\n")
 	}
-	if _, err := apiKey(rt.env); err == nil {
+	if key, err := apiKey(rt.env); err == nil && key != "" {
 		return write(rt.stdout, []byte(report.String()))
 	}
 	if rt.terminal && oauthClientID != "" {
@@ -144,7 +144,7 @@ func initCommand(list []string, rt runtime) error {
 		}
 		return signIn(rt)
 	}
-	report.WriteString("\nRun string login to sign in, or set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.\n")
+	report.WriteString("\nstring fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.\n")
 	return write(rt.stdout, []byte(report.String()))
 }
 

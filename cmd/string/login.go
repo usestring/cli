@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -86,7 +87,7 @@ func validKey(key string) bool {
 }
 
 // apiKey is STRING_API_KEY when it is set, and otherwise the key string login
-// saved.
+// saved. With neither it is empty, and fetch and search run keyless.
 func apiKey(env func(string) (string, bool)) (string, error) {
 	if key, _ := env("STRING_API_KEY"); key != "" {
 		if !validKey(key) {
@@ -107,7 +108,7 @@ func apiKey(env func(string) (string, bool)) (string, error) {
 			return saved.APIKey, nil
 		}
 	}
-	return "", errors.New("Set STRING_API_KEY to a String Web Access API key, or run string login")
+	return "", nil
 }
 
 // noOptions parses a command that takes nothing but --help and prints the help
@@ -115,16 +116,16 @@ func apiKey(env func(string) (string, bool)) (string, error) {
 func noOptions(list []string, command string, rt runtime) (done bool, err error) {
 	parsed, err := parseArgs(list)
 	if err != nil {
-		return true, err
+		return true, usage(err)
 	}
 	if parsed.help {
 		return true, write(rt.stdout, []byte(help))
 	}
 	if err := expectPositionals(parsed.positionals, 0, "string "+command); err != nil {
-		return true, err
+		return true, usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
-		return true, fmt.Errorf("--input does not apply to %s", command)
+		return true, usage(fmt.Errorf("--input does not apply to %s", command))
 	}
 	return false, nil
 }
@@ -204,15 +205,76 @@ func deviceToken(rt runtime, deviceCode string, interval, lifetime time.Duration
 }
 
 func loginCommand(list []string, rt runtime) error {
+	withToken := slices.Contains(list, "--with-token")
+	list = slices.DeleteFunc(slices.Clone(list), func(arg string) bool { return arg == "--with-token" })
 	if done, err := noOptions(list, "login", rt); done {
 		return err
+	}
+	if withToken {
+		return saveToken(rt)
 	}
 	return signIn(rt)
 }
 
+// saveToken saves a key read from stdin, so it never appears in argv or the
+// shell history, after checking it with one free API call.
+func saveToken(rt runtime) error {
+	if rt.terminal {
+		return usage(errors.New("Pipe the key on stdin, as in: string login --with-token < key.txt"))
+	}
+	data, err := io.ReadAll(io.LimitReader(rt.stdin, 4096))
+	if err != nil {
+		return err
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		return usage(errors.New("No key on stdin. Pipe one in, as in: string login --with-token < key.txt"))
+	}
+	if !validKey(key) {
+		return usage(errors.New("The key on stdin contains characters that are not valid in an API key"))
+	}
+	path, ok := credentialsPath(rt.env)
+	if !ok {
+		return errors.New("Cannot find your home directory; set HOME")
+	}
+	base, err := apiBaseURL(rt.env)
+	if err != nil {
+		return usage(err)
+	}
+	// Listing sitemap jobs needs a valid key and costs nothing.
+	request, err := http.NewRequest("GET", base+"/sitemap?limit=1", nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+key)
+	response, err := rt.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	var report strings.Builder
+	switch status := response.StatusCode; {
+	case status == http.StatusPaymentRequired:
+		report.WriteString("The key works, but its organization is out of credit.\n")
+	case status < 200 || status > 299:
+		f := httpFailure(response, body, false)
+		f.message = "The key was not saved. " + f.message
+		return f
+	}
+	if err := saveCredentials(path, credentials{APIKey: key}); err != nil {
+		return err
+	}
+	fmt.Fprintf(&report, "Saved the key in %s.\n", path)
+	if env, _ := rt.env("STRING_API_KEY"); env != "" {
+		report.WriteString("STRING_API_KEY is set, and commands keep using it instead.\n")
+	}
+	return write(rt.stdout, []byte(report.String()))
+}
+
 func signIn(rt runtime) error {
 	if oauthClientID == "" {
-		return errors.New("This build of string cannot sign in. Set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.")
+		return &failure{exit: exitAuth, code: "login_unavailable", message: "This build of string cannot sign in through the browser. Set STRING_API_KEY, or pipe a key to string login --with-token. Keys are at https://portal.usestring.ai/settings."}
 	}
 	path, ok := credentialsPath(rt.env)
 	if !ok {
@@ -317,10 +379,14 @@ func whoamiCommand(list []string, rt runtime) error {
 	if done, err := noOptions(list, "whoami", rt); done {
 		return err
 	}
+	path, ok := credentialsPath(rt.env)
 	if key, _ := rt.env("STRING_API_KEY"); key != "" {
+		if saved, err := loadCredentials(path); ok && err == nil && saved.APIKey != "" {
+			return write(rt.stdout, []byte(fmt.Sprintf("Using STRING_API_KEY from the environment. It wins over the key saved in %s.\n", path)))
+		}
 		return write(rt.stdout, []byte("Using STRING_API_KEY from the environment.\n"))
 	}
-	if path, ok := credentialsPath(rt.env); ok {
+	if ok {
 		saved, err := loadCredentials(path)
 		if err != nil {
 			return err
@@ -332,5 +398,11 @@ func whoamiCommand(list []string, rt runtime) error {
 			return write(rt.stdout, []byte(fmt.Sprintf("Using the key saved in %s.\n", path)))
 		}
 	}
-	return errors.New("Not logged in. Run string login, or set STRING_API_KEY.")
+	return &failure{
+		exit:     exitAuth,
+		code:     "not_logged_in",
+		message:  "Not logged in. string fetch and string search run keyless, within a daily allowance.",
+		nextStep: needsKey,
+		helpURL:  helpURL,
+	}
 }

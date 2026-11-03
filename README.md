@@ -2,6 +2,15 @@
 
 Use String Web Access from a terminal. The CLI supports fetch, search, direct HTTP requests, and sitemap jobs. JSON responses go to stdout, so they can be piped to other commands.
 
+**It works without a key.** `string fetch` and `string search` run keyless, within a daily allowance per IP address, so the first call needs no account:
+
+```bash
+npx -y @usestring/cli search "string web access"
+npx -y @usestring/cli fetch https://example.com --format markdown
+```
+
+For more, and for `request` and `sitemap`, sign in with `string login` or set `STRING_API_KEY`.
+
 ## Install
 
 Pick whichever fits. Each installs the same native binary, `string`.
@@ -14,21 +23,29 @@ npx -y @usestring/cli init      # or: npm install -g @usestring/cli
 curl -fsSL https://raw.githubusercontent.com/usestring/cli/main/install.sh | sh
 brew tap usestring/cli https://github.com/usestring/cli && brew install usestring/cli/string
 
-# Docker, e.g. in CI
-docker run --rm -e STRING_API_KEY ghcr.io/usestring/cli search "your query"
+# Docker, e.g. in CI (pass -e STRING_API_KEY to use a key)
+docker run --rm ghcr.io/usestring/cli search "your query"
 ```
 
 Homebrew builds the binary from the release's source archive, so Go is needed only while it builds. If an npm installation already provides `string`, remove it with `npm uninstall -g @usestring/cli` first; both provide the same command. Upgrade with `brew update && brew upgrade usestring/cli/string`.
 
 `install.sh` puts the binary in `~/.local/bin` (`STRING_INSTALL_DIR` changes it), checks it against the release checksums, then runs `string init` so your coding agents get the skill below. Pass `init` options after `sh -s --`, or `--no-init` to skip it. Each [GitHub release](https://github.com/usestring/cli/releases) also has the binaries for macOS, Linux and Windows, and `.deb`, `.rpm` and `.apk` packages for Debian, Fedora and Alpine.
 
-`string init` signs you in when you run it from a terminal and no key is set. You can also sign in at any time with `string login`. It prints a code and opens String in your browser. Once you approve and choose an API key, the CLI saves that key in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string whoami` shows which key commands use, and `string logout` deletes the saved one.
+## Keys
 
-You can also create an API key in [String settings](https://portal.usestring.ai/settings) and set it in your shell. `STRING_API_KEY` takes precedence over a saved key, and the CLI never writes it to a file:
+Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, or IPv6 /64, gets 50 requests and 100 credits per UTC day: a plain fetch costs 1 credit, and a fetch with `executeJS` or a search costs 5. Keyless takes only `--format` and `executeJS` on fetch and `--language` (plus `dateRange`, `sortBy`, `safeSearch`, `autocorrect` and `verbatim` through `--input`) on search. The CLI refuses anything else before sending it, and prints what is left of the allowance to stderr after each call.
 
-```bash
-export STRING_API_KEY="your-api-key"
-```
+A key lifts those limits and unlocks every option, `request` and `sitemap`. There are three ways to give the CLI one:
+
+- `string login` prints a code and opens String in your browser. Once you approve and choose an API key, the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when you run init from a terminal with no key set.
+- `string login --with-token` reads a key from [String settings](https://portal.usestring.ai/settings) on stdin, checks it with one free API call, and saves it in the same file. The key stays out of your shell history: `string login --with-token < key.txt`.
+- `STRING_API_KEY` in the environment. It wins over a saved key, and the CLI never writes it to a file:
+
+  ```bash
+  export STRING_API_KEY="your-api-key"
+  ```
+
+`string whoami` shows which key commands use, and `string logout` deletes the saved one.
 
 ### Build from source
 
@@ -73,7 +90,29 @@ string sitemap list
 string sitemap cancel JOB_ID
 ```
 
-`string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint. HTTP errors go to stderr and return a nonzero exit status.
+`string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint.
+
+## Errors and exit codes
+
+Errors go to stderr, followed by the `Retry-After`, keyless allowance and `x-request-id` headers when the API sends them, and the next step. Add `--json` to any command to get the error as one JSON object on stderr instead:
+
+```json
+{"error":{"status":429,"code":"keyless_refused","message":"…","retry_after_seconds":3600,"request_id":"…","next_step":"run `string login` or set STRING_API_KEY","help_url":"https://usestring.ai/auth.md"}}
+```
+
+When the API sends `code`, `retryable` or `next_actions`, they are passed through.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | OK |
+| 1 | Any other failure, such as a network error |
+| 2 | Bad input or usage |
+| 3 | Needs a key, or the key was refused (401, 403, or a keyless refusal) |
+| 4 | Out of credit (402) |
+| 5 | Rate limited (429) |
+| 6 | Upstream failure (5xx) |
+| 7 | Timeout |
+| 130 | Interrupted |
 
 ## Agent skills
 
