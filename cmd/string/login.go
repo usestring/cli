@@ -57,13 +57,18 @@ func loadCredentials(path string) (credentials, error) {
 	return saved, nil
 }
 
-// saveCredentials writes through a temporary file so the key is never in a
-// file that others can read, even briefly or when replacing an older copy.
 func saveCredentials(path string, saved credentials) error {
+	return writePrivate(path, saved)
+}
+
+// writePrivate writes JSON through a temporary file so a key or device code is
+// never in a file that others can read, even briefly or when replacing an
+// older copy.
+func writePrivate(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(saved, "", "  ")
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -189,29 +194,47 @@ func deviceToken(rt runtime, deviceCode string, interval, lifetime time.Duration
 			if status == http.StatusOK && answer.AccessToken != "" {
 				return answer.AccessToken, nil
 			}
-			return "", fmt.Errorf("Sign-in failed: HTTP %d", status)
+			return "", &failure{exit: exitAuth, code: "login_failed", message: fmt.Sprintf("Sign-in failed: HTTP %d", status)}
 		case "authorization_pending":
 		case "slow_down":
 			interval += 5 * time.Second
 		case "access_denied":
-			return "", errors.New("Sign-in was denied")
+			return "", &failure{exit: exitAuth, code: "login_denied", message: "Sign-in was denied"}
 		case "expired_token":
-			return "", errors.New("The code expired; run string login again")
+			return "", errLoginExpired
 		default:
-			return "", fmt.Errorf("Sign-in failed: %s", answer.Error)
+			return "", &failure{exit: exitAuth, code: "login_failed", message: "Sign-in failed: " + answer.Error}
 		}
 	}
-	return "", errors.New("The code expired; run string login again")
+	return "", errLoginExpired
 }
 
+var errLoginExpired = &failure{exit: exitAuth, code: "login_expired", message: "The code expired; run string login again"}
+
 func loginCommand(list []string, rt runtime) error {
-	withToken := slices.Contains(list, "--with-token")
-	list = slices.DeleteFunc(slices.Clone(list), func(arg string) bool { return arg == "--with-token" })
+	modes := []string{"--with-token", "--no-wait", "--poll"}
+	var chosen []string
+	list = slices.DeleteFunc(slices.Clone(list), func(arg string) bool {
+		if slices.Contains(modes, arg) {
+			chosen = append(chosen, arg)
+			return true
+		}
+		return false
+	})
 	if done, err := noOptions(list, "login", rt); done {
 		return err
 	}
-	if withToken {
+	if len(chosen) > 1 {
+		return usage(errors.New("Use only one of --with-token, --no-wait and --poll"))
+	}
+	switch {
+	case slices.Contains(chosen, "--with-token"):
 		return saveToken(rt)
+	case slices.Contains(chosen, "--poll"):
+		return finishPending(rt)
+	case slices.Contains(chosen, "--no-wait") || rt.json || !rt.terminal:
+		_, err := startSignIn(rt, false)
+		return err
 	}
 	return signIn(rt)
 }
@@ -272,13 +295,37 @@ func saveToken(rt runtime) error {
 	return write(rt.stdout, []byte(report.String()))
 }
 
+// pendingLogin is a device code waiting for approval. string login saves it so
+// string login --poll can finish a sign-in that an earlier command started.
+type pendingLogin struct {
+	DeviceCode string    `json:"deviceCode"`
+	Interval   int       `json:"interval"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+func pendingPath(env func(string) (string, bool)) (string, bool) {
+	path, ok := credentialsPath(env)
+	return filepath.Join(filepath.Dir(path), "pending.json"), ok
+}
+
+// signIn waits in the foreground for the person to approve.
 func signIn(rt runtime) error {
-	if oauthClientID == "" {
-		return &failure{exit: exitAuth, code: "login_unavailable", message: "This build of string cannot sign in through the browser. Set STRING_API_KEY, or pipe a key to string login --with-token. Keys are at https://portal.usestring.ai/settings."}
+	pending, err := startSignIn(rt, true)
+	if err != nil {
+		return err
 	}
-	path, ok := credentialsPath(rt.env)
+	return finishSignIn(rt, pending)
+}
+
+// startSignIn asks for a device code, saves it as pending and shows the person
+// where to approve it. wait says whether this command goes on to wait.
+func startSignIn(rt runtime, wait bool) (pendingLogin, error) {
+	if oauthClientID == "" {
+		return pendingLogin{}, &failure{exit: exitAuth, code: "login_unavailable", message: "This build of string cannot sign in through the browser. Set STRING_API_KEY, or pipe a key to string login --with-token. Keys are at https://portal.usestring.ai/settings."}
+	}
+	path, ok := pendingPath(rt.env)
 	if !ok {
-		return errors.New("Cannot find your home directory; set HOME")
+		return pendingLogin{}, errors.New("Cannot find your home directory; set HOME")
 	}
 	var device struct {
 		DeviceCode              string `json:"device_code"`
@@ -294,29 +341,89 @@ func signIn(rt runtime) error {
 		"scope":     {"web_access email"},
 	}, &device)
 	if err != nil {
-		return err
+		return pendingLogin{}, err
 	}
 	if status != http.StatusOK || device.DeviceCode == "" {
-		return errors.New(strings.TrimSpace(fmt.Sprintf("Sign-in failed: HTTP %d %s", status, device.Error)))
+		return pendingLogin{}, &failure{exit: exitAuth, code: "login_failed", message: strings.TrimSpace(fmt.Sprintf("Sign-in failed: HTTP %d %s", status, device.Error))}
+	}
+	// Without these from the server, RFC 8628 has clients wait five seconds,
+	// and codes commonly live ten minutes.
+	if device.Interval <= 0 {
+		device.Interval = 5
+	}
+	if device.ExpiresIn <= 0 {
+		device.ExpiresIn = 600
+	}
+	pending := pendingLogin{
+		DeviceCode: device.DeviceCode,
+		Interval:   device.Interval,
+		ExpiresAt:  rt.clock().Add(time.Duration(device.ExpiresIn) * time.Second),
+	}
+	if err := writePrivate(path, pending); err != nil {
+		return pendingLogin{}, err
 	}
 	link := device.VerificationURIComplete
 	if link == "" {
 		link = device.VerificationURI
 	}
-	if err := write(rt.stdout, []byte(fmt.Sprintf("Open %s and confirm the code %s, then choose the API key to use.\n", link, device.UserCode))); err != nil {
+	var shown []byte
+	switch {
+	case rt.json:
+		shown, _ = json.Marshal(map[string]any{
+			"verification_uri_complete": link,
+			"user_code":                 device.UserCode,
+			"expires_in":                device.ExpiresIn,
+			"interval":                  device.Interval,
+			"next":                      "string login --poll",
+		})
+		shown = append(shown, '\n')
+	case wait:
+		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s, then choose the API key to use.\n", link, device.UserCode))
+	default:
+		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s, then choose the API key to use.\nThen run string login --poll to save the key. The code expires in %d minutes.\n", link, device.UserCode, device.ExpiresIn/60))
+	}
+	if err := write(rt.stdout, shown); err != nil {
+		return pendingLogin{}, err
+	}
+	if rt.openURL != nil {
+		_ = rt.openURL(link)
+	}
+	return pending, nil
+}
+
+func finishPending(rt runtime) error {
+	path, ok := pendingPath(rt.env)
+	if !ok {
+		return errors.New("Cannot find your home directory; set HOME")
+	}
+	var pending pendingLogin
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return usage(errors.New("No sign-in is waiting. Run string login --no-wait first."))
+	}
+	if err != nil {
 		return err
 	}
-	_ = rt.openURL(link)
-	// Without an interval from the server, RFC 8628 has clients wait five seconds.
-	interval := 5 * time.Second
-	if device.Interval > 0 {
-		interval = time.Duration(device.Interval) * time.Second
+	if err := json.Unmarshal(data, &pending); err != nil || pending.DeviceCode == "" {
+		os.Remove(path)
+		return usage(errors.New("The waiting sign-in could not be read. Run string login --no-wait again."))
 	}
-	lifetime := 10 * time.Minute
-	if device.ExpiresIn > 0 {
-		lifetime = time.Duration(device.ExpiresIn) * time.Second
+	return finishSignIn(rt, pending)
+}
+
+// finishSignIn waits for approval of a pending device code, then fetches and
+// saves the key. The pending code is dropped once it can no longer succeed.
+func finishSignIn(rt runtime, pending pendingLogin) error {
+	pendingFile, _ := pendingPath(rt.env)
+	path, ok := credentialsPath(rt.env)
+	if !ok {
+		return errors.New("Cannot find your home directory; set HOME")
 	}
-	token, err := deviceToken(rt, device.DeviceCode, interval, lifetime)
+	token, err := deviceToken(rt, pending.DeviceCode, time.Duration(pending.Interval)*time.Second, pending.ExpiresAt.Sub(rt.clock()))
+	var refused *failure
+	if err == nil || errors.As(err, &refused) {
+		os.Remove(pendingFile)
+	}
 	if err != nil {
 		return err
 	}
@@ -324,12 +431,12 @@ func signIn(rt runtime) error {
 		APIKey string `json:"apiKey"`
 		Error  string `json:"error"`
 	}
-	status, err = getWithToken(rt, portalURL+"/api/oauth/api-key", token, &released)
+	status, err := getWithToken(rt, portalURL+"/api/oauth/api-key", token, &released)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", status, released.Error)
+		return &failure{exit: exitAuth, code: "key_release_failed", status: status, message: fmt.Sprintf("HTTP %d: %s", status, released.Error)}
 	}
 	if released.APIKey == "" || !validKey(released.APIKey) {
 		return errors.New("The portal did not return a usable API key")
@@ -344,6 +451,10 @@ func signIn(rt runtime) error {
 	}
 	if err := saveCredentials(path, saved); err != nil {
 		return err
+	}
+	if rt.json {
+		shown, _ := json.Marshal(map[string]string{"status": "logged_in", "email": saved.Email, "credentials": path})
+		return write(rt.stdout, append(shown, '\n'))
 	}
 	who := ""
 	if saved.Email != "" {

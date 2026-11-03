@@ -37,7 +37,12 @@ Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, o
 
 A key lifts those limits and unlocks every option, `request` and `sitemap`. There are three ways to give the CLI one:
 
-- `string login` prints a code and opens String in your browser. Once you approve and choose an API key, the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when you run init from a terminal with no key set.
+- `string login` prints a code and opens String in your browser. Once you approve and choose an API key, the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when you run init from a terminal with no key set. Without a terminal, as under a coding agent, or with `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
+
+  ```bash
+  string login --json   # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll"}
+  string login --poll   # after the person approves
+  ```
 - `string login --with-token` reads a key from [String settings](https://portal.usestring.ai/settings) on stdin, checks it with one free API call, and saves it in the same file. The key stays out of your shell history: `string login --with-token < key.txt`.
 - `STRING_API_KEY` in the environment. It wins over a saved key, and the CLI never writes it to a file:
 

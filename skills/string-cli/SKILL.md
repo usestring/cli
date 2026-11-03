@@ -22,8 +22,10 @@ to sign in. Errors go to stderr with a nonzero exit status.
   `dateRange`, `sortBy`, `safeSearch`, `autocorrect` and `verbatim` on search. `--count`,
   `--country`, `--location`, `--engine`, other `--input` fields, `request` and `sitemap` need a key.
 - With a key, every command and option works. Commands use `STRING_API_KEY`, or the key `string
-  login` saved; `string whoami` says which. When you need a key and have none, ask the user to run
-  `string login`, which opens their browser, or to save a key from
+  login` saved; `string whoami` says which. When you need a key and have none, run
+  `string login --json`. It returns at once with `verification_uri_complete` and `user_code`: give
+  both to the user, ask them to approve, then run `string login --poll`, which waits for the
+  approval and saves the key. The user can instead save a key from
   https://portal.usestring.ai/settings with `string login --with-token < key.txt`. Never ask for a
   key in chat, and never put one in a URL, a query, a header value, a command line or a file you
   commit. In an unattended run, don't start a login; stay keyless or stop and report.

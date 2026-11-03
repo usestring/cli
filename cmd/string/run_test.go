@@ -416,12 +416,24 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 		sleep:   func(d time.Duration) { waits = append(waits, d) },
 	}
 
-	tokenAnswers = []string{`{"error":"authorization_pending"}`, `{"error":"slow_down"}`, `{"access_token":"access-1","token_type":"Bearer"}`}
-	if status := run([]string{"login"}, rt); status != 0 {
+	// Without a terminal, login hands back the link at once and --poll finishes.
+	if status := run([]string{"login", "--json"}, rt); status != 0 {
 		t.Fatalf("login status %d: %s", status, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "ABCD-EFGH") || !reflect.DeepEqual(opened, []string{"https://example.test/device?code=ABCD-EFGH"}) {
+	started := decode(t, stdout.String()).(map[string]any)
+	if started["user_code"] != "ABCD-EFGH" || started["next"] != "string login --poll" || !reflect.DeepEqual(opened, []string{"https://example.test/device?code=ABCD-EFGH"}) {
 		t.Errorf("output %q, opened %v", stdout.String(), opened)
+	}
+	pendingFile := filepath.Join(home, ".config", "string", "pending.json")
+	if info, err := os.Stat(pendingFile); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("pending file %v, %v", info, err)
+	}
+	tokenAnswers = []string{`{"error":"authorization_pending"}`, `{"error":"slow_down"}`, `{"access_token":"access-1","token_type":"Bearer"}`}
+	if status := run([]string{"login", "--poll"}, rt); status != 0 {
+		t.Fatalf("login --poll status %d: %s", status, stderr.String())
+	}
+	if _, err := os.Stat(pendingFile); !os.IsNotExist(err) {
+		t.Errorf("pending file left after sign-in: %v", err)
 	}
 	if want := []time.Duration{5 * time.Second, 5 * time.Second, 10 * time.Second}; !reflect.DeepEqual(waits, want) {
 		t.Errorf("waits %v, want %v", waits, want)
@@ -452,7 +464,8 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 
 	stderr.Reset()
 	tokenAnswers = []string{`{"error":"access_denied"}`}
-	if status := run([]string{"login"}, rt); status == 0 || !strings.Contains(stderr.String(), "Sign-in was denied") {
+	rt.terminal = true
+	if status := run([]string{"login"}, rt); status != 3 || !strings.Contains(stderr.String(), "Sign-in was denied") {
 		t.Errorf("denied login status %d: %s", status, stderr.String())
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -460,7 +473,6 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 	}
 
 	stdout.Reset()
-	rt.terminal = true
 	rt.lookPath = func(string) (string, error) { return "/usr/local/bin/string", nil }
 	tokenAnswers = []string{`{"access_token":"access-1","token_type":"Bearer"}`}
 	if status := run([]string{"init"}, rt); status != 0 || !strings.Contains(stdout.String(), "Logged in") {
