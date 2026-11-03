@@ -1,5 +1,6 @@
 # Publishes a release when a v* tag is pushed: GitHub release assets and Linux
-# packages, the Docker image, a pull request updating the Homebrew cask, then npm.
+# packages, the source archive the Homebrew formula builds from, the Docker
+# image, then npm.
 name: release
 
 on:
@@ -9,7 +10,6 @@ on:
 permissions:
   contents: write
   packages: write
-  pull-requests: write
   id-token: write
 
 jobs:

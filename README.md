@@ -18,6 +18,8 @@ brew tap usestring/cli https://github.com/usestring/cli && brew install usestrin
 docker run --rm -e STRING_API_KEY ghcr.io/usestring/cli search "your query"
 ```
 
+Homebrew builds the binary from the release's source archive, so Go is needed only while it builds. If an npm installation already provides `string`, remove it with `npm uninstall -g @usestring/cli` first; both provide the same command. Upgrade with `brew update && brew upgrade usestring/cli/string`.
+
 `install.sh` puts the binary in `~/.local/bin` (`STRING_INSTALL_DIR` changes it), checks it against the release checksums, then runs `string init` so your coding agents get the skill below. Pass `init` options after `sh -s --`, or `--no-init` to skip it. Each [GitHub release](https://github.com/usestring/cli/releases) also has the binaries for macOS, Linux and Windows, and `.deb`, `.rpm` and `.apk` packages for Debian, Fedora and Alpine.
 
 `string init` signs you in when you run it from a terminal and no key is set. You can also sign in at any time with `string login`. It prints a code and opens String in your browser. Once you approve and choose an API key, the CLI saves that key in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string whoami` shows which key commands use, and `string logout` deletes the saved one.
@@ -82,3 +84,7 @@ string init                            # the shared directory and every agent fo
 string init --agent claude-code,codex  # only these
 npx skills add usestring/cli           # the same skill through the skills installer
 ```
+
+## Project and releases
+
+[usestring/cli](https://github.com/usestring/cli) is the canonical upstream for the native CLI, npm client, source releases, issues, and Homebrew formula. CLI maintainers own release publication and the matching formula update; see [releasing the CLI](docs/releasing.md).

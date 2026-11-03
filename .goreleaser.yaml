@@ -26,6 +26,12 @@ archives:
         formats: [zip]
     files: [README.md, LICENSE]
 
+# Formula/string.rb builds from this archive of the tagged source.
+source:
+  enabled: true
+  name_template: "string-{{ .Version }}"
+  prefix_template: "string-{{ .Version }}/"
+
 checksum:
   name_template: checksums.txt
 
@@ -55,32 +61,3 @@ dockers_v2:
       org.opencontainers.image.source: https://github.com/usestring/cli
       org.opencontainers.image.description: String Web Access CLI
       org.opencontainers.image.licenses: MIT
-
-# The cask lives in this repository's Casks directory, so the repository is
-# its own Homebrew tap. Each release opens a pull request that updates it.
-homebrew_casks:
-  - name: string
-    binaries: [string]
-    homepage: https://usestring.ai
-    description: Search the web, fetch pages as Markdown and map sites from the terminal
-    license: MIT
-    directory: Casks
-    repository:
-      owner: usestring
-      name: cli
-      branch: "homebrew-{{ .Version }}"
-      token: "{{ .Env.GITHUB_TOKEN }}"
-      pull_request:
-        enabled: true
-        base:
-          owner: usestring
-          name: cli
-          branch: main
-    hooks:
-      post:
-        # The binary is not notarized, so clear the quarantine flag macOS
-        # puts on downloads; otherwise Gatekeeper refuses to run it.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/string"]
-          end
