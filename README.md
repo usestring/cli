@@ -4,7 +4,29 @@ Use String Web Access from a terminal. The CLI supports fetch, search, direct HT
 
 ## Install
 
-Requires Node.js 22 or newer. Once `@usestring/cli` is published:
+### Homebrew
+
+Install the native CLI from this repository's first-party tap:
+
+```bash
+brew tap usestring/cli https://github.com/usestring/cli.git
+brew install usestring/cli/string
+```
+
+This builds the Go CLI without a Node.js runtime dependency. Go is needed only while building. This tap is maintained by String; it is separate from Homebrew's official `homebrew/core` repository.
+
+If an npm installation already provides `string`, remove it with `npm uninstall -g @usestring/cli` before installing the Homebrew formula. Both packages provide the same command.
+
+Upgrade with:
+
+```bash
+brew update
+brew upgrade usestring/cli/string
+```
+
+### npm
+
+Requires Node.js 22 or newer:
 
 ```bash
 npm install -g @usestring/cli
@@ -22,7 +44,7 @@ The CLI reads the key from the environment and does not save it to a file.
 
 ### Native binary
 
-`cmd/string` is the same CLI in Go, built as one static binary with no Node.js dependency. It takes the same commands, flags and environment variables, and gives the same output and exit codes. Go binaries are not published yet; build one from a checkout:
+`cmd/string` is the same CLI in Go, built as one static binary with no Node.js dependency. It takes the same commands, flags and environment variables, and gives the same output and exit codes. Stable source releases and SHA-256 checksums are available from [GitHub releases](https://github.com/usestring/cli/releases). Standalone binary downloads are not published; build one from a checkout with Go 1.25 or newer:
 
 ```bash
 CGO_ENABLED=0 go build -trimpath -o string ./cmd/string
@@ -66,3 +88,7 @@ string sitemap cancel JOB_ID
 ```
 
 `string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint. HTTP errors go to stderr and return a nonzero exit status.
+
+## Project and releases
+
+[usestring/cli](https://github.com/usestring/cli) is the canonical upstream for the native CLI, npm client, source releases, issues, and Homebrew formula. CLI maintainers own release publication and the matching formula update; see [releasing the CLI](docs/releasing.md).
