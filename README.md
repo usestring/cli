@@ -95,6 +95,18 @@ string sitemap cancel JOB_ID
 
 Interrupting `--wait` leaves the crawl running, and `string sitemap status JOB_ID --wait` picks it back up.
 
+## Site integrations
+
+A [site integration](https://portal.usestring.ai/docs/sites) is a set of typed actions over one website. For example, `reddit post` reads a post with its whole comment tree, and `yelp business` reads business records. An action takes an input and returns rows in a fixed shape, and its requests run and are billed like fetches.
+
+```bash
+string integrations                     # every site and its actions; no key needed
+string integrations list reddit         # reddit's actions, each with its flags and an example
+string integrations run reddit post --post https://www.reddit.com/r/technology/comments/1xapaw7/ --maxPages 2
+```
+
+**Each flag is a field of the action's input, spelled exactly as the field.** Reddit's `post` action takes `post`, `sort` and `maxPages`, so its flags are `--post`, `--sort` and `--maxPages`, the same names the integration docs and the manifest use. A list field takes one item per flag (`--items a --items b`) or a JSON array. `run` prints the JSON response: `data` holds the rows, and `failures` lists any input that produced none. `list` needs no key; `run` needs one.
+
 `string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint.
 
 ## Errors and exit codes
