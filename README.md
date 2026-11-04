@@ -1,12 +1,12 @@
 # String Web Access CLI
 
-Use String Web Access from a terminal. The CLI supports fetch, search, direct HTTP requests, and sitemap jobs. JSON responses go to stdout, so they can be piped to other commands.
+Use String Web Access from a terminal. The CLI supports fetch, search, direct HTTP requests, and sitemap jobs. Responses go to stdout, so they can be piped to other commands.
 
 **It works without a key.** `string fetch` and `string search` run keyless, within a daily allowance per IP address, so the first call needs no account:
 
 ```bash
 npx -y @usestring/cli search "string web access"
-npx -y @usestring/cli fetch https://example.com --format markdown
+npx -y @usestring/cli https://example.com
 ```
 
 For more, and for `request` and `sitemap`, sign in with `string login` or set `STRING_API_KEY`.
@@ -33,7 +33,7 @@ Homebrew builds the binary from the release's source archive, so Go is needed on
 
 ## Keys
 
-Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, or IPv6 /64, gets 50 requests and 100 credits per UTC day: a plain fetch costs 1 credit, and a fetch with `executeJS` or a search costs 5. Keyless takes only `--format` and `executeJS` on fetch and `--language` (plus `dateRange`, `sortBy`, `safeSearch`, `autocorrect` and `verbatim` through `--input`) on search. The CLI refuses anything else before sending it, and prints what is left of the allowance to stderr after each call.
+Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, or IPv6 /64, gets 50 requests and 100 credits per UTC day: a plain fetch costs 1 credit, and a fetch with `executeJS` or a search costs 5. Keyless takes only `--format` and `--executeJS` on fetch, and `--language`, `--dateRange`, `--sortBy`, `--safeSearch`, `--autocorrect` and `--verbatim` on search. The CLI refuses anything else before sending it, and prints what is left of the allowance to stderr after each call.
 
 A key lifts those limits and unlocks every option, `request` and `sitemap`. There are three ways to give the CLI one:
 
@@ -62,38 +62,38 @@ go test ./...
 ## Commands
 
 ```bash
-string fetch https://example.com
-string fetch https://example.com --format markdown
-string search "coffee shops in Austin" --engine google --count 20
-string request POST https://example.com/api --body 'hello'
+string https://example.com                              # the page as Markdown
+string https://example.com --mainContentOnly -o example.md
+string fetch https://example.com --format json          # the full response: status, headers, final URL
+string search "coffee shops in Austin" --searchCount 20
+string search "coffee grinders" --dateRange week --sortBy date
+string request POST https://example.com/api --body '{"name":"example"}' --headers '{"Content-Type":"application/json"}'
 ```
 
-`fetch` and `request` use JSON output by default. Use `--format markdown` for page text or `--format raw` for response bytes. `search` and `sitemap` return JSON.
+**Every API field is a flag of the same name.** A field from the [API reference](https://portal.usestring.ai/docs/api-reference/fetch) works on the command line as written: `executeJS` is `--executeJS`, and `countryCode` is `--countryCode DE`. A boolean flag alone is true, and `=false` turns it off (`--solveCaptcha=false`). An object or array field takes JSON, or `@` and a file path (`--jsonSchema @./schema.json`). `string fetch --help`, `string search --help` and `string sitemap --help` list each command's fields, and a near miss such as `--max-pages` gets the right name back.
 
-For API options that do not have a named flag, put them in a JSON object and pass `--input FILE`. The command's URL, query, and method take precedence over matching fields in the file. Use `--input -` to read JSON from stdin.
+`fetch` prints the page as Markdown. `--format json` gives the full response with the status, headers and final URL, and `--format raw` gives the response bytes. A field that only JSON carries, such as `--jsonSchema` or `--screenshot`, makes JSON the default. `request`, `search` and `sitemap` print JSON. `--output FILE`, or `-o FILE`, writes the response to a file instead.
 
-```bash
-printf '%s\n' '{"executeJS":true,"countryCode":"GB"}' > fetch-options.json
-string fetch https://example.com --input fetch-options.json
-```
+`--input FILE` reads more fields from a JSON object, or `--input -` from stdin, and flags win over it. The command's URL, query and method win over both.
 
-For a JSON request body, put the object and destination headers in the input file:
+A sitemap crawl starts with a quote, which costs nothing. `--approve` starts the crawl at the quoted cost, and `--wait` waits for it to finish, with a progress line on a terminal:
 
 ```bash
-printf '%s\n' '{"body":{"name":"example"},"headers":{"Content-Type":"application/json"}}' > request-options.json
-string request POST https://example.com/api --input request-options.json
-```
-
-Sitemap jobs require a separate approval after the quote. Submitting a job does not start a crawl or charge the account.
-
-```bash
-string sitemap submit https://example.com
-string sitemap approve JOB_ID
-string sitemap status JOB_ID
+string sitemap submit https://example.com --maxPages 50 --approve --wait
 string sitemap results JOB_ID --limit 100 --offset 0
+```
+
+Step by step, the same crawl is:
+
+```bash
+string sitemap submit https://example.com --maxPages 50   # the quote
+string sitemap approve JOB_ID --wait
+string sitemap status JOB_ID
 string sitemap list
 string sitemap cancel JOB_ID
 ```
+
+Interrupting `--wait` leaves the crawl running, and `string sitemap status JOB_ID --wait` picks it back up.
 
 `string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint.
 

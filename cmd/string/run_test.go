@@ -41,6 +41,7 @@ func invoke(t *testing.T, list []string, baseURL, key string) result {
 		stdin:    strings.NewReader(""),
 		stdout:   &stdout,
 		stderr:   &stderr,
+		sleep:    func(time.Duration) {},
 	})
 	return result{status, stdout.String(), stderr.String()}
 }
@@ -96,7 +97,116 @@ func TestFetchSendsAuthenticatedJSONAndPreservesAdvancedFields(t *testing.T) {
 	if path != "/v1/fetch" || authorization != "Bearer test-key" {
 		t.Errorf("path %q, authorization %q", path, authorization)
 	}
-	expectJSON(t, body, `{"mainContentOnly":true,"url":"https://example.com/","method":"GET","format":"json"}`)
+	expectJSON(t, body, `{"mainContentOnly":true,"url":"https://example.com/","method":"GET","format":"markdown"}`)
+}
+
+func TestFieldFlagsAreTheAPIFieldsOfTheSameName(t *testing.T) {
+	var bodies []string
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		bodies = append(bodies, r.URL.Path+" "+requestBody(t, r))
+		io.WriteString(w, "# Example\n")
+	})
+	schema := inputFile(t, `{"type":"object","properties":{"title":{"type":"string"}}}`)
+
+	for _, list := range [][]string{
+		{"https://example.com", "--mainContentOnly", "--countryCode", "DE", "--maxRedirects", "3", "--headers", `{"Accept-Language":"de"}`, "--solveCaptcha=false"},
+		{"fetch", "https://example.com", "--jsonSchema", "@" + schema},
+		{"search", "coffee", "--searchType", "images", "--dateRange", "week", "--count", "5", "--safeSearch"},
+		{"search", "coffee", "--dateRange", `{"from":"2024-01-01"}`},
+	} {
+		if got := invoke(t, list, baseURL, "test-key"); got.status != 0 {
+			t.Fatalf("%v: %+v", list, got)
+		}
+	}
+	want := []string{
+		`/v1/fetch {"url":"https://example.com/","method":"GET","format":"markdown","mainContentOnly":true,"countryCode":"DE","maxRedirects":3,"headers":{"Accept-Language":"de"},"solveCaptcha":false}`,
+		// A schema comes back only in JSON, so it makes JSON the default.
+		`/v1/fetch {"url":"https://example.com/","method":"GET","format":"json","jsonSchema":{"type":"object","properties":{"title":{"type":"string"}}}}`,
+		`/v1/search {"query":"coffee","searchType":"images","dateRange":"week","searchCount":5,"safeSearch":true}`,
+		`/v1/search {"query":"coffee","dateRange":{"from":"2024-01-01"}}`,
+	}
+	for i := range want {
+		gotPath, gotBody, _ := strings.Cut(bodies[i], " ")
+		wantPath, wantBody, _ := strings.Cut(want[i], " ")
+		if gotPath != wantPath {
+			t.Errorf("call %d went to %s, want %s", i, gotPath, wantPath)
+		}
+		expectJSON(t, gotBody, wantBody)
+	}
+
+	for list, message := range map[string]string{
+		"sitemap submit https://example.com --max-pages 5": "Did you mean '--maxPages'?",
+		"fetch https://example.com --maxRedirects many":    "--maxRedirects must be an integer",
+		"fetch https://example.com --executeJS=yes":        "--executeJS takes no value, or =true or =false",
+		"search coffee --coordinates {":                    "--coordinates must be JSON",
+	} {
+		if got := invoke(t, strings.Fields(list), baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, message) {
+			t.Errorf("%s: %+v", list, got)
+		}
+	}
+	if len(bodies) != len(want) {
+		t.Errorf("bad flags reached the API: %v", bodies[len(want):])
+	}
+}
+
+func TestOutputWritesTheResponseToAFile(t *testing.T) {
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "# Example") })
+	path := filepath.Join(t.TempDir(), "page.md")
+
+	got := invoke(t, []string{"https://example.com", "-o", path}, baseURL, "test-key")
+
+	saved, err := os.ReadFile(path)
+	if got.status != 0 || got.output != "" || err != nil || string(saved) != "# Example\n" || !strings.Contains(got.errors, "Saved 10 bytes to "+path) {
+		t.Errorf("%+v, saved %q, %v", got, saved, err)
+	}
+}
+
+func TestSitemapApproveAndWaitFollowTheCrawlToItsEnd(t *testing.T) {
+	var calls []string
+	statuses := []string{
+		`{"jobId":"job-1","status":"running","pending":2,"processed":1}`,
+		`{"jobId":"job-1","status":"completed","pagesProcessed":3}`,
+	}
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/v1/sitemap":
+			io.WriteString(w, `{"jobId":"job-1","status":"awaiting_approval","estimatedCostUsd":0.01}`)
+		case r.Method == "POST":
+			io.WriteString(w, `{"jobId":"job-1","status":"running"}`)
+		default:
+			io.WriteString(w, statuses[0])
+			statuses = statuses[1:]
+		}
+	})
+	var stdout, stderr bytes.Buffer
+	status := run([]string{"sitemap", "submit", "https://example.com", "--maxPages", "3", "--approve", "--wait"}, runtime{
+		env: func(name string) (string, bool) {
+			value, ok := map[string]string{"STRING_API_KEY": "test-key", "STRING_API_BASE_URL": baseURL}[name]
+			return value, ok
+		},
+		client:   http.DefaultClient,
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		sleep:    func(time.Duration) {},
+		progress: true,
+	})
+
+	if status != 0 {
+		t.Fatalf("status %d: %s", status, stderr.String())
+	}
+	if want := []string{"POST /v1/sitemap", "POST /v1/sitemap/job-1/approve", "GET /v1/sitemap/job-1", "GET /v1/sitemap/job-1"}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls %v, want %v", calls, want)
+	}
+	expectJSON(t, stdout.String(), `{"jobId":"job-1","status":"completed","pagesProcessed":3}`)
+	if !strings.Contains(stderr.String(), "Crawling: 1 pages done, 2 queued") {
+		t.Errorf("progress %q", stderr.String())
+	}
+
+	if got := invoke(t, []string{"sitemap", "submit", "https://example.com", "--wait"}, baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, "--wait needs --approve") {
+		t.Errorf("wait without approve: %+v", got)
+	}
 }
 
 func TestSearchCarriesTargetingAndResultCount(t *testing.T) {
