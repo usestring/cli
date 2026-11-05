@@ -54,6 +54,12 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 
 `string status` shows the version and the key in use. With a key, it adds the balance left, any amount held for crawls still running, the plan and its request rate, and auto top-up. Without one, it shows what the last keyless call from this machine left of today's allowance, kept in `~/.config/string/keyless.json`, so checking spends none of it. `--json` gives the same as one JSON object.
 
+`string balance` prints the account's balance as JSON, exactly as `GET /account/balance` returns it, including `remaining`, `held`, `exhausted`, `asOf`, the `plan` and `autoTopUp`. It needs a key. `string status` still exits 0 when it can't read the balance; `string balance` fails with one of the [exit codes](#errors-and-exit-codes) instead, so a script can rely on its output:
+
+```bash
+string balance | jq .remaining
+```
+
 ### Build from source
 
 ```bash
