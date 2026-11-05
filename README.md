@@ -52,6 +52,8 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 
 `string whoami` shows which key commands use, and `string logout` deletes the saved one.
 
+`string status` shows the version and the key in use. With a key, it adds the balance left, any amount held for crawls still running, the plan and its request rate, and auto top-up. Without one, it shows what the last keyless call from this machine left of today's allowance, kept in `~/.config/string/keyless.json`, so checking spends none of it. `--json` gives the same as one JSON object.
+
 ### Build from source
 
 ```bash

@@ -77,6 +77,7 @@ Usage:
   string login [--with-token | --no-wait | --poll]
   string logout
   string whoami
+  string status
   string --version
 
 Each API request field is a flag spelled exactly as the field, so the API
@@ -110,6 +111,9 @@ a terminal, or with --no-wait, it prints the link and code and exits; string
 login --poll then waits for the approval and saves the key. With --json both
 print JSON. login --with-token reads an API key from stdin, checks it and saves it.
 STRING_API_KEY wins over a saved key; whoami says which one is in use.
+status shows the version and the key in use. With a key it adds the balance
+left, any amount held by running crawls, the plan and its request rate, and
+auto top-up; without one, what the last keyless call left of today's allowance.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
@@ -983,6 +987,8 @@ func execute(list []string, rt runtime) error {
 		return whoamiCommand(list[1:], rt)
 	case "integrations":
 		return integrationsCommand(list[1:], rt)
+	case "status":
+		return statusCommand(list[1:], rt)
 	}
 	op, err := operationFor(list[0], list[1:], rt.stdin)
 	if err != nil {
@@ -1061,6 +1067,9 @@ func (c apiClient) call(op *operation) ([]byte, error) {
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(response.Body)
+	if c.key == "" {
+		recordKeyless(c.rt, response.Header)
+	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return nil, httpFailure(response, data, c.key == "")
 	}
