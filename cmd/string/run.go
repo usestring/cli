@@ -77,6 +77,7 @@ Usage:
   string login [--with-token | --no-wait | --poll]
   string logout
   string whoami
+  string trial
   string --version
 
 Each API request field is a flag spelled exactly as the field, so the API
@@ -110,6 +111,9 @@ a terminal, or with --no-wait, it prints the link and code and exits; string
 login --poll then waits for the approval and saves the key. With --json both
 print JSON. login --with-token reads an API key from stdin, checks it and saves it.
 STRING_API_KEY wins over a saved key; whoami says which one is in use.
+trial registers an agent for a trial key with no account: after a few seconds'
+proof of work, it saves a key with a small balance that works for 24 hours,
+and a claim token a person can use to adopt the agent onto their account.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
@@ -983,6 +987,8 @@ func execute(list []string, rt runtime) error {
 		return whoamiCommand(list[1:], rt)
 	case "integrations":
 		return integrationsCommand(list[1:], rt)
+	case "trial":
+		return trialCommand(list[1:], rt)
 	}
 	op, err := operationFor(list[0], list[1:], rt.stdin)
 	if err != nil {
