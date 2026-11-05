@@ -73,6 +73,9 @@ Usage:
   string sitemap cancel JOB_ID
   string integrations [list [SITE]]
   string integrations run SITE ACTION [--FIELD VALUE ...]
+  string topup [--packPlanId ID]
+  string topup status ID [--wait]
+  string upgrade [PLAN]
   string init [--agent NAME[,NAME...]]
   string login [--with-token | --no-wait | --poll]
   string logout
@@ -99,6 +102,12 @@ the wait leaves the crawl running; string sitemap status JOB_ID --wait resumes i
 integrations lists the site integrations, typed actions over one website such
 as reddit post. list SITE shows each action's flags, which are its input fields
 by name, and run calls one: string integrations run reddit post --post URL.
+topup asks for credit and prints a link for a person signed in to String to
+approve and pay within the hour: a top-up on a plan, or a credit pack without
+one. --packPlanId picks the pack by a planId from GET /v1/pricing, Starter's
+if left out. string topup status ID shows where it stands, and --wait waits
+until it is paid or expires. upgrade prints the link to choose a plan, with
+PLAN (starter, growth, scale or volume) preselected.
 
 Without a key, fetch takes --format and --executeJS, and search takes
 --language, --dateRange, --sortBy, --safeSearch, --autocorrect and --verbatim.
@@ -977,6 +986,10 @@ func execute(list []string, rt runtime) error {
 	switch list[0] {
 	case "--version":
 		return write(rt.stdout, []byte("string "+version+"\n"))
+	case "topup":
+		return topupCommand(list[1:], rt)
+	case "upgrade":
+		return upgradeCommand(list[1:], rt)
 	case "init":
 		return initCommand(list[1:], rt)
 	case "login":
