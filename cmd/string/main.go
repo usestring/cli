@@ -39,6 +39,7 @@ func main() {
 		openURL:  openBrowser,
 		sleep:    time.Sleep,
 		terminal: isTerminal(os.Stdin),
+		progress: isTerminal(os.Stderr),
 	}))
 }
 
