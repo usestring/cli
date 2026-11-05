@@ -34,10 +34,14 @@ type runtime struct {
 
 const help = `String Web Access CLI
 
+Start here: string fetch and string search work without a key, within a daily
+allowance per IP address. For more, and for request and sitemap, run string
+login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.
+
 Usage:
   string fetch URL [--format json|markdown|raw] [--input FILE]
+  string search QUERY [--language CODE] [--engine NAME] [--country CODE] [--count N] [--input FILE]
   string request METHOD URL [--body TEXT|--body-file FILE] [--input FILE]
-  string search QUERY [--engine NAME] [--country CODE] [--count N] [--input FILE]
   string sitemap submit URL [--input FILE]
   string sitemap approve JOB_ID
   string sitemap status JOB_ID
@@ -45,29 +49,40 @@ Usage:
   string sitemap list [--limit N] [--offset N]
   string sitemap cancel JOB_ID
   string init [--agent NAME[,NAME...]]
-  string login
+  string login [--with-token]
   string logout
   string whoami
   string --version
 
+Without a key, fetch takes --format and search takes --language; --engine,
+--country, --location, --count, request and sitemap need a key. What is left
+of the allowance is printed to stderr after each keyless call.
 init installs the string-cli skill for the coding agents found on this machine,
 then signs in when run from a terminal with no key set.
-login signs in through your browser and saves the API key you choose. Or set
-STRING_API_KEY to an API key from https://portal.usestring.ai/settings; it wins over a saved key.
+login signs in through your browser and saves the API key you choose.
+login --with-token reads an API key from stdin, checks it and saves it.
+STRING_API_KEY wins over a saved key; whoami says which one is in use.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 --input reads additional request fields from a JSON object in FILE, or from stdin with -.
 Responses are written to stdout as JSON by default. Fetch and request also support
-markdown or raw output with --format. Errors go to stderr and return a nonzero status.
+markdown or raw output with --format. Errors go to stderr, with Retry-After,
+the keyless allowance and x-request-id when the API sends them; --json prints
+them as {"error":{...}} instead.
+
+Exit codes: 0 ok, 1 other failure, 2 bad input, 3 needs a key or the key was
+refused, 4 out of credit, 5 rate limited, 6 upstream failure, 7 timeout,
+130 interrupted.
 `
 
 const defaultBaseURL = "https://request.usestring.ai/v1"
 
 // operation is one API call. A nil body sends no request body.
 type operation struct {
-	method string
-	path   string
-	body   map[string]any
-	binary bool
+	command string
+	method  string
+	path    string
+	body    map[string]any
+	binary  bool
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -569,9 +584,9 @@ func truncateUTF16(text string, limit int) string {
 }
 
 func run(list []string, rt runtime) int {
+	list, asJSON := takeJSONFlag(list)
 	if err := execute(list, rt); err != nil {
-		fmt.Fprintln(rt.stderr, err)
-		return 1
+		return report(rt.stderr, err, asJSON)
 	}
 	return 0
 }
@@ -594,18 +609,24 @@ func execute(list []string, rt runtime) error {
 	}
 	op, err := operationFor(list[0], list[1:], rt.stdin)
 	if err != nil {
-		return err
+		return usage(err)
 	}
 	if op == nil {
 		return write(rt.stdout, []byte(help))
 	}
+	op.command = list[0]
 	key, err := apiKey(rt.env)
 	if err != nil {
-		return err
+		return &failure{exit: exitAuth, code: "invalid_key", message: err.Error()}
+	}
+	if key == "" {
+		if err := keylessOperation(op); err != nil {
+			return err
+		}
 	}
 	base, err := apiBaseURL(rt.env)
 	if err != nil {
-		return err
+		return usage(err)
 	}
 	var payload io.Reader
 	if op.body != nil {
@@ -621,7 +642,10 @@ func execute(list []string, rt runtime) error {
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+key)
+	// Any Authorization header, even an empty one, would take the key path.
+	if key != "" {
+		request.Header.Set("Authorization", "Bearer "+key)
+	}
 	if op.body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -632,14 +656,13 @@ func execute(list []string, rt runtime) error {
 	defer response.Body.Close()
 	data, err := io.ReadAll(response.Body)
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		message := fmt.Sprintf("HTTP %d", response.StatusCode)
-		if detail := truncateUTF16(decodeText(data), 2000); detail != "" {
-			message += ": " + detail
-		}
-		return errors.New(message)
+		return httpFailure(response, data, key == "")
 	}
 	if err != nil {
 		return err
+	}
+	if notes := keylessNotes(response.Header); len(notes) > 0 {
+		fmt.Fprintf(rt.stderr, "%s\nRan without a key. For more, %s.\n", strings.Join(notes, "\n"), needsKey)
 	}
 	if !op.binary {
 		text := decodeText(data)

@@ -196,31 +196,127 @@ func TestAPIBaseURLsWithEmptyQueryOrFragmentAreRejected(t *testing.T) {
 	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "{}") })
 	for _, suffix := range []string{"?", "#"} {
 		got := invoke(t, []string{"fetch", "https://example.com"}, baseURL+suffix, "test-key")
-		if got.status != 1 || !strings.Contains(got.errors, "STRING_API_BASE_URL must be an HTTP(S) URL") {
+		if got.status != 2 || !strings.Contains(got.errors, "STRING_API_BASE_URL must be an HTTP(S) URL") {
 			t.Errorf("suffix %q: %+v", suffix, got)
 		}
 	}
 }
 
-func TestMissingKeyAndAPIErrorsFailWithoutPrintingTheKey(t *testing.T) {
+func TestAPIErrorsFailWithoutPrintingTheKey(t *testing.T) {
 	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		io.WriteString(w, `{"error":"bad key"}`)
+		io.WriteString(w, `{"error":"bad key","code":"invalid_api_key","next_actions":[{"type":"login","command":"string login"}]}`)
 	})
 
-	missing := invoke(t, []string{"fetch", "https://example.com"}, baseURL, "")
-	if missing.status != 1 || !strings.Contains(missing.errors, "Set STRING_API_KEY") {
-		t.Errorf("missing %+v", missing)
-	}
-
 	rejected := invoke(t, []string{"fetch", "https://example.com"}, baseURL, "private-key")
-	if rejected.status != 1 || !strings.Contains(rejected.errors, "HTTP 401") || strings.Contains(rejected.errors, "private-key") {
+	if rejected.status != 3 || !strings.Contains(rejected.errors, "HTTP 401") || !strings.Contains(rejected.errors, "Next: check STRING_API_KEY") || strings.Contains(rejected.errors, "private-key") {
 		t.Errorf("rejected %+v", rejected)
 	}
 
 	malformed := invoke(t, []string{"fetch", "https://example.com"}, baseURL, "private\nkey")
-	if malformed.status != 1 || !strings.Contains(malformed.errors, "STRING_API_KEY contains characters") || strings.Contains(malformed.errors, "private") {
+	if malformed.status != 3 || !strings.Contains(malformed.errors, "STRING_API_KEY contains characters") || strings.Contains(malformed.errors, "private") {
 		t.Errorf("malformed %+v", malformed)
+	}
+}
+
+func TestWithoutAKeyFetchAndSearchGoKeylessWithOnlyAllowedFields(t *testing.T) {
+	var calls []string
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, sent := r.Header["Authorization"]; sent {
+			t.Errorf("keyless request sent Authorization")
+		}
+		calls = append(calls, r.URL.Path+" "+requestBody(t, r))
+		w.Header().Set("X-String-Keyless", "true")
+		w.Header().Set("X-Keyless-Requests-Remaining", "49")
+		w.Header().Set("X-Keyless-Credits-Remaining", "99")
+		io.WriteString(w, `{"ok":true}`)
+	})
+
+	fetched := invoke(t, []string{"fetch", "https://example.com", "--format", "markdown"}, baseURL, "")
+	if fetched.status != 0 || !strings.Contains(fetched.errors, "X-Keyless-Requests-Remaining: 49") {
+		t.Fatalf("fetch %+v", fetched)
+	}
+	searched := invoke(t, []string{"search", "coffee", "--language", "en"}, baseURL, "")
+	if searched.status != 0 || len(calls) != 2 {
+		t.Fatalf("search %+v, calls %v", searched, calls)
+	}
+	expectJSON(t, strings.TrimPrefix(calls[0], "/v1/fetch "), `{"url":"https://example.com/","format":"markdown"}`)
+	expectJSON(t, strings.TrimPrefix(calls[1], "/v1/search "), `{"query":"coffee","language":"en"}`)
+
+	for _, list := range [][]string{
+		{"search", "coffee", "--count", "20"},
+		{"request", "POST", "https://example.com"},
+		{"sitemap", "list"},
+	} {
+		if got := invoke(t, list, baseURL, ""); got.status != 3 || !strings.Contains(got.errors, "string login") {
+			t.Errorf("%v: %+v", list, got)
+		}
+	}
+	if len(calls) != 2 {
+		t.Errorf("key-only commands reached the API: %v", calls)
+	}
+}
+
+func TestKeylessRefusalsCarryRetryAfterAndTheNextStepAsJSON(t *testing.T) {
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.Header().Set("X-Request-Id", "req-1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":"Keyless limit reached","message":"It resets at 00:00 UTC.","signupUrl":"https://portal.usestring.ai/sign-up"}`)
+	})
+
+	got := invoke(t, []string{"search", "coffee", "--json"}, baseURL, "")
+	if got.status != 3 {
+		t.Fatalf("%+v", got)
+	}
+	envelope := decode(t, got.errors).(map[string]any)["error"].(map[string]any)
+	if envelope["status"] != 429.0 || envelope["retry_after_seconds"] != 3600.0 || envelope["request_id"] != "req-1" || !strings.Contains(envelope["next_step"].(string), "string login") {
+		t.Errorf("envelope %v", envelope)
+	}
+}
+
+func TestLoginWithTokenChecksAndSavesAKeyFromStdin(t *testing.T) {
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sitemap" || r.Header.Get("Authorization") != "Bearer good-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			io.WriteString(w, `{"error":"Invalid API key"}`)
+			return
+		}
+		io.WriteString(w, `{"jobs":[]}`)
+	})
+	home := t.TempDir()
+	env := map[string]string{"HOME": home, "STRING_API_BASE_URL": baseURL}
+	login := func(stdin string) result {
+		var stdout, stderr bytes.Buffer
+		status := run([]string{"login", "--with-token"}, runtime{
+			env: func(name string) (string, bool) {
+				value, ok := env[name]
+				return value, ok
+			},
+			client: http.DefaultClient,
+			stdin:  strings.NewReader(stdin),
+			stdout: &stdout,
+			stderr: &stderr,
+		})
+		return result{status, stdout.String(), stderr.String()}
+	}
+	path := filepath.Join(home, ".config", "string", "credentials.json")
+
+	if got := login("bad-key\n"); got.status != 3 || strings.Contains(got.output+got.errors, "bad-key") {
+		t.Errorf("bad key %+v", got)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("saved a rejected key: %v", err)
+	}
+	if got := login("good-key\n"); got.status != 0 || strings.Contains(got.output+got.errors, "good-key") {
+		t.Fatalf("good key %+v", got)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("credentials file %v, %v", info, err)
+	}
+	if saved, _ := loadCredentials(path); saved.APIKey != "good-key" {
+		t.Errorf("saved %+v", saved)
 	}
 }
 
@@ -252,14 +348,14 @@ func TestInitInstallsTheSkillForDetectedAgentsOnly(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".cursor")); !os.IsNotExist(err) {
 		t.Errorf("created a skills directory for an agent that is not installed: %v", err)
 	}
-	for _, hint := range []string{"npm install -g @usestring/cli", "Run string login"} {
+	for _, hint := range []string{"npm install -g @usestring/cli", "string login"} {
 		if !strings.Contains(stdout.String(), hint) {
 			t.Errorf("output lacks %q:\n%s", hint, stdout.String())
 		}
 	}
 
 	stderr.Reset()
-	if status := run([]string{"init", "--agent", "cursor,nope"}, rt); status != 1 || !strings.Contains(stderr.String(), "Unknown agent: nope") {
+	if status := run([]string{"init", "--agent", "cursor,nope"}, rt); status != 2 || !strings.Contains(stderr.String(), "Unknown agent: nope") {
 		t.Errorf("status %d: %s", status, stderr.String())
 	}
 }
@@ -350,13 +446,13 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 		t.Errorf("credentials file still there: %v", err)
 	}
 	stderr.Reset()
-	if status := run([]string{"whoami"}, rt); status != 1 || !strings.Contains(stderr.String(), "Not logged in") {
+	if status := run([]string{"whoami"}, rt); status != 3 || !strings.Contains(stderr.String(), "Not logged in") {
 		t.Errorf("whoami after logout status %d: %s", status, stderr.String())
 	}
 
 	stderr.Reset()
 	tokenAnswers = []string{`{"error":"access_denied"}`}
-	if status := run([]string{"login"}, rt); status != 1 || !strings.Contains(stderr.String(), "Sign-in was denied") {
+	if status := run([]string{"login"}, rt); status == 0 || !strings.Contains(stderr.String(), "Sign-in was denied") {
 		t.Errorf("denied login status %d: %s", status, stderr.String())
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

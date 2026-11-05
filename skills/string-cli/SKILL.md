@@ -9,16 +9,24 @@ description: |
 
 # String CLI
 
-The `string` command calls String Web Access and prints the response to stdout. Errors go to
-stderr with exit status 1.
+The `string` command calls String Web Access and prints the response to stdout. **It works without
+a key:** `string search` and `string fetch` run keyless, so make the first call before asking anyone
+to sign in. Errors go to stderr with a nonzero exit status.
 
 ## Before the first call
 
 - `string --help` lists the commands. If `string` is missing, install it: `npm install -g @usestring/cli`.
-- Commands use `STRING_API_KEY`, or the key `string login` saved; `string whoami` says which. If a
-  command prints `Set STRING_API_KEY`, ask the user to run `string login`, which opens their
-  browser, or to give you a key from https://portal.usestring.ai/settings. Never put a key in a
-  URL, a query, a header value or a file you commit.
+- With no key, `search` and `fetch` run keyless: 50 requests and 100 credits per IP address per UTC
+  day. A plain fetch costs 1 credit; a fetch with `executeJS` or a search costs 5. stderr shows what
+  is left after each call. Keyless takes only `--format` and `executeJS` on fetch, and `--language`,
+  `dateRange`, `sortBy`, `safeSearch`, `autocorrect` and `verbatim` on search. `--count`,
+  `--country`, `--location`, `--engine`, other `--input` fields, `request` and `sitemap` need a key.
+- With a key, every command and option works. Commands use `STRING_API_KEY`, or the key `string
+  login` saved; `string whoami` says which. When you need a key and have none, ask the user to run
+  `string login`, which opens their browser, or to save a key from
+  https://portal.usestring.ai/settings with `string login --with-token < key.txt`. Never ask for a
+  key in chat, and never put one in a URL, a query, a header value, a command line or a file you
+  commit. In an unattended run, don't start a login; stay keyless or stop and report.
 
 ## Pick the command
 
@@ -47,7 +55,8 @@ The JSON has `results` (each with `title`, `url`, `snippet`) and `zeroResults`. 
 business or person may be answered in `entity` or `places` with `results` empty, so read those
 before deciding nothing was found. A snippet is not the page: fetch a result before relying on it.
 
-Without `--count` a search returns one results page, about ten results, billed as one search.
+Without `--count` a search returns one results page, about ten results, billed as one search
+(or 5 keyless credits).
 `--count N` (1 to 300) pages until it has N results, and each page is billed as one search, so
 ask for only what the task needs.
 
@@ -107,13 +116,16 @@ running `approve`. A quote not approved within an hour expires.
 
 ## When a command fails
 
-The error is `HTTP <status>: <body>` on stderr.
+The error is `HTTP <status>: <body>` on stderr, then `Retry-After`, the keyless allowance and
+`x-request-id` when the API sends them, then `Next:` with the step to take. Add `--json` for one
+JSON object instead: `{"error":{"status","code","message","retry_after_seconds","request_id","next_step"}}`.
+Branch on the exit code:
 
-| Status | What to do |
-| --- | --- |
-| `400` | The request is invalid; the body names the field. Fix it, don't retry as is. |
-| `401` | The key is missing or wrong. Ask the user to run `string login` again or give you a valid key. |
-| `402` | The account balance is too low. Tell the user. |
-| `403` | The destination needs approval for this account. Tell the user what the body says. |
-| `429` | Rate limited. Wait and retry. |
-| `502`, `504` | The page could not be read in time. Retry once, then try `executeJS` or another source. |
+| Exit | Meaning | What to do |
+| --- | --- | --- |
+| 2 | Bad input; a `400` names the field | Fix it, don't retry as is. |
+| 3 | Needs a key: a keyless refusal, a key-only option, or a `401`/`403` | Keyless refusals: drop the key-only option, or wait for `Retry-After` (the allowance resets at 00:00 UTC), or ask the user for a key as above. `401`: the key is wrong; ask the user to run `string login` again. `403` with a key: the destination needs approval for this account; tell the user what the body says. |
+| 4 | `402`: the account balance is too low | Tell the user. Don't retry. |
+| 5 | `429`: rate limited | Wait for `Retry-After`, then retry. |
+| 6 | `5xx`: the page could not be read | Retry once, then try `executeJS` or another source. |
+| 7 | Timeout | Retry once. |
