@@ -14,12 +14,17 @@ class String < Formula
 
   def install
     ENV["CGO_ENABLED"] = "0"
-    system "go", "build", *std_go_args, "./cmd/string"
+    ldflags = "-s -w -X main.version=#{version}"
+    system "go", "build", *std_go_args(ldflags:), "./cmd/string"
   end
 
   test do
+    assert_match version.to_s, shell_output("#{bin}/string --version")
+
+    # Without a key, fetch and search go out over the network; a key-only command is refused
+    # before any request, so it checks the missing-key path offline.
     ENV.delete("STRING_API_KEY")
-    assert_match "Set STRING_API_KEY to a String Web Access API key",
-                 shell_output("#{bin}/string fetch https://example.com 2>&1", 1)
+    ENV.delete("XDG_CONFIG_HOME")
+    assert_match "needs a key", shell_output("#{bin}/string sitemap list 2>&1", 3)
   end
 end
