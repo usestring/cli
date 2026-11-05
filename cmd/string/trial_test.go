@@ -15,7 +15,7 @@ import (
 )
 
 func TestTrialSolvesTheProofOfWorkAndSavesTheKeyAndClaimToken(t *testing.T) {
-	enabled := true
+	refusalStatus, refusal := 0, ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/agent-signup/identity" {
 			http.NotFound(w, r)
@@ -26,9 +26,9 @@ func TestTrialSolvesTheProofOfWorkAndSavesTheKeyAndClaimToken(t *testing.T) {
 			Proof struct{ Challenge, Nonce string }
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		if !enabled {
-			w.WriteHeader(http.StatusForbidden)
-			io.WriteString(w, `{"error":"anonymous_not_enabled","error_description":"Anonymous registration is switched off."}`)
+		if refusalStatus != 0 {
+			w.WriteHeader(refusalStatus)
+			io.WriteString(w, refusal)
 			return
 		}
 		digest := sha256.Sum256([]byte(body.Proof.Challenge + ":" + body.Proof.Nonce))
@@ -81,9 +81,27 @@ func TestTrialSolvesTheProofOfWorkAndSavesTheKeyAndClaimToken(t *testing.T) {
 	}
 
 	os.Remove(filepath.Join(dir, "credentials.json"))
-	enabled = false
+	refusalStatus, refusal = http.StatusForbidden, `{"error":"anonymous_not_enabled","error_description":"Anonymous registration is switched off."}`
 	stderr.Reset()
 	if status := run([]string{"trial"}, rt); status != exitAuth || !strings.Contains(stderr.String(), "switched off") {
 		t.Errorf("switched-off trial status %d: %s", status, stderr.String())
+	}
+
+	// A portal without the endpoint: agent sign-up switched off, or a release that predates it.
+	for _, unserved := range []struct {
+		status int
+		body   string
+	}{
+		{http.StatusNotFound, `{"error":"not_found"}`},
+		{http.StatusForbidden, `{"error":"Forbidden - Cross-origin request rejected"}`},
+	} {
+		refusalStatus, refusal = unserved.status, unserved.body
+		stderr.Reset()
+		if status := run([]string{"trial"}, rt); status != exitAuth || !strings.Contains(stderr.String(), "does not offer trial keys") {
+			t.Errorf("trial against %d %s: status %d: %s", unserved.status, unserved.body, status, stderr.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "credentials.json")); !os.IsNotExist(err) {
+		t.Errorf("a refused trial saved a key: %v", err)
 	}
 }

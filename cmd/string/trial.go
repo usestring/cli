@@ -90,7 +90,9 @@ func trialCommand(list []string, rt runtime) error {
 		answer = trialAnswer{}
 		status, err = postJSON(rt, endpoint, request, &answer)
 	}
-	if status == http.StatusNotFound {
+	// A portal that doesn't serve this endpoint answers 404, or a bare 403 from
+	// the cross-origin check in front of its API routes.
+	if status == http.StatusNotFound || (err == nil && status == http.StatusForbidden && answer.ErrorDescription == "") {
 		return &failure{exit: exitAuth, code: "trial_unavailable", status: status, message: "This String server does not offer trial keys.", nextStep: needsKey}
 	}
 	if err != nil {
