@@ -30,6 +30,16 @@ type runtime struct {
 	sleep    func(time.Duration)
 	// terminal is true when a person is at the keyboard, so init can sign in.
 	terminal bool
+	// json is set by --json: machine-readable output for agents.
+	json bool
+	now  func() time.Time
+}
+
+func (rt runtime) clock() time.Time {
+	if rt.now == nil {
+		return time.Now()
+	}
+	return rt.now()
 }
 
 const help = `String Web Access CLI
@@ -49,7 +59,7 @@ Usage:
   string sitemap list [--limit N] [--offset N]
   string sitemap cancel JOB_ID
   string init [--agent NAME[,NAME...]]
-  string login [--with-token]
+  string login [--with-token | --no-wait | --poll]
   string logout
   string whoami
   string --version
@@ -59,8 +69,10 @@ Without a key, fetch takes --format and search takes --language; --engine,
 of the allowance is printed to stderr after each keyless call.
 init installs the string-cli skill for the coding agents found on this machine,
 then signs in when run from a terminal with no key set.
-login signs in through your browser and saves the API key you choose.
-login --with-token reads an API key from stdin, checks it and saves it.
+login signs in through your browser and saves the API key you choose. Without
+a terminal, or with --no-wait, it prints the link and code and exits; string
+login --poll then waits for the approval and saves the key. With --json both
+print JSON. login --with-token reads an API key from stdin, checks it and saves it.
 STRING_API_KEY wins over a saved key; whoami says which one is in use.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 --input reads additional request fields from a JSON object in FILE, or from stdin with -.
@@ -584,9 +596,9 @@ func truncateUTF16(text string, limit int) string {
 }
 
 func run(list []string, rt runtime) int {
-	list, asJSON := takeJSONFlag(list)
+	list, rt.json = takeJSONFlag(list)
 	if err := execute(list, rt); err != nil {
-		return report(rt.stderr, err, asJSON)
+		return report(rt.stderr, err, rt.json)
 	}
 	return 0
 }
