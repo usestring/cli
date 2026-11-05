@@ -470,6 +470,78 @@ func TestInitInstallsTheSkillForDetectedAgentsOnly(t *testing.T) {
 	}
 }
 
+func TestInitAddsTheMCPServerToClaudeCodeAndCodexOnceWithoutAKey(t *testing.T) {
+	home := t.TempDir()
+	for _, dir := range []string{".claude", ".codex"} {
+		if err := os.MkdirAll(filepath.Join(home, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	codexConfig := filepath.Join(home, ".codex", "config.toml")
+	existing := "model = \"gpt-5\"\n\n[mcp_servers.other]\ncommand = \"npx\""
+	if err := os.WriteFile(codexConfig, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"HOME": home, "STRING_API_KEY": "secret-key"}
+	var ran [][]string
+	var stdout, stderr bytes.Buffer
+	rt := runtime{
+		env: func(name string) (string, bool) {
+			value, ok := env[name]
+			return value, ok
+		},
+		lookPath: func(name string) (string, error) {
+			if name == "claude" {
+				return "/opt/bin/claude", nil
+			}
+			return "", os.ErrNotExist
+		},
+		// Like claude mcp add, record the server in Claude Code's user settings.
+		program: func(name string, args ...string) ([]byte, error) {
+			ran = append(ran, append([]string{name}, args...))
+			settings := `{"mcpServers":{"string-web-access":{"type":"http","url":"https://mcp.usestring.ai/v3/mcp"}}}`
+			return nil, os.WriteFile(filepath.Join(home, ".claude.json"), []byte(settings), 0o600)
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	}
+
+	if status := run([]string{"init", "--no-mcp"}, rt); status != 0 {
+		t.Fatalf("status %d: %s", status, stderr.String())
+	}
+	if got, _ := os.ReadFile(codexConfig); len(ran) > 0 || string(got) != existing {
+		t.Fatalf("--no-mcp ran %q and left Codex's config as %q", ran, got)
+	}
+	for range 2 {
+		if status := run([]string{"init"}, rt); status != 0 {
+			t.Fatalf("status %d: %s", status, stderr.String())
+		}
+	}
+	add := []string{"/opt/bin/claude", "mcp", "add", "--transport", "http", "--scope", "user", "string-web-access", "https://mcp.usestring.ai/v3/mcp"}
+	if !reflect.DeepEqual(ran, [][]string{add}) {
+		t.Errorf("ran %q, want %q once", ran, add)
+	}
+	want := existing + "\n\n[mcp_servers.string-web-access]\nurl = \"https://mcp.usestring.ai/v3/mcp\"\n"
+	if got, _ := os.ReadFile(codexConfig); string(got) != want {
+		t.Errorf("Codex's config is\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestInitLeavesACodexConfigItCannotExtendUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// TOML forbids adding [mcp_servers.NAME] to an inline table, and Codex
+	// will not start with a config that does.
+	existing := "mcp_servers = { other = { command = \"npx\" } }\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	addCodexMCP(dir)
+	if got, _ := os.ReadFile(path); string(got) != existing {
+		t.Errorf("config became %q", got)
+	}
+}
+
 func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 	var tokenAnswers []string
 	var fetchAuthorization string

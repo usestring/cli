@@ -29,6 +29,9 @@ type runtime struct {
 	stderr   io.Writer
 	openURL  func(string) error
 	sleep    func(time.Duration)
+	// program runs another program, such as claude for init, and returns
+	// what it printed.
+	program func(name string, args ...string) ([]byte, error)
 	// terminal is true when a person is at the keyboard, so init can sign in.
 	terminal bool
 	// progress is true when stderr is a terminal, so a long wait can show
@@ -73,7 +76,7 @@ Usage:
   string sitemap cancel JOB_ID
   string integrations [list [SITE]]
   string integrations run SITE ACTION [--FIELD VALUE ...]
-  string init [--agent NAME[,NAME...]]
+  string init [--agent NAME[,NAME...]] [--no-mcp]
   string login [--with-token | --no-wait | --poll]
   string logout
   string whoami
@@ -105,6 +108,7 @@ Without a key, fetch takes --format and --executeJS, and search takes
 Other fields, request and sitemap need a key. What is left of the allowance is
 printed to stderr after each keyless call.
 init installs the string-cli skill for the coding agents found on this machine,
+adds String's MCP server to Claude Code and Codex unless --no-mcp is given,
 then signs in when run from a terminal with no key set.
 login signs in through your browser and saves the API key you choose. Without
 a terminal, or with --no-wait, it prints the link and code and exits; string
