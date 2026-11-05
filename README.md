@@ -54,6 +54,8 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 
 An agent working with nobody present can register for a trial key instead, where the server offers it. `string trial` solves a few seconds' proof of work and saves a key with a small balance that works for 24 hours, in the same file. Beside it, in `trial.json`, it keeps a claim token, which a person can use for 7 days to adopt the agent onto their String account. Neither is printed. Where trial keys are switched off, `string trial` exits 3.
 
+`string trial claim --email ADDRESS` starts that claim. It prints a link and a code for the person at that address, who signs in to String with that email and enters the code. The CLI then saves a key on their account in place of the trial key, which stops working, and deletes `trial.json`. Without a terminal, or with `--no-wait`, it prints the link and code and exits, and `string trial claim --poll` waits for the person and saves the key. `--json` gives both as JSON.
+
 `string status` shows the version and the key in use. With a key, it adds the balance left, any amount held for crawls still running, the plan and its request rate, and auto top-up. Without one, it shows what the last keyless call from this machine left of today's allowance, kept in `~/.config/string/keyless.json`, so checking spends none of it. `--json` gives the same as one JSON object.
 
 ### Build from source

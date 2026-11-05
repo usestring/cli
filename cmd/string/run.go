@@ -78,6 +78,7 @@ Usage:
   string logout
   string whoami
   string trial
+  string trial claim (--email ADDRESS [--no-wait] | --poll)
   string status
   string --version
 
@@ -115,6 +116,10 @@ STRING_API_KEY wins over a saved key; whoami says which one is in use.
 trial registers an agent for a trial key with no account: after a few seconds'
 proof of work, it saves a key with a small balance that works for 24 hours,
 and a claim token a person can use to adopt the agent onto their account.
+trial claim --email ADDRESS shows a link and a code for that person. Once they
+sign in to String with that email and enter the code, a key on their account
+replaces the trial key. Without a terminal, or with --no-wait, it exits after
+showing them; trial claim --poll then waits and saves the key.
 status shows the version and the key in use. With a key it adds the balance
 left, any amount held by running crawls, the plan and its request rate, and
 auto top-up; without one, what the last keyless call left of today's allowance.
