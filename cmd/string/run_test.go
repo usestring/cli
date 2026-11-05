@@ -647,3 +647,114 @@ func TestIntegrationsListAndRunTakeTheInputFieldsAsFlags(t *testing.T) {
 		t.Errorf("refused runs reached the API: %v", posts)
 	}
 }
+
+// runAt runs the CLI with env as its whole environment and a fixed clock.
+func runAt(t *testing.T, list []string, env map[string]string, now time.Time) result {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	status := run(list, runtime{
+		env: func(name string) (string, bool) {
+			value, ok := env[name]
+			return value, ok
+		},
+		client: http.DefaultClient,
+		stdin:  strings.NewReader(""),
+		stdout: &stdout,
+		stderr: &stderr,
+		now:    func() time.Time { return now },
+	})
+	return result{status, stdout.String(), stderr.String()}
+}
+
+func TestStatusShowsTheBalanceWhatIsHeldThePlanAndTopUp(t *testing.T) {
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("%s %s without the key", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/account/balance":
+			io.WriteString(w, `{"currency":"USD","balance":25,"spent":10.5,"held":2.25,"remaining":12.25,"exhausted":false,"asOf":"2026-11-05T09:30:00Z",
+				"plan":{"tier":"pro","name":"Pro","priceUsdMonth":49},
+				"autoTopUp":{"enabled":true,"amountUsd":20,"maxPerPeriodUsd":100,"spentThisPeriodUsd":20,"remainingThisPeriodUsd":80}}`)
+		case "/v1/pricing":
+			io.WriteString(w, `{"plans":[{"id":"pro","requestsPerSecond":20}],"free":{"requestsPerSecond":2}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	env := map[string]string{"STRING_API_KEY": "test-key", "STRING_API_BASE_URL": baseURL}
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+
+	got := runAt(t, []string{"status"}, env, now)
+	want := "string " + version + `
+Key       STRING_API_KEY from the environment
+Balance   $12.25 left, with usage counted to 09:30 UTC
+Held      $2.25 for crawls still running
+Plan      Pro, 20 requests a second
+Top-up    on, $20.00 at a time, $80.00 left this period
+`
+	if got.status != 0 || got.output != want {
+		t.Errorf("got %+v, want output\n%s", got, want)
+	}
+
+	got = runAt(t, []string{"status", "--json"}, env, now)
+	report := decode(t, got.output).(map[string]any)
+	if got.status != 0 || report["version"] != version || report["key"].(map[string]any)["source"] != "environment" ||
+		report["balance"].(map[string]any)["remaining"] != 12.25 || report["requestsPerSecond"] != 20.0 || report["keyless"] != nil {
+		t.Errorf("--json %+v", got)
+	}
+}
+
+func TestStatusWithoutAKeyShowsWhatTheLastKeylessCallLeft(t *testing.T) {
+	var calls []string
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		w.Header().Set("X-String-Keyless", "true")
+		w.Header().Set("X-Keyless-Requests-Remaining", "49")
+		w.Header().Set("X-Keyless-Credits-Remaining", "95")
+		io.WriteString(w, "# Example Domain\n")
+	})
+	env := map[string]string{"HOME": t.TempDir(), "STRING_API_BASE_URL": baseURL}
+	morning := time.Date(2026, 11, 5, 9, 15, 0, 0, time.UTC)
+
+	if got := runAt(t, []string{"status"}, env, morning); got.status != 0 || !strings.Contains(got.output, "Keyless   no keyless call from this machine today") {
+		t.Errorf("before any call %+v", got)
+	}
+	if got := runAt(t, []string{"fetch", "https://example.com"}, env, morning); got.status != 0 {
+		t.Fatalf("fetch %+v", got)
+	}
+	got := runAt(t, []string{"status"}, env, morning.Add(2*time.Hour))
+	want := "string " + version + `
+Key       none, so fetch and search run keyless
+Keyless   49 requests and 95 credits left today, as of this machine's last keyless call at 09:15 UTC
+`
+	if got.status != 0 || got.output != want {
+		t.Errorf("got %+v, want output\n%s", got, want)
+	}
+	if got := runAt(t, []string{"status"}, env, morning.Add(24*time.Hour)); !strings.Contains(got.output, "no keyless call from this machine today; the allowance resets at 00:00 UTC") {
+		t.Errorf("next day %+v", got)
+	}
+	if len(calls) != 1 {
+		t.Errorf("status reached the API without a key: %v", calls)
+	}
+}
+
+func TestStatusSaysWhenTheKeyIsRefusedOrTheBalanceIsUnavailable(t *testing.T) {
+	code := http.StatusUnauthorized
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(code)
+		io.WriteString(w, `{"error":"Invalid API key"}`)
+	})
+	env := map[string]string{"STRING_API_KEY": "test-key", "STRING_API_BASE_URL": baseURL}
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+
+	refused := runAt(t, []string{"status"}, env, now)
+	if refused.status != 3 || !strings.Contains(refused.output, "refused by the API (HTTP 401)") || strings.Contains(refused.output+refused.errors, "test-key") {
+		t.Errorf("refused %+v", refused)
+	}
+	code = http.StatusNotFound
+	missing := runAt(t, []string{"status"}, env, now)
+	if missing.status != 0 || !strings.Contains(missing.output, "Balance   unavailable (HTTP 404); see https://portal.usestring.ai/usage") {
+		t.Errorf("missing %+v", missing)
+	}
+}
