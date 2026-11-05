@@ -71,6 +71,8 @@ Usage:
   string sitemap results JOB_ID [--limit N] [--offset N]
   string sitemap list [--limit N] [--offset N]
   string sitemap cancel JOB_ID
+  string integrations [list [SITE]]
+  string integrations run SITE ACTION [--FIELD VALUE ...]
   string init [--agent NAME[,NAME...]]
   string login [--with-token | --no-wait | --poll]
   string logout
@@ -93,6 +95,9 @@ with -; flags win over it.
 sitemap submit only quotes a crawl. --approve starts it at the quoted cost, and
 --wait waits for the crawl to end, showing progress on a terminal. Interrupting
 the wait leaves the crawl running; string sitemap status JOB_ID --wait resumes it.
+integrations lists the site integrations, typed actions over one website such
+as reddit post. list SITE shows each action's flags, which are its input fields
+by name, and run calls one: string integrations run reddit post --post URL.
 
 Without a key, fetch takes --format and --executeJS, and search takes
 --language, --dateRange, --sortBy, --safeSearch, --autocorrect and --verbatim.
@@ -252,7 +257,14 @@ const (
 	object
 	booleanOrObject
 	textOrObject
+	// The list kinds add one item per flag, or take a whole JSON array.
+	textList
+	integerList
+	numberList
 )
+
+// itemKind is the kind of one item of a list kind.
+var itemKind = map[kind]kind{textList: text, integerList: integer, numberList: number}
 
 // spec is what a command takes besides --help and --input. Each API request
 // field is a flag spelled exactly as the field, so the API reference reads
@@ -337,9 +349,17 @@ func parse(list []string, s spec) (args, error) {
 				if err != nil {
 					return args{}, err
 				}
-				if parsed.fields[name], err = fieldValue(raw, fieldKind, v); err != nil {
+				value, err := fieldValue(raw, fieldKind, v)
+				if err != nil {
 					return args{}, err
 				}
+				if _, isList := itemKind[fieldKind]; isList {
+					if _, whole := value.(json.RawMessage); !whole {
+						items, _ := parsed.fields[name].([]any)
+						value = append(items, value)
+					}
+				}
+				parsed.fields[name] = value
 			default:
 				return args{}, unknownOption(raw, s)
 			}
@@ -375,6 +395,11 @@ func fieldValue(raw string, k kind, value string) (any, error) {
 		return n, nil
 	case object:
 		return jsonValue(raw, value)
+	case textList, integerList, numberList:
+		if strings.HasPrefix(strings.TrimSpace(value), "[") {
+			return jsonValue(raw, value)
+		}
+		return fieldValue(raw, itemKind[k], value)
 	case textOrObject:
 		if strings.HasPrefix(strings.TrimSpace(value), "{") {
 			return jsonValue(raw, value)
@@ -956,6 +981,8 @@ func execute(list []string, rt runtime) error {
 		return logoutCommand(list[1:], rt)
 	case "whoami":
 		return whoamiCommand(list[1:], rt)
+	case "integrations":
+		return integrationsCommand(list[1:], rt)
 	}
 	op, err := operationFor(list[0], list[1:], rt.stdin)
 	if err != nil {

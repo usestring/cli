@@ -592,3 +592,58 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 		t.Errorf("init from a terminal saved no key: %v", err)
 	}
 }
+
+func TestIntegrationsListAndRunTakeTheInputFieldsAsFlags(t *testing.T) {
+	const manifest = `{"manifestVersion":2,"sites":[{"name":"reddit","title":"Reddit","version":"1.0.1",
+		"description":"Reddit posts with their comment trees. And more.",
+		"actions":[{"name":"post","description":"Read one Reddit post and its comment tree.",
+			"input":{"type":"object","required":["post"],"properties":{
+				"post":{"type":"string","description":"The post's URL or id."},
+				"sort":{"type":"string","enum":["best","top"]},
+				"maxPages":{"type":["null","integer"]},
+				"flairs":{"type":"array","items":{"type":"string"}}}},
+			"examples":[{"input":{"post":"https://www.reddit.com/r/golang/comments/1xapaw7/","maxPages":3}}]}]}]}`
+	var posts []string
+	var authorized []bool
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		_, sent := r.Header["Authorization"]
+		authorized = append(authorized, sent)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/integrations", "GET /v1/integrations/reddit":
+			io.WriteString(w, manifest)
+		case "POST /v1/integrations/reddit/post":
+			posts = append(posts, requestBody(t, r))
+			io.WriteString(w, `{"envelopeVersion":1,"data":[{"id":"1xapaw7"}],"failures":[]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	listed := invoke(t, []string{"integrations"}, baseURL, "")
+	if listed.status != 0 || !strings.Contains(listed.output, "reddit         Reddit posts with their comment trees.\n  post         Read one Reddit post") || authorized[0] {
+		t.Errorf("list %+v", listed)
+	}
+	site := invoke(t, []string{"integrations", "list", "reddit"}, baseURL, "")
+	for _, want := range []string{"string integrations run reddit post\n", "--post TEXT\n      (required) The post's URL or id.", "--sort best|top", "--flairs TEXT (repeatable)", "Example: string integrations run reddit post --post https://www.reddit.com/r/golang/comments/1xapaw7/ --maxPages 3"} {
+		if !strings.Contains(site.output, want) {
+			t.Errorf("list reddit lacks %q:\n%s", want, site.output)
+		}
+	}
+
+	ran := invoke(t, []string{"integrations", "run", "reddit", "post", "--post", "1xapaw7", "--maxPages", "2", "--flairs", "News", "--flairs", "Help"}, baseURL, "test-key")
+	if ran.status != 0 || len(posts) != 1 {
+		t.Fatalf("run %+v, posts %v", ran, posts)
+	}
+	expectJSON(t, posts[0], `{"post":"1xapaw7","maxPages":2,"flairs":["News","Help"]}`)
+	expectJSON(t, ran.output, `{"envelopeVersion":1,"data":[{"id":"1xapaw7"}],"failures":[]}`)
+
+	if got := invoke(t, []string{"integrations", "run", "reddit", "post", "--max-pages", "2"}, baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, "Did you mean '--maxPages'?") {
+		t.Errorf("misspelled flag %+v", got)
+	}
+	if got := invoke(t, []string{"integrations", "run", "reddit", "post", "--post", "1xapaw7"}, baseURL, ""); got.status != 3 || !strings.Contains(got.errors, "needs a key") {
+		t.Errorf("keyless run %+v", got)
+	}
+	if len(posts) != 1 {
+		t.Errorf("refused runs reached the API: %v", posts)
+	}
+}
