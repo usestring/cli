@@ -111,6 +111,18 @@ string integrations run reddit post --post https://www.reddit.com/r/technology/c
 
 `string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint.
 
+## Adding credit
+
+When a command exits 4 because the balance is too low, `string topup` asks for more. It prints a link for a person signed in to String to approve and pay; nothing is charged until they do, and the link expires after an hour. An organization on a plan gets its plan's top-up. One without a plan gets a credit pack: Starter's, or the one `--packPlanId` names with a `planId` from `GET /v1/pricing`.
+
+```bash
+string topup                          # the link, what it buys and when it expires
+string topup status cs_… --wait       # waits until it is paid, or exits 1 if it expires
+string topup --json                   # {"id":"cs_…","status":"pending","kind":"credit_pack","amountUsd":…,"approvalUrl":"…","pollUrl":"…","expiresAt":"…"}
+```
+
+`string upgrade` prints the link to choose a plan instead, and `string upgrade growth` preselects one: `starter`, `growth`, `scale` or `volume`. Neither command opens a browser, so an agent can pass the link to whoever pays.
+
 ## Errors and exit codes
 
 Errors go to stderr, followed by the `Retry-After`, keyless allowance and `x-request-id` headers when the API sends them, and the next step. Add `--json` to any command to get the error as one JSON object on stderr instead:
