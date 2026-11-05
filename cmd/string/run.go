@@ -77,6 +77,7 @@ Usage:
   string login [--with-token | --no-wait | --poll]
   string logout
   string whoami
+  string trial
   string status
   string --version
 
@@ -111,6 +112,9 @@ a terminal, or with --no-wait, it prints the link and code and exits; string
 login --poll then waits for the approval and saves the key. With --json both
 print JSON. login --with-token reads an API key from stdin, checks it and saves it.
 STRING_API_KEY wins over a saved key; whoami says which one is in use.
+trial registers an agent for a trial key with no account: after a few seconds'
+proof of work, it saves a key with a small balance that works for 24 hours,
+and a claim token a person can use to adopt the agent onto their account.
 status shows the version and the key in use. With a key it adds the balance
 left, any amount held by running crawls, the plan and its request rate, and
 auto top-up; without one, what the last keyless call left of today's allowance.
@@ -987,6 +991,8 @@ func execute(list []string, rt runtime) error {
 		return whoamiCommand(list[1:], rt)
 	case "integrations":
 		return integrationsCommand(list[1:], rt)
+	case "trial":
+		return trialCommand(list[1:], rt)
 	case "status":
 		return statusCommand(list[1:], rt)
 	}
