@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"os/exec"
@@ -38,6 +39,7 @@ func main() {
 		stderr:   os.Stderr,
 		openURL:  openBrowser,
 		sleep:    time.Sleep,
+		program:  runProgram,
 		terminal: isTerminal(os.Stdin),
 		progress: isTerminal(os.Stderr),
 	}))
@@ -46,6 +48,14 @@ func main() {
 func isTerminal(file *os.File) bool {
 	info, err := file.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// runProgram runs name with args and returns what it printed. The deadline
+// stops a program that hangs from holding the command that ran it.
+func runProgram(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 // openBrowser shows link in the default browser. string login prints the link

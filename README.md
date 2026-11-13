@@ -145,6 +145,8 @@ string init --agent claude-code,codex  # only these
 npx skills add usestring/cli           # the same skill through the skills installer
 ```
 
+`string init` also adds String's [hosted MCP server](https://portal.usestring.ai/docs/mcp/remote) to Claude Code and Codex as `string-web-access`, unless one is already there. Both sign in to it with String, so no key goes into their settings: run `claude mcp login string-web-access` or `codex mcp login string-web-access` and choose the key each may use. For the other agents it found, init prints the setup page instead: most connect with an API key, which init never copies into another program's settings, and OpenCode signs in only from v2. `--no-mcp` skips this step.
+
 ## Project and releases
 
 [usestring/cli](https://github.com/usestring/cli) is the canonical upstream for the native CLI, npm client, source releases, issues, and Homebrew formula. CLI maintainers own release publication and the matching formula update; see [releasing the CLI](docs/releasing.md).
