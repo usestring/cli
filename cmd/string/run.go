@@ -82,6 +82,7 @@ Usage:
   string whoami
   string trial
   string status
+  string balance
   string --version
 
 Each API request field is a flag spelled exactly as the field, so the API
@@ -122,6 +123,9 @@ and a claim token a person can use to adopt the agent onto their account.
 status shows the version and the key in use. With a key it adds the balance
 left, any amount held by running crawls, the plan and its request rate, and
 auto top-up; without one, what the last keyless call left of today's allowance.
+balance prints the same balance, plan and auto top-up as JSON, exactly as the
+API sends them, and needs a key. Unlike status, it fails when the API can't
+answer.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
@@ -999,6 +1003,8 @@ func execute(list []string, rt runtime) error {
 		return trialCommand(list[1:], rt)
 	case "status":
 		return statusCommand(list[1:], rt)
+	case "balance":
+		return balanceCommand(list[1:], rt)
 	}
 	op, err := operationFor(list[0], list[1:], rt.stdin)
 	if err != nil {
