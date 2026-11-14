@@ -16,11 +16,16 @@ import (
 
 // String's hosted MCP server. Claude Code and Codex sign in to it with
 // String, so init can add it to them without putting a key in their settings.
+// ?login is what asks for that sign-in: with no credential, the bare address
+// serves keyless fetch and search and never asks.
 const (
 	mcpName = "string-web-access"
 	mcpHost = "mcp.usestring.ai"
-	mcpURL  = "https://" + mcpHost + "/v3/mcp"
-	mcpDocs = "https://portal.usestring.ai/docs/mcp/remote"
+	mcpURL  = "https://" + mcpHost + "?login"
+	// mcpURLArg is mcpURL in a command printed for a person to paste, quoted
+	// because zsh reads its ? as a glob and refuses the command.
+	mcpURLArg = "'" + mcpURL + "'"
+	mcpDocs   = "https://portal.usestring.ai/docs/mcp/remote"
 )
 
 // agent is a coding agent that loads skills from a directory under the
@@ -223,7 +228,7 @@ func addClaudeMCP(home string, rt runtime) string {
 	add := []string{"mcp", "add", "--transport", "http", "--scope", "user", mcpName, mcpURL}
 	claude, err := rt.lookPath("claude")
 	if err != nil {
-		return "Add String's MCP server to Claude Code with: claude " + strings.Join(add, " ")
+		return "Add String's MCP server to Claude Code with: claude " + strings.Join(add[:len(add)-1], " ") + " " + mcpURLArg
 	}
 	if output, err := rt.program(claude, add...); err != nil {
 		reason, _, _ := strings.Cut(strings.TrimSpace(string(output)), "\n")
@@ -276,7 +281,7 @@ func addCodexMCP(dir string) string {
 	case strings.Contains(config, mcpName) || strings.Contains(config, mcpHost):
 		return "Codex already has String's MCP server."
 	case codexInlineServers.MatchString(config):
-		return "Add String's MCP server to Codex with: codex mcp add " + mcpName + " --url " + mcpURL
+		return "Add String's MCP server to Codex with: codex mcp add " + mcpName + " --url " + mcpURLArg
 	}
 	entry := "[mcp_servers." + mcpName + "]\nurl = \"" + mcpURL + "\"\n"
 	if config != "" {
