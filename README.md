@@ -50,6 +50,8 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
   export STRING_API_KEY="your-api-key"
   ```
 
+Browser sign-in isn't switched on in released builds yet: `string login` says so and exits 3, and `string init` skips its sign-in step. Until a release turns it on, use `string login --with-token` or `STRING_API_KEY`.
+
 `string whoami` shows which key commands use, and `string logout` deletes the saved one.
 
 An agent working with nobody present can register for a trial key instead, where the server offers it. `string trial` solves a few seconds' proof of work and saves a key with a small balance that works for 24 hours, in the same file. Beside it, in `trial.json`, it keeps a claim token, which a person can use for 7 days to adopt the agent onto their String account. Neither is printed. Where trial keys are switched off, `string trial` exits 3.
