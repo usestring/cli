@@ -1,12 +1,12 @@
 # String Web Access CLI
 
-Use String Web Access from a terminal. The CLI supports fetch, search, direct HTTP requests, and sitemap jobs. JSON responses go to stdout, so they can be piped to other commands.
+Use String Web Access from a terminal. The CLI supports fetch, search, direct HTTP requests, and sitemap jobs. Responses go to stdout, so they can be piped to other commands.
 
 **It works without a key.** `string fetch` and `string search` run keyless, within a daily allowance per IP address, so the first call needs no account:
 
 ```bash
 npx -y @usestring/cli search "string web access"
-npx -y @usestring/cli fetch https://example.com --format markdown
+npx -y @usestring/cli https://example.com
 ```
 
 For more, and for `request` and `sitemap`, sign in with `string login` or set `STRING_API_KEY`.
@@ -33,7 +33,7 @@ Homebrew builds the binary from the release's source archive, so Go is needed on
 
 ## Keys
 
-Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, or IPv6 /64, gets 50 requests and 100 credits per UTC day: a plain fetch costs 1 credit, and a fetch with `executeJS` or a search costs 5. Keyless takes only `--format` and `executeJS` on fetch and `--language` (plus `dateRange`, `sortBy`, `safeSearch`, `autocorrect` and `verbatim` through `--input`) on search. The CLI refuses anything else before sending it, and prints what is left of the allowance to stderr after each call.
+Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, or IPv6 /64, gets 50 requests and 100 credits per UTC day: a plain fetch costs 1 credit, and a fetch with `executeJS` or a search costs 5. Keyless takes only `--format` and `--executeJS` on fetch, and `--language`, `--dateRange`, `--sortBy`, `--safeSearch`, `--autocorrect` and `--verbatim` on search. The CLI refuses anything else before sending it, and prints what is left of the allowance to stderr after each call.
 
 A key lifts those limits and unlocks every option, `request` and `sitemap`. There are three ways to give the CLI one:
 
@@ -52,6 +52,18 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 
 `string whoami` shows which key commands use, and `string logout` deletes the saved one.
 
+An agent working with nobody present can register for a trial key instead, where the server offers it. `string trial` solves a few seconds' proof of work and saves a key with a small balance that works for 24 hours, in the same file. Beside it, in `trial.json`, it keeps a claim token, which a person can use for 7 days to adopt the agent onto their String account. Neither is printed. Where trial keys are switched off, `string trial` exits 3.
+
+`string trial claim --email ADDRESS` starts that claim. It prints a link and a code for the person at that address, who signs in to String with that email and enters the code. The CLI then saves a key on their account in place of the trial key, which stops working, and deletes `trial.json`. Without a terminal, or with `--no-wait`, it prints the link and code and exits, and `string trial claim --poll` waits for the person and saves the key. `--json` gives both as JSON.
+
+`string status` shows the version and the key in use. With a key, it adds the balance left, any amount held for crawls still running, the plan and its request rate, and auto top-up. Without one, it shows what the last keyless call from this machine left of today's allowance, kept in `~/.config/string/keyless.json`, so checking spends none of it. `--json` gives the same as one JSON object.
+
+`string balance` prints the account's balance as JSON, exactly as `GET /account/balance` returns it, including `remaining`, `held`, `exhausted`, `asOf`, the `plan` and `autoTopUp`. It needs a key. `string status` still exits 0 when it can't read the balance; `string balance` fails with one of the [exit codes](#errors-and-exit-codes) instead, so a script can rely on its output:
+
+```bash
+string balance | jq .remaining
+```
+
 ### Build from source
 
 ```bash
@@ -62,38 +74,50 @@ go test ./...
 ## Commands
 
 ```bash
-string fetch https://example.com
-string fetch https://example.com --format markdown
-string search "coffee shops in Austin" --engine google --count 20
-string request POST https://example.com/api --body 'hello'
+string https://example.com                              # the page as Markdown
+string https://example.com --mainContentOnly -o example.md
+string fetch https://example.com --format json          # the full response: status, headers, final URL
+string search "coffee shops in Austin" --searchCount 20
+string search "coffee grinders" --dateRange week --sortBy date
+string request POST https://example.com/api --body '{"name":"example"}' --headers '{"Content-Type":"application/json"}'
 ```
 
-`fetch` and `request` use JSON output by default. Use `--format markdown` for page text or `--format raw` for response bytes. `search` and `sitemap` return JSON.
+**Every API field is a flag of the same name.** A field from the [API reference](https://portal.usestring.ai/docs/api-reference/fetch) works on the command line as written: `executeJS` is `--executeJS`, and `countryCode` is `--countryCode DE`. A boolean flag alone is true, and `=false` turns it off (`--solveCaptcha=false`). An object or array field takes JSON, or `@` and a file path (`--jsonSchema @./schema.json`). `string fetch --help`, `string search --help` and `string sitemap --help` list each command's fields, and a near miss such as `--max-pages` gets the right name back.
 
-For API options that do not have a named flag, put them in a JSON object and pass `--input FILE`. The command's URL, query, and method take precedence over matching fields in the file. Use `--input -` to read JSON from stdin.
+`fetch` prints the page as Markdown. `--format json` gives the full response with the status, headers and final URL, and `--format raw` gives the response bytes. A field that only JSON carries, such as `--jsonSchema` or `--screenshot`, makes JSON the default. `request`, `search` and `sitemap` print JSON. `--output FILE`, or `-o FILE`, writes the response to a file instead.
 
-```bash
-printf '%s\n' '{"executeJS":true,"countryCode":"GB"}' > fetch-options.json
-string fetch https://example.com --input fetch-options.json
-```
+`--input FILE` reads more fields from a JSON object, or `--input -` from stdin, and flags win over it. The command's URL, query and method win over both.
 
-For a JSON request body, put the object and destination headers in the input file:
+A sitemap crawl starts with a quote, which costs nothing. `--approve` starts the crawl at the quoted cost, and `--wait` waits for it to finish, with a progress line on a terminal:
 
 ```bash
-printf '%s\n' '{"body":{"name":"example"},"headers":{"Content-Type":"application/json"}}' > request-options.json
-string request POST https://example.com/api --input request-options.json
-```
-
-Sitemap jobs require a separate approval after the quote. Submitting a job does not start a crawl or charge the account.
-
-```bash
-string sitemap submit https://example.com
-string sitemap approve JOB_ID
-string sitemap status JOB_ID
+string sitemap submit https://example.com --maxPages 50 --approve --wait
 string sitemap results JOB_ID --limit 100 --offset 0
+```
+
+Step by step, the same crawl is:
+
+```bash
+string sitemap submit https://example.com --maxPages 50   # the quote
+string sitemap approve JOB_ID --wait
+string sitemap status JOB_ID
 string sitemap list
 string sitemap cancel JOB_ID
 ```
+
+Interrupting `--wait` leaves the crawl running, and `string sitemap status JOB_ID --wait` picks it back up.
+
+## Site integrations
+
+A [site integration](https://portal.usestring.ai/docs/sites) is a set of typed actions over one website. For example, `reddit post` reads a post with its whole comment tree, and `yelp business` reads business records. An action takes an input and returns rows in a fixed shape, and its requests run and are billed like fetches.
+
+```bash
+string integrations                     # every site and its actions; no key needed
+string integrations list reddit         # reddit's actions, each with its flags and an example
+string integrations run reddit post --post https://www.reddit.com/r/technology/comments/1xapaw7/ --maxPages 2
+```
+
+**Each flag is a field of the action's input, spelled exactly as the field.** Reddit's `post` action takes `post`, `sort` and `maxPages`, so its flags are `--post`, `--sort` and `--maxPages`, the same names the integration docs and the manifest use. A list field takes one item per flag (`--items a --items b`) or a JSON array. `run` prints the JSON response: `data` holds the rows, and `failures` lists any input that produced none. `list` needs no key; `run` needs one.
 
 `string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint.
 
@@ -128,6 +152,8 @@ string init                            # the shared directory and every agent fo
 string init --agent claude-code,codex  # only these
 npx skills add usestring/cli           # the same skill through the skills installer
 ```
+
+`string init` also adds String's [hosted MCP server](https://portal.usestring.ai/docs/mcp/remote) to Claude Code and Codex as `string-web-access`, unless one is already there. Both sign in to it with String, so no key goes into their settings: run `claude mcp login string-web-access` or `codex mcp login string-web-access` and choose the key each may use. For the other agents it found, init prints the setup page instead: most connect with an API key, which init never copies into another program's settings, and OpenCode signs in only from v2. `--no-mcp` skips this step.
 
 ## Project and releases
 

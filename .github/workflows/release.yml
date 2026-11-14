@@ -54,3 +54,4 @@ jobs:
             npm publish "$dir" --access public --provenance
           done
           npm publish npm-dist/cli --access public --provenance
+          npm deprecate "@usestring/cli@<0.2.0" "This is the old Node CLI, which needs STRING_API_KEY. Install the current one: npm install -g @usestring/cli@latest"

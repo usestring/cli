@@ -41,6 +41,7 @@ func invoke(t *testing.T, list []string, baseURL, key string) result {
 		stdin:    strings.NewReader(""),
 		stdout:   &stdout,
 		stderr:   &stderr,
+		sleep:    func(time.Duration) {},
 	})
 	return result{status, stdout.String(), stderr.String()}
 }
@@ -96,7 +97,116 @@ func TestFetchSendsAuthenticatedJSONAndPreservesAdvancedFields(t *testing.T) {
 	if path != "/v1/fetch" || authorization != "Bearer test-key" {
 		t.Errorf("path %q, authorization %q", path, authorization)
 	}
-	expectJSON(t, body, `{"mainContentOnly":true,"url":"https://example.com/","method":"GET","format":"json"}`)
+	expectJSON(t, body, `{"mainContentOnly":true,"url":"https://example.com/","method":"GET","format":"markdown"}`)
+}
+
+func TestFieldFlagsAreTheAPIFieldsOfTheSameName(t *testing.T) {
+	var bodies []string
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		bodies = append(bodies, r.URL.Path+" "+requestBody(t, r))
+		io.WriteString(w, "# Example\n")
+	})
+	schema := inputFile(t, `{"type":"object","properties":{"title":{"type":"string"}}}`)
+
+	for _, list := range [][]string{
+		{"https://example.com", "--mainContentOnly", "--countryCode", "DE", "--maxRedirects", "3", "--headers", `{"Accept-Language":"de"}`, "--solveCaptcha=false"},
+		{"fetch", "https://example.com", "--jsonSchema", "@" + schema},
+		{"search", "coffee", "--searchType", "images", "--dateRange", "week", "--count", "5", "--safeSearch"},
+		{"search", "coffee", "--dateRange", `{"from":"2024-01-01"}`},
+	} {
+		if got := invoke(t, list, baseURL, "test-key"); got.status != 0 {
+			t.Fatalf("%v: %+v", list, got)
+		}
+	}
+	want := []string{
+		`/v1/fetch {"url":"https://example.com/","method":"GET","format":"markdown","mainContentOnly":true,"countryCode":"DE","maxRedirects":3,"headers":{"Accept-Language":"de"},"solveCaptcha":false}`,
+		// A schema comes back only in JSON, so it makes JSON the default.
+		`/v1/fetch {"url":"https://example.com/","method":"GET","format":"json","jsonSchema":{"type":"object","properties":{"title":{"type":"string"}}}}`,
+		`/v1/search {"query":"coffee","searchType":"images","dateRange":"week","searchCount":5,"safeSearch":true}`,
+		`/v1/search {"query":"coffee","dateRange":{"from":"2024-01-01"}}`,
+	}
+	for i := range want {
+		gotPath, gotBody, _ := strings.Cut(bodies[i], " ")
+		wantPath, wantBody, _ := strings.Cut(want[i], " ")
+		if gotPath != wantPath {
+			t.Errorf("call %d went to %s, want %s", i, gotPath, wantPath)
+		}
+		expectJSON(t, gotBody, wantBody)
+	}
+
+	for list, message := range map[string]string{
+		"sitemap submit https://example.com --max-pages 5": "Did you mean '--maxPages'?",
+		"fetch https://example.com --maxRedirects many":    "--maxRedirects must be an integer",
+		"fetch https://example.com --executeJS=yes":        "--executeJS takes no value, or =true or =false",
+		"search coffee --coordinates {":                    "--coordinates must be JSON",
+	} {
+		if got := invoke(t, strings.Fields(list), baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, message) {
+			t.Errorf("%s: %+v", list, got)
+		}
+	}
+	if len(bodies) != len(want) {
+		t.Errorf("bad flags reached the API: %v", bodies[len(want):])
+	}
+}
+
+func TestOutputWritesTheResponseToAFile(t *testing.T) {
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "# Example") })
+	path := filepath.Join(t.TempDir(), "page.md")
+
+	got := invoke(t, []string{"https://example.com", "-o", path}, baseURL, "test-key")
+
+	saved, err := os.ReadFile(path)
+	if got.status != 0 || got.output != "" || err != nil || string(saved) != "# Example\n" || !strings.Contains(got.errors, "Saved 10 bytes to "+path) {
+		t.Errorf("%+v, saved %q, %v", got, saved, err)
+	}
+}
+
+func TestSitemapApproveAndWaitFollowTheCrawlToItsEnd(t *testing.T) {
+	var calls []string
+	statuses := []string{
+		`{"jobId":"job-1","status":"running","pending":2,"processed":1}`,
+		`{"jobId":"job-1","status":"completed","pagesProcessed":3}`,
+	}
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/v1/sitemap":
+			io.WriteString(w, `{"jobId":"job-1","status":"awaiting_approval","estimatedCostUsd":0.01}`)
+		case r.Method == "POST":
+			io.WriteString(w, `{"jobId":"job-1","status":"running"}`)
+		default:
+			io.WriteString(w, statuses[0])
+			statuses = statuses[1:]
+		}
+	})
+	var stdout, stderr bytes.Buffer
+	status := run([]string{"sitemap", "submit", "https://example.com", "--maxPages", "3", "--approve", "--wait"}, runtime{
+		env: func(name string) (string, bool) {
+			value, ok := map[string]string{"STRING_API_KEY": "test-key", "STRING_API_BASE_URL": baseURL}[name]
+			return value, ok
+		},
+		client:   http.DefaultClient,
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		sleep:    func(time.Duration) {},
+		progress: true,
+	})
+
+	if status != 0 {
+		t.Fatalf("status %d: %s", status, stderr.String())
+	}
+	if want := []string{"POST /v1/sitemap", "POST /v1/sitemap/job-1/approve", "GET /v1/sitemap/job-1", "GET /v1/sitemap/job-1"}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls %v, want %v", calls, want)
+	}
+	expectJSON(t, stdout.String(), `{"jobId":"job-1","status":"completed","pagesProcessed":3}`)
+	if !strings.Contains(stderr.String(), "Crawling: 1 pages done, 2 queued") {
+		t.Errorf("progress %q", stderr.String())
+	}
+
+	if got := invoke(t, []string{"sitemap", "submit", "https://example.com", "--wait"}, baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, "--wait needs --approve") {
+		t.Errorf("wait without approve: %+v", got)
+	}
 }
 
 func TestSearchCarriesTargetingAndResultCount(t *testing.T) {
@@ -360,6 +470,78 @@ func TestInitInstallsTheSkillForDetectedAgentsOnly(t *testing.T) {
 	}
 }
 
+func TestInitAddsTheMCPServerToClaudeCodeAndCodexOnceWithoutAKey(t *testing.T) {
+	home := t.TempDir()
+	for _, dir := range []string{".claude", ".codex"} {
+		if err := os.MkdirAll(filepath.Join(home, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	codexConfig := filepath.Join(home, ".codex", "config.toml")
+	existing := "model = \"gpt-5\"\n\n[mcp_servers.other]\ncommand = \"npx\""
+	if err := os.WriteFile(codexConfig, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"HOME": home, "STRING_API_KEY": "secret-key"}
+	var ran [][]string
+	var stdout, stderr bytes.Buffer
+	rt := runtime{
+		env: func(name string) (string, bool) {
+			value, ok := env[name]
+			return value, ok
+		},
+		lookPath: func(name string) (string, error) {
+			if name == "claude" {
+				return "/opt/bin/claude", nil
+			}
+			return "", os.ErrNotExist
+		},
+		// Like claude mcp add, record the server in Claude Code's user settings.
+		program: func(name string, args ...string) ([]byte, error) {
+			ran = append(ran, append([]string{name}, args...))
+			settings := `{"mcpServers":{"string-web-access":{"type":"http","url":"https://mcp.usestring.ai/v3/mcp"}}}`
+			return nil, os.WriteFile(filepath.Join(home, ".claude.json"), []byte(settings), 0o600)
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	}
+
+	if status := run([]string{"init", "--no-mcp"}, rt); status != 0 {
+		t.Fatalf("status %d: %s", status, stderr.String())
+	}
+	if got, _ := os.ReadFile(codexConfig); len(ran) > 0 || string(got) != existing {
+		t.Fatalf("--no-mcp ran %q and left Codex's config as %q", ran, got)
+	}
+	for range 2 {
+		if status := run([]string{"init"}, rt); status != 0 {
+			t.Fatalf("status %d: %s", status, stderr.String())
+		}
+	}
+	add := []string{"/opt/bin/claude", "mcp", "add", "--transport", "http", "--scope", "user", "string-web-access", "https://mcp.usestring.ai/v3/mcp"}
+	if !reflect.DeepEqual(ran, [][]string{add}) {
+		t.Errorf("ran %q, want %q once", ran, add)
+	}
+	want := existing + "\n\n[mcp_servers.string-web-access]\nurl = \"https://mcp.usestring.ai/v3/mcp\"\n"
+	if got, _ := os.ReadFile(codexConfig); string(got) != want {
+		t.Errorf("Codex's config is\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestInitLeavesACodexConfigItCannotExtendUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// TOML forbids adding [mcp_servers.NAME] to an inline table, and Codex
+	// will not start with a config that does.
+	existing := "mcp_servers = { other = { command = \"npx\" } }\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	addCodexMCP(dir)
+	if got, _ := os.ReadFile(path); string(got) != existing {
+		t.Errorf("config became %q", got)
+	}
+}
+
 func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 	var tokenAnswers []string
 	var fetchAuthorization string
@@ -480,5 +662,171 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("init from a terminal saved no key: %v", err)
+	}
+}
+
+func TestIntegrationsListAndRunTakeTheInputFieldsAsFlags(t *testing.T) {
+	const manifest = `{"manifestVersion":2,"sites":[{"name":"reddit","title":"Reddit","version":"1.0.1",
+		"description":"Reddit posts with their comment trees. And more.",
+		"actions":[{"name":"post","description":"Read one Reddit post and its comment tree.",
+			"input":{"type":"object","required":["post"],"properties":{
+				"post":{"type":"string","description":"The post's URL or id."},
+				"sort":{"type":"string","enum":["best","top"]},
+				"maxPages":{"type":["null","integer"]},
+				"flairs":{"type":"array","items":{"type":"string"}}}},
+			"examples":[{"input":{"post":"https://www.reddit.com/r/golang/comments/1xapaw7/","maxPages":3}}]}]}]}`
+	var posts []string
+	var authorized []bool
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		_, sent := r.Header["Authorization"]
+		authorized = append(authorized, sent)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/integrations", "GET /v1/integrations/reddit":
+			io.WriteString(w, manifest)
+		case "POST /v1/integrations/reddit/post":
+			posts = append(posts, requestBody(t, r))
+			io.WriteString(w, `{"envelopeVersion":1,"data":[{"id":"1xapaw7"}],"failures":[]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	listed := invoke(t, []string{"integrations"}, baseURL, "")
+	if listed.status != 0 || !strings.Contains(listed.output, "reddit         Reddit posts with their comment trees.\n  post         Read one Reddit post") || authorized[0] {
+		t.Errorf("list %+v", listed)
+	}
+	site := invoke(t, []string{"integrations", "list", "reddit"}, baseURL, "")
+	for _, want := range []string{"string integrations run reddit post\n", "--post TEXT\n      (required) The post's URL or id.", "--sort best|top", "--flairs TEXT (repeatable)", "Example: string integrations run reddit post --post https://www.reddit.com/r/golang/comments/1xapaw7/ --maxPages 3"} {
+		if !strings.Contains(site.output, want) {
+			t.Errorf("list reddit lacks %q:\n%s", want, site.output)
+		}
+	}
+
+	ran := invoke(t, []string{"integrations", "run", "reddit", "post", "--post", "1xapaw7", "--maxPages", "2", "--flairs", "News", "--flairs", "Help"}, baseURL, "test-key")
+	if ran.status != 0 || len(posts) != 1 {
+		t.Fatalf("run %+v, posts %v", ran, posts)
+	}
+	expectJSON(t, posts[0], `{"post":"1xapaw7","maxPages":2,"flairs":["News","Help"]}`)
+	expectJSON(t, ran.output, `{"envelopeVersion":1,"data":[{"id":"1xapaw7"}],"failures":[]}`)
+
+	if got := invoke(t, []string{"integrations", "run", "reddit", "post", "--max-pages", "2"}, baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, "Did you mean '--maxPages'?") {
+		t.Errorf("misspelled flag %+v", got)
+	}
+	if got := invoke(t, []string{"integrations", "run", "reddit", "post", "--post", "1xapaw7"}, baseURL, ""); got.status != 3 || !strings.Contains(got.errors, "needs a key") {
+		t.Errorf("keyless run %+v", got)
+	}
+	if len(posts) != 1 {
+		t.Errorf("refused runs reached the API: %v", posts)
+	}
+}
+
+// runAt runs the CLI with env as its whole environment and a fixed clock.
+func runAt(t *testing.T, list []string, env map[string]string, now time.Time) result {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	status := run(list, runtime{
+		env: func(name string) (string, bool) {
+			value, ok := env[name]
+			return value, ok
+		},
+		client: http.DefaultClient,
+		stdin:  strings.NewReader(""),
+		stdout: &stdout,
+		stderr: &stderr,
+		now:    func() time.Time { return now },
+	})
+	return result{status, stdout.String(), stderr.String()}
+}
+
+func TestStatusShowsTheBalanceWhatIsHeldThePlanAndTopUp(t *testing.T) {
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("%s %s without the key", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/account/balance":
+			io.WriteString(w, `{"currency":"USD","balance":25,"spent":10.5,"held":2.25,"remaining":12.25,"exhausted":false,"asOf":"2026-11-05T09:30:00Z",
+				"plan":{"tier":"pro","name":"Pro","priceUsdMonth":49},
+				"autoTopUp":{"enabled":true,"amountUsd":20,"maxPerPeriodUsd":100,"spentThisPeriodUsd":20,"remainingThisPeriodUsd":80}}`)
+		case "/v1/pricing":
+			io.WriteString(w, `{"plans":[{"id":"pro","requestsPerSecond":20}],"free":{"requestsPerSecond":2}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	env := map[string]string{"STRING_API_KEY": "test-key", "STRING_API_BASE_URL": baseURL}
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+
+	got := runAt(t, []string{"status"}, env, now)
+	want := "string " + version + `
+Key       STRING_API_KEY from the environment
+Balance   $12.25 left, with usage counted to 09:30 UTC
+Held      $2.25 for crawls still running
+Plan      Pro, 20 requests a second
+Top-up    on, $20.00 at a time, $80.00 left this period
+`
+	if got.status != 0 || got.output != want {
+		t.Errorf("got %+v, want output\n%s", got, want)
+	}
+
+	got = runAt(t, []string{"status", "--json"}, env, now)
+	report := decode(t, got.output).(map[string]any)
+	if got.status != 0 || report["version"] != version || report["key"].(map[string]any)["source"] != "environment" ||
+		report["balance"].(map[string]any)["remaining"] != 12.25 || report["requestsPerSecond"] != 20.0 || report["keyless"] != nil {
+		t.Errorf("--json %+v", got)
+	}
+}
+
+func TestStatusWithoutAKeyShowsWhatTheLastKeylessCallLeft(t *testing.T) {
+	var calls []string
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		w.Header().Set("X-String-Keyless", "true")
+		w.Header().Set("X-Keyless-Requests-Remaining", "49")
+		w.Header().Set("X-Keyless-Credits-Remaining", "95")
+		io.WriteString(w, "# Example Domain\n")
+	})
+	env := map[string]string{"HOME": t.TempDir(), "STRING_API_BASE_URL": baseURL}
+	morning := time.Date(2026, 11, 5, 9, 15, 0, 0, time.UTC)
+
+	if got := runAt(t, []string{"status"}, env, morning); got.status != 0 || !strings.Contains(got.output, "Keyless   no keyless call from this machine today") {
+		t.Errorf("before any call %+v", got)
+	}
+	if got := runAt(t, []string{"fetch", "https://example.com"}, env, morning); got.status != 0 {
+		t.Fatalf("fetch %+v", got)
+	}
+	got := runAt(t, []string{"status"}, env, morning.Add(2*time.Hour))
+	want := "string " + version + `
+Key       none, so fetch and search run keyless
+Keyless   49 requests and 95 credits left today, as of this machine's last keyless call at 09:15 UTC
+`
+	if got.status != 0 || got.output != want {
+		t.Errorf("got %+v, want output\n%s", got, want)
+	}
+	if got := runAt(t, []string{"status"}, env, morning.Add(24*time.Hour)); !strings.Contains(got.output, "no keyless call from this machine today; the allowance resets at 00:00 UTC") {
+		t.Errorf("next day %+v", got)
+	}
+	if len(calls) != 1 {
+		t.Errorf("status reached the API without a key: %v", calls)
+	}
+}
+
+func TestStatusSaysWhenTheKeyIsRefusedOrTheBalanceIsUnavailable(t *testing.T) {
+	code := http.StatusUnauthorized
+	baseURL := api(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(code)
+		io.WriteString(w, `{"error":"Invalid API key"}`)
+	})
+	env := map[string]string{"STRING_API_KEY": "test-key", "STRING_API_BASE_URL": baseURL}
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+
+	refused := runAt(t, []string{"status"}, env, now)
+	if refused.status != 3 || !strings.Contains(refused.output, "refused by the API (HTTP 401)") || strings.Contains(refused.output+refused.errors, "test-key") {
+		t.Errorf("refused %+v", refused)
+	}
+	code = http.StatusNotFound
+	missing := runAt(t, []string{"status"}, env, now)
+	if missing.status != 0 || !strings.Contains(missing.output, "Balance   unavailable (HTTP 404); see https://portal.usestring.ai/usage") {
+		t.Errorf("missing %+v", missing)
 	}
 }

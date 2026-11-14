@@ -14,14 +14,6 @@ var keylessFields = map[string][]string{
 	"search": {"query", "language", "dateRange", "sortBy", "safeSearch", "autocorrect", "verbatim"},
 }
 
-// flagFor names the option that set a field, for the refusal message.
-var flagFor = map[string]string{
-	"searchCount": "--count",
-	"engine":      "--engine",
-	"country":     "--country",
-	"location":    "--location",
-}
-
 // keylessOperation readies op to go without a key, or says why it can't.
 func keylessOperation(op *operation) error {
 	allowed, ok := keylessFields[op.command]
@@ -49,10 +41,10 @@ func keylessOperation(op *operation) error {
 	}
 	slices.Sort(refused)
 	for i, name := range refused {
-		if flag, ok := flagFor[name]; ok {
-			refused[i] = flag
+		if slices.Contains(op.flagged, name) {
+			name = "--" + name
 		}
-		refused[i] = "`" + refused[i] + "`"
+		refused[i] = "`" + name + "`"
 	}
 	return &failure{
 		exit:     exitAuth,

@@ -1,15 +1,26 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/usestring/cli/skills"
+)
+
+// String's hosted MCP server. Claude Code and Codex sign in to it with
+// String, so init can add it to them without putting a key in their settings.
+const (
+	mcpName = "string-web-access"
+	mcpHost = "mcp.usestring.ai"
+	mcpURL  = "https://" + mcpHost + "/v3/mcp"
+	mcpDocs = "https://portal.usestring.ai/docs/mcp/remote"
 )
 
 // agent is a coding agent that loads skills from a directory under the
@@ -101,14 +112,14 @@ func targets(names string, home string, env func(string) (string, bool)) ([]agen
 }
 
 func initCommand(list []string, rt runtime) error {
-	parsed, err := parseArgs(list, "agent")
+	parsed, err := parse(list, spec{options: []string{"agent"}, switches: []string{"no-mcp"}})
 	if err != nil {
 		return usage(err)
 	}
 	if parsed.help {
 		return write(rt.stdout, []byte(help))
 	}
-	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp]"); err != nil {
 		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
@@ -130,6 +141,9 @@ func initCommand(list []string, rt runtime) error {
 			return err
 		}
 		fmt.Fprintf(&report, "Installed the string-cli skill for %s in %s\n", a.label, filepath.Join(dir, "string-cli"))
+	}
+	if !parsed.switches["no-mcp"] {
+		addMCP(&report, chosen, home, rt)
 	}
 	if _, err := rt.lookPath("string"); err != nil {
 		report.WriteString("\nAgents run the skill's commands as `string`, which is not on your PATH. Install it with:\n  npm install -g @usestring/cli\n")
@@ -164,4 +178,122 @@ func installSkills(dir string) error {
 		}
 		return os.WriteFile(target, data, 0o644)
 	})
+}
+
+// addMCP adds String's MCP server to Claude Code and Codex when they are among
+// the chosen agents and lack it. The other agents get the setup page instead:
+// most connect with an API key, which init never copies into another
+// program's settings, and OpenCode signs in only from version 2.
+func addMCP(report *strings.Builder, chosen []agent, home string, rt runtime) {
+	var lines, others []string
+	for _, a := range chosen {
+		switch a.name {
+		case "claude-code":
+			lines = append(lines, addClaudeMCP(home, rt))
+		case sharedAgent.name:
+			dir := filepath.Join(home, ".codex")
+			if value, ok := rt.env("CODEX_HOME"); ok && value != "" {
+				dir = value
+			}
+			if info, err := os.Stat(dir); err == nil && info.IsDir() {
+				lines = append(lines, addCodexMCP(dir))
+			}
+		default:
+			others = append(others, a.label)
+		}
+	}
+	if len(others) > 0 {
+		lines = append(lines, fmt.Sprintf("To add String's MCP server to %s, see %s", strings.Join(others, ", "), mcpDocs))
+	}
+	if len(lines) > 0 {
+		fmt.Fprintf(report, "\n%s\n", strings.Join(lines, "\n"))
+	}
+}
+
+// addClaudeMCP adds the server through Claude Code's own command, which keeps
+// its settings file consistent while Claude Code may be running.
+func addClaudeMCP(home string, rt runtime) string {
+	settings := filepath.Join(home, ".claude.json")
+	if dir, ok := rt.env("CLAUDE_CONFIG_DIR"); ok && dir != "" {
+		settings = filepath.Join(dir, ".claude.json")
+	}
+	if claudeHasMCP(settings) {
+		return "Claude Code already has String's MCP server."
+	}
+	add := []string{"mcp", "add", "--transport", "http", "--scope", "user", mcpName, mcpURL}
+	claude, err := rt.lookPath("claude")
+	if err != nil {
+		return "Add String's MCP server to Claude Code with: claude " + strings.Join(add, " ")
+	}
+	if output, err := rt.program(claude, add...); err != nil {
+		reason, _, _ := strings.Cut(strings.TrimSpace(string(output)), "\n")
+		if reason == "" {
+			reason = err.Error()
+		}
+		return "Could not add String's MCP server to Claude Code: " + reason
+	}
+	return "Added String's MCP server to Claude Code. Sign in to it with: claude mcp login " + mcpName
+}
+
+// claudeHasMCP reports whether Claude Code's user settings already have a
+// server by this name or at String's MCP host.
+func claudeHasMCP(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var settings struct {
+		MCPServers map[string]struct {
+			URL string `json:"url"`
+		} `json:"mcpServers"`
+	}
+	if json.Unmarshal(data, &settings) != nil {
+		return false
+	}
+	for name, server := range settings.MCPServers {
+		if name == mcpName || strings.Contains(server.URL, mcpHost) {
+			return true
+		}
+	}
+	return false
+}
+
+// codexInlineServers matches mcp_servers written as an inline table, which
+// TOML forbids extending with an [mcp_servers.NAME] table: appending one would
+// leave Codex unable to load its config.
+var codexInlineServers = regexp.MustCompile(`(?m)^\s*["']?mcp_servers["']?\s*=`)
+
+// addCodexMCP appends the server to Codex's config.toml. codex mcp add would
+// also start a sign-in and wait for it, holding init until someone finishes it.
+func addCodexMCP(dir string) string {
+	path := filepath.Join(dir, "config.toml")
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "Could not add String's MCP server to Codex: " + err.Error()
+	}
+	config := string(data)
+	switch {
+	case strings.Contains(config, mcpName) || strings.Contains(config, mcpHost):
+		return "Codex already has String's MCP server."
+	case codexInlineServers.MatchString(config):
+		return "Add String's MCP server to Codex with: codex mcp add " + mcpName + " --url " + mcpURL
+	}
+	entry := "[mcp_servers." + mcpName + "]\nurl = \"" + mcpURL + "\"\n"
+	if config != "" {
+		entry = "\n" + entry
+		if !strings.HasSuffix(config, "\n") {
+			entry = "\n" + entry
+		}
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err == nil {
+		_, err = file.WriteString(entry)
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+	}
+	if err != nil {
+		return "Could not add String's MCP server to Codex: " + err.Error()
+	}
+	return fmt.Sprintf("Added String's MCP server to Codex in %s. Sign in to it with: codex mcp login %s", path, mcpName)
 }
