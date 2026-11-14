@@ -1,20 +1,20 @@
 # Publishes a release when a v* tag is pushed: GitHub release assets and Linux
-# packages, the source archive the Homebrew formula builds from, the Docker
-# image, then npm.
+# packages, the source archive the Homebrew formula builds from and the Docker
+# image, then npm in a job of its own. If npm fails, "Re-run failed jobs"
+# publishes what npm is missing without touching the GitHub release.
 name: release
 
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,6 +35,30 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The npm job builds its packages from these binaries.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: |
+            dist/artifacts.json
+            dist/metadata.json
+            dist/*/string
+            dist/*/string.exe
+          if-no-files-found: error
+
+  npm:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -44,14 +68,22 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "NPM_TOKEN is not set; skipping npm" >&2
-            exit 0
+            echo "::error::NPM_TOKEN is not set. Add it as docs/releasing.md says, then re-run this job."
+            exit 1
           fi
+          # An artifact does not keep the executable bit.
+          chmod 755 dist/*/string
           node npm/build.mjs dist npm-dist
           # Platform packages first, so @usestring/cli never points at a
-          # version npm does not have yet.
-          for dir in npm-dist/cli-*; do
+          # version npm does not have yet. A version npm already has is
+          # skipped, so a re-run publishes only what is missing. The leading ./
+          # keeps npm from reading npm-dist/cli as a GitHub repository.
+          for dir in ./npm-dist/cli-* ./npm-dist/cli; do
+            spec="$(node -p "const p = require('$dir/package.json'); p.name + '@' + p.version")"
+            if npm view "$spec" version >/dev/null 2>&1; then
+              echo "$spec is already on npm"
+              continue
+            fi
             npm publish "$dir" --access public --provenance
           done
-          npm publish npm-dist/cli --access public --provenance
           npm deprecate "@usestring/cli@<0.2.0" "This is the old Node CLI, which needs STRING_API_KEY. Install the current one: npm install -g @usestring/cli@latest"

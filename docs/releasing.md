@@ -6,7 +6,13 @@ A release is a signed `v*` tag on `main`. Pushing it runs `.github/workflows/rel
 - `ghcr.io/usestring/cli`, tagged with the version and `latest`, for linux/amd64 and linux/arm64;
 - npm (`NPM_TOKEN`): one `@usestring/cli-<os>-<cpu>` package per platform, then `@usestring/cli`, which installs the one that fits.
 
-Everything except npm uses the workflow's `GITHUB_TOKEN`. npm is skipped while `NPM_TOKEN` is unset; the token needs publish access to `@usestring/cli` and its platform packages.
+The npm step runs in a job of its own and ends by marking the old Node CLI, every version below 0.2.0, deprecated. Everything except npm uses the workflow's `GITHUB_TOKEN`. npm uses the repository secret `NPM_TOKEN`, a granular access token from an npm account that can publish the CLI's packages:
+
+- **Packages and scopes:** read and write on the whole npm scope, not only on packages that exist, so the token can also create a platform package the first time it is published.
+- **Bypass two-factor authentication:** on, because a workflow cannot answer a 2FA prompt.
+- **Expiration:** write tokens expire, so check the secret is still current before tagging.
+
+Without the secret, the npm job fails and the rest of the release still goes out. Set the secret, then choose **Re-run failed jobs** on the workflow run. The job skips any version npm already has, so a re-run after a partial publish finishes the rest.
 
 Every release is public, so it needs explicit approval for that version before the tag is pushed. Check the build locally first; nothing here publishes:
 
@@ -41,5 +47,7 @@ Use a clean Homebrew environment to test linking and upgrades. If `string` is al
 The first-party tap is an interim route. Official `homebrew/core` acceptance additionally needs current source/release eligibility and public-interest evidence for this repository.
 
 ## After a release
+
+The first push to `ghcr.io/usestring/cli` creates the package, and GitHub may create it private. If `docker pull` asks for credentials, an organization owner opens the package's settings and sets its visibility to public.
 
 Check the GitHub release, `docker run --rm ghcr.io/usestring/cli --version`, `brew install usestring/cli/string` (after the formula update), `npm view @usestring/cli version` and `npx -y @usestring/cli --version`.
