@@ -16,15 +16,16 @@ import (
 )
 
 // string login signs in with the OAuth device flow. The user approves in a
-// browser and picks an API key on the String portal's consent page; the portal
-// then releases that key to this client, and the CLI saves it. Release builds
-// can point these at another environment with -ldflags "-X main.name=value".
+// browser, the String portal mints a new API key for that sign-in, and the CLI
+// saves it. Release builds can point these at another environment with
+// -ldflags "-X main.name=value".
 var (
 	authURL   = "https://clerk.portal.usestring.ai"
 	portalURL = "https://portal.usestring.ai"
-	// oauthClientID is the CLI's OAuth client. Without one, string login
-	// refuses and STRING_API_KEY is the only way to supply a key.
-	oauthClientID = ""
+	// oauthClientID is the CLI's public OAuth client on String's production
+	// sign-in. A build that clears it refuses string login, and STRING_API_KEY
+	// is then the only way to supply a key.
+	oauthClientID = "PsMbudYnIDuliEjP"
 )
 
 type credentials struct {
@@ -378,9 +379,9 @@ func startSignIn(rt runtime, wait bool) (pendingLogin, error) {
 		})
 		shown = append(shown, '\n')
 	case wait:
-		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s, then choose the API key to use.\n", link, device.UserCode))
+		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s.\n", link, device.UserCode))
 	default:
-		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s, then choose the API key to use.\nThen run string login --poll to save the key. The code expires in %d minutes.\n", link, device.UserCode, device.ExpiresIn/60))
+		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s.\nThen run string login --poll to save the key. The code expires in %d minutes.\n", link, device.UserCode, device.ExpiresIn/60))
 	}
 	if err := write(rt.stdout, shown); err != nil {
 		return pendingLogin{}, err
