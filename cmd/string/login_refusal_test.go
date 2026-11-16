@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -58,8 +59,9 @@ type signInService struct {
 	token []signInAnswer
 	key   []signInAnswer
 
-	mu    sync.Mutex
-	calls map[string]int
+	mu     sync.Mutex
+	calls  map[string]int
+	polled []string
 }
 
 // start serves the stand-in and points the CLI's sign-in at it for this test.
@@ -85,6 +87,7 @@ func (s *signInService) start(t *testing.T) {
 		case "/oauth/device_authorization":
 			io.WriteString(w, `{"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri":"https://example.test/device","verification_uri_complete":"https://example.test/device?code=ABCD-EFGH","expires_in":600,"interval":5}`)
 		case "/oauth/token":
+			s.polled = append(s.polled, r.FormValue("device_code"))
 			next(&s.token, w)
 		case "/api/oauth/api-key":
 			if r.Header.Get("Authorization") != "Bearer access-1" {
@@ -114,6 +117,13 @@ func (s *signInService) requests(path string) int {
 		}
 	}
 	return total
+}
+
+// codes is the device code that each request to the token endpoint carried.
+func (s *signInService) codes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.polled)
 }
 
 // signInSession is a throwaway home that the commands of one test share. It
@@ -338,6 +348,63 @@ func TestSignInServerTroubleWhileWaitingForApprovalHasItsOwnExitCode(t *testing.
 		}
 		if _, err := os.Stat(session.file("credentials.json")); !os.IsNotExist(err) {
 			t.Errorf("the token endpoint answered %d, and a key was saved: %v", c.answer.status, err)
+		}
+	}
+}
+
+func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
+	for _, c := range []struct {
+		answer signInAnswer
+		exit   int
+	}{
+		{signInAnswer{http.StatusTooManyRequests, `{"message":"Too many requests"}`, ""}, exitRateLimit},
+		{signInAnswer{http.StatusServiceUnavailable, `{"message":"Service unavailable"}`, ""}, exitUpstream},
+	} {
+		// A person waits at a terminal; an agent starts the sign-in and polls.
+		for _, atTerminal := range []bool{true, false} {
+			service := &signInService{token: []signInAnswer{c.answer, signInApproved}, key: []signInAnswer{signInKey}}
+			service.start(t)
+			session := newSignInSession(t)
+			session.terminal = atTerminal
+			said := fmt.Sprintf("the token endpoint answered %d, at a terminal %t", c.answer.status, atTerminal)
+
+			var busy result
+			if atTerminal {
+				busy = session.run("login")
+			} else {
+				busy = session.startThenPoll(t)
+			}
+			if want := fmt.Sprintf("Sign-in failed: HTTP %d\n", c.answer.status); busy.status != c.exit || busy.errors != want {
+				t.Errorf("%s: %+v, want exit %d and %q", said, busy, c.exit, want)
+			}
+
+			// The code is not spent, so the next poll gets the token for it.
+			done := session.run("login", "--poll")
+			if want := "Logged in as dev@localhost. The key is saved in " + session.file("credentials.json") + ".\n"; done.status != 0 || done.output != want {
+				t.Errorf("%s, then login --poll: %+v, want exit 0 and %q", said, done, want)
+			}
+			if codes, issued := service.codes(), service.requests("/oauth/device_authorization"); !reflect.DeepEqual(codes, []string{"device-1", "device-1"}) || issued != 1 {
+				t.Errorf("%s: the token endpoint was asked about %v and %d codes were issued, want the one code asked about twice", said, codes, issued)
+			}
+			if _, err := os.Stat(session.file("pending.json")); !os.IsNotExist(err) {
+				t.Errorf("%s: pending.json is there after the sign-in finished: %v", said, err)
+			}
+		}
+	}
+
+	// A refusal spends the code, and nothing is left to finish.
+	for _, refusal := range []signInAnswer{
+		{http.StatusBadRequest, `{"error":"access_denied"}`, ""},
+		{http.StatusBadRequest, `{"message":"Bad request"}`, ""},
+	} {
+		service := &signInService{token: []signInAnswer{refusal, signInApproved}, key: []signInAnswer{signInKey}}
+		service.start(t)
+		session := newSignInSession(t)
+		if got := session.startThenPoll(t); got.status != exitAuth {
+			t.Errorf("the token endpoint answered %s: %+v, want exit %d", refusal.body, got, exitAuth)
+		}
+		if got := session.run("login", "--poll"); got.status != exitUsage || !strings.HasPrefix(got.errors, "No sign-in is waiting.") {
+			t.Errorf("the token endpoint answered %s, then login --poll: %+v, want exit %d and no sign-in waiting", refusal.body, got, exitUsage)
 		}
 	}
 }

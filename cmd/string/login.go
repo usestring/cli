@@ -441,8 +441,10 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 		return errors.New("Cannot find your home directory; set HOME")
 	}
 	token, err := deviceToken(rt, pending.DeviceCode, time.Duration(pending.Interval)*time.Second, pending.ExpiresAt.Sub(rt.clock()))
+	// A busy sign-in server has not spent the code, so the code stays saved
+	// for string login --poll to try again.
 	var refused *failure
-	if err == nil || errors.As(err, &refused) {
+	if err == nil || (errors.As(err, &refused) && refused.exit != exitRateLimit && refused.exit != exitUpstream) {
 		os.Remove(pendingFile)
 	}
 	if err != nil {
