@@ -17,17 +17,15 @@ to sign in. Errors go to stderr with a nonzero exit status.
 ## Before the first call
 
 - Check the CLI with `string --version`: it prints `string 0.2.0` or later, or `string dev` for a
-  build from source. If `string` is missing, or `--version` fails, as it does on the old Node CLI,
-  or shows a version below 0.2.0, install the current CLI and check again. With Node.js, on macOS,
-  Linux and Windows: `npm install -g @usestring/cli`. On macOS and Linux, the install script works
-  without Node.js:
+  build from source. In the fish shell, `string` is a built-in, so run the CLI as `command string`.
+  If `string` is missing, or `--version` fails, as it does on the old Node CLI, or shows a version
+  below 0.2.0, install the current CLI and check again. With Node.js, on macOS, Linux and Windows:
+  `npm install -g @usestring/cli`. On macOS and Linux, the install script works without Node.js:
   `curl -fsSL https://raw.githubusercontent.com/usestring/cli/main/install.sh | sh -s -- --no-init`.
   It puts the binary in `~/.local/bin`. If the script succeeds and `string` is still missing or
   old, `~/.local/bin` is not on PATH or an older `string` comes before it, so run the CLI as
   `~/.local/bin/string`. Or take the binary for your system from
-  https://github.com/usestring/cli/releases/latest.
-  `string --help` lists the commands. In the fish shell, `string` is a built-in, so run the CLI as
-  `command string`.
+  https://github.com/usestring/cli/releases/latest. `string --help` lists the commands.
 - With no key, `search` and `fetch` run keyless: 50 requests and 100 credits per IP address per UTC
   day. A plain fetch costs 1 credit; a fetch with `--executeJS` or a search costs 5. stderr shows
   what is left after each call. Keyless takes only `--format` and `--executeJS` on fetch, and
