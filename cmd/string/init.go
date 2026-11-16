@@ -112,14 +112,14 @@ func targets(names string, home string, env func(string) (string, bool)) ([]agen
 }
 
 func initCommand(list []string, rt runtime) error {
-	parsed, err := parse(list, spec{options: []string{"agent"}, switches: []string{"no-mcp"}})
+	parsed, err := parse(list, spec{options: []string{"agent"}, switches: []string{"no-mcp", "no-login"}})
 	if err != nil {
 		return usage(err)
 	}
 	if parsed.help {
 		return write(rt.stdout, []byte(help))
 	}
-	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login]"); err != nil {
 		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
@@ -151,14 +151,29 @@ func initCommand(list []string, rt runtime) error {
 	if key, err := apiKey(rt.env); err == nil && key != "" {
 		return write(rt.stdout, []byte(report.String()))
 	}
-	if rt.terminal && oauthClientID != "" {
-		report.WriteString("\nSigning in.\n")
+	if rt.terminal && oauthClientID != "" && !parsed.switches["no-login"] {
+		report.WriteString("\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\n")
 		if err := write(rt.stdout, []byte(report.String())); err != nil {
 			return err
 		}
-		return signIn(rt)
+		err := signIn(rt)
+		if err == nil {
+			return nil
+		}
+		// The skill and MCP steps are done, so init reports a sign-in that
+		// ended without a key and still succeeds.
+		refused := asFailure(err)
+		why, _, _ := strings.Cut(refused.message, "\n")
+		switch refused.code {
+		case "login_expired":
+			why = "the code expired"
+		case "login_denied":
+			why = "it was denied"
+		}
+		report.Reset()
+		fmt.Fprintf(&report, "Sign-in did not finish: %s. Run string login to sign in later.\n", strings.TrimSuffix(why, "."))
 	}
-	report.WriteString("\nstring fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.\n")
+	report.WriteString("\nstring fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.\n")
 	return write(rt.stdout, []byte(report.String()))
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -139,20 +140,27 @@ func noOptions(list []string, command string, rt runtime) (done bool, err error)
 // oauthCall sends one request to the authorization server or the portal and
 // decodes the JSON answer into out, whatever the status.
 func oauthCall(rt runtime, request *http.Request, out any) (int, error) {
+	status, _, err := oauthCallHeader(rt, request, out)
+	return status, err
+}
+
+// oauthCallHeader is oauthCall that also returns the answer's headers, for a
+// caller that reads Retry-After.
+func oauthCallHeader(rt runtime, request *http.Request, out any) (int, http.Header, error) {
 	request.Header.Set("Accept", "application/json")
 	response, err := rt.client.Do(request)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(response.Body)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return response.StatusCode, fmt.Errorf("HTTP %d from %s: %s", response.StatusCode, request.URL.Host, truncateUTF16(decodeText(data), 2000))
+		return response.StatusCode, response.Header, fmt.Errorf("HTTP %d from %s: %s", response.StatusCode, request.URL.Host, truncateUTF16(decodeText(data), 2000))
 	}
-	return response.StatusCode, nil
+	return response.StatusCode, response.Header, nil
 }
 
 func postForm(rt runtime, endpoint string, form url.Values, out any) (int, error) {
@@ -164,13 +172,25 @@ func postForm(rt runtime, endpoint string, form url.Values, out any) (int, error
 	return oauthCall(rt, request, out)
 }
 
-func getWithToken(rt runtime, endpoint, token string, out any) (int, error) {
+func getWithToken(rt runtime, endpoint, token string, out any) (int, http.Header, error) {
 	request, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
-	return oauthCall(rt, request, out)
+	return oauthCallHeader(rt, request, out)
+}
+
+// refusalExit is the exit code for a refusal from the sign-in servers, by its
+// HTTP status: the same codes an API refusal with that status gets.
+func refusalExit(status int) int {
+	switch {
+	case status == http.StatusTooManyRequests:
+		return exitRateLimit
+	case status >= 500:
+		return exitUpstream
+	}
+	return exitAuth
 }
 
 // deviceToken waits for the user to approve the device code and returns the
@@ -195,7 +215,7 @@ func deviceToken(rt runtime, deviceCode string, interval, lifetime time.Duration
 			if status == http.StatusOK && answer.AccessToken != "" {
 				return answer.AccessToken, nil
 			}
-			return "", &failure{exit: exitAuth, code: "login_failed", message: fmt.Sprintf("Sign-in failed: HTTP %d", status)}
+			return "", &failure{exit: refusalExit(status), code: "login_failed", message: fmt.Sprintf("Sign-in failed: HTTP %d", status)}
 		case "authorization_pending":
 		case "slow_down":
 			interval += 5 * time.Second
@@ -322,7 +342,7 @@ func signIn(rt runtime) error {
 // where to approve it. wait says whether this command goes on to wait.
 func startSignIn(rt runtime, wait bool) (pendingLogin, error) {
 	if oauthClientID == "" {
-		return pendingLogin{}, &failure{exit: exitAuth, code: "login_unavailable", message: "This build of string cannot sign in through the browser. Set STRING_API_KEY, or pipe a key to string login --with-token. Keys are at https://portal.usestring.ai/settings."}
+		return pendingLogin{}, &failure{exit: exitAuth, code: "login_unavailable", message: "This build of string cannot sign in through the browser. Set STRING_API_KEY, or pipe a key to string login --with-token. Keys are at https://portal.usestring.ai/api-keys."}
 	}
 	path, ok := pendingPath(rt.env)
 	if !ok {
@@ -428,32 +448,32 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 	if err != nil {
 		return err
 	}
-	var released struct {
-		APIKey string `json:"apiKey"`
-		Error  string `json:"error"`
-	}
-	status, err := getWithToken(rt, portalURL+"/api/oauth/api-key", token, &released)
+	key, err := releasedKey(rt, token)
 	if err != nil {
 		return err
 	}
-	if status != http.StatusOK {
-		return &failure{exit: exitAuth, code: "key_release_failed", status: status, message: fmt.Sprintf("HTTP %d: %s", status, released.Error)}
-	}
-	if released.APIKey == "" || !validKey(released.APIKey) {
-		return errors.New("The portal did not return a usable API key")
-	}
-	saved := credentials{APIKey: released.APIKey}
+	saved := credentials{APIKey: key}
 	var profile struct {
 		Email string `json:"email"`
 	}
 	// The email only labels the saved key for string whoami.
-	if status, err := getWithToken(rt, authURL+"/oauth/userinfo", token, &profile); err == nil && status == http.StatusOK {
+	if status, _, err := getWithToken(rt, authURL+"/oauth/userinfo", token, &profile); err == nil && status == http.StatusOK {
 		saved.Email = profile.Email
 	}
 	if err := saveCredentials(path, saved); err != nil {
 		return err
 	}
+	// STRING_API_KEY wins over the key just saved. Someone who signed in to
+	// replace a key that stopped working would otherwise keep sending it.
+	inUse := ""
+	if env, _ := rt.env("STRING_API_KEY"); env != "" {
+		inUse = "STRING_API_KEY is set, and commands keep using it instead until you unset it.\n"
+	}
 	if rt.json {
+		// stdout holds only the JSON object, so the note goes to stderr.
+		if inUse != "" {
+			fmt.Fprint(rt.stderr, inUse)
+		}
 		shown, _ := json.Marshal(map[string]string{"status": "logged_in", "email": saved.Email, "credentials": path})
 		return write(rt.stdout, append(shown, '\n'))
 	}
@@ -461,7 +481,89 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 	if saved.Email != "" {
 		who = " as " + saved.Email
 	}
-	return write(rt.stdout, []byte(fmt.Sprintf("Logged in%s. The key is saved in %s.\n", who, path)))
+	return write(rt.stdout, []byte(fmt.Sprintf("Logged in%s. The key is saved in %s.\n%s", who, path, inUse)))
+}
+
+// keyPauses are the waits before the second, third and fourth tries of the key
+// request. By then the person has approved and the device code is spent, so
+// giving up on a busy portal at once would send them back to the browser.
+var keyPauses = []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
+
+// keyWait is the most those waits may add up to when the portal asks for
+// longer ones with Retry-After.
+const keyWait = 30 * time.Second
+
+// tokenUnchecked is what the portal's 503 says when it could not check the
+// access token, which it does before it creates a key.
+const tokenUnchecked = "Could not verify the access token"
+
+// keyByHand is the way to a key that needs no sign-in.
+const keyByHand = "set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys, or pipe one to `string login --with-token`"
+
+// releasedKey asks the portal for the key of an approved sign-in. The portal
+// creates a key each time this request succeeds, so it is sent again only
+// after an answer that cannot have created one: a 429, which turns the request
+// away before it is handled, and the portal's own 503 for a token it could not
+// check. Any other failure may follow a key that was created, and is final.
+func releasedKey(rt runtime, token string) (string, error) {
+	var waited time.Duration
+	for try := 0; ; try++ {
+		var released struct {
+			APIKey string `json:"apiKey"`
+			Error  string `json:"error"`
+		}
+		status, header, err := getWithToken(rt, portalURL+"/api/oauth/api-key", token, &released)
+		busy := status == http.StatusTooManyRequests || status >= 500
+		switch {
+		case status == http.StatusOK && err == nil:
+			if released.APIKey == "" || !validKey(released.APIKey) {
+				return "", errors.New("The portal did not return a usable API key")
+			}
+			return released.APIKey, nil
+		case err != nil && !busy:
+			return "", err
+		}
+		refusal := &failure{exit: refusalExit(status), code: "key_release_failed", status: status, message: fmt.Sprintf("HTTP %d: %s", status, released.Error), nextStep: keyByHand}
+		if err != nil {
+			// The answer was not the portal's JSON, as when a gateway answers for it.
+			refusal.message = err.Error()
+		}
+		if busy {
+			refusal.nextStep = "run `string login` again later, or " + keyByHand
+		}
+		if seconds, ok := retryAfterSeconds(header); ok {
+			refusal.retryAfter = &seconds
+			refusal.notes = append(refusal.notes, fmt.Sprintf("Retry-After: %d", seconds))
+		}
+		createdNoKey := status == http.StatusTooManyRequests || (err == nil && status == http.StatusServiceUnavailable && released.Error == tokenUnchecked)
+		if !createdNoKey || try == len(keyPauses) {
+			return "", refusal
+		}
+		// Ask again no sooner than the portal says, and not at all when that
+		// would take the waits past keyWait.
+		wait := keyPauses[try]
+		if asked := refusal.retryAfter; asked != nil {
+			if *asked > int64(keyWait/time.Second) {
+				return "", refusal
+			}
+			wait = max(wait, time.Duration(*asked)*time.Second)
+		}
+		if waited+wait > keyWait {
+			return "", refusal
+		}
+		if try == 0 && rt.progress {
+			fmt.Fprintln(rt.stderr, "Approved. Waiting for String to hand over the key...")
+		}
+		rt.pause(wait)
+		waited += wait
+	}
+}
+
+// retryAfterSeconds is an answer's Retry-After header, when it gives whole
+// seconds.
+func retryAfterSeconds(header http.Header) (int64, bool) {
+	seconds, err := strconv.ParseInt(strings.TrimSpace(header.Get("Retry-After")), 10, 64)
+	return seconds, err == nil && seconds >= 0
 }
 
 func logoutCommand(list []string, rt runtime) error {
@@ -479,7 +581,7 @@ func logoutCommand(list []string, rt runtime) error {
 	case err != nil:
 		return err
 	default:
-		fmt.Fprintf(&report, "Deleted the key saved in %s. The key itself still works until you delete it in https://portal.usestring.ai/settings.\n", path)
+		fmt.Fprintf(&report, "Deleted the key saved in %s. The key itself still works until you delete it in https://portal.usestring.ai/api-keys.\n", path)
 	}
 	if key, _ := rt.env("STRING_API_KEY"); key != "" {
 		report.WriteString("STRING_API_KEY is still set, and commands keep using it.\n")

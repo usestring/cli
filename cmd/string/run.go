@@ -61,7 +61,7 @@ const help = `String Web Access CLI
 
 Start here: string fetch and string search work without a key, within a daily
 allowance per IP address. For more, and for request and sitemap, run string
-login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.
+login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.
 
 Usage:
   string URL [--FIELD VALUE ...]          the same as string fetch URL
@@ -76,7 +76,7 @@ Usage:
   string sitemap cancel JOB_ID
   string integrations [list [SITE]]
   string integrations run SITE ACTION [--FIELD VALUE ...]
-  string init [--agent NAME[,NAME...]] [--no-mcp]
+  string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login]
   string login [--with-token | --no-wait | --poll]
   string logout
   string whoami
@@ -112,11 +112,13 @@ Other fields, request and sitemap need a key. What is left of the allowance is
 printed to stderr after each keyless call.
 init installs the string-cli skill for the coding agents found on this machine,
 adds String's MCP server to Claude Code and Codex unless --no-mcp is given,
-then signs in when run from a terminal with no key set.
-login signs in through your browser and saves the API key you choose. Without
-a terminal, or with --no-wait, it prints the link and code and exits; string
-login --poll then waits for the approval and saves the key. With --json both
-print JSON. login --with-token reads an API key from stdin, checks it and saves it.
+then signs in when run from a terminal with no key set. --no-login skips the
+sign-in, and init exits 0 whether or not the sign-in finishes.
+login signs in through your browser and saves a new API key that String
+creates for that sign-in. Without a terminal, or with --no-wait, it prints the
+link and code and exits; string login --poll then waits for the approval and
+saves the key. With --json both print JSON. login --with-token reads an API key
+from stdin, checks it and saves it.
 STRING_API_KEY wins over a saved key; whoami says which one is in use.
 trial registers an agent for a trial key with no account: after a few seconds'
 proof of work, it saves a key with a small balance that works for 24 hours,

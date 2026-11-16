@@ -1,0 +1,511 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// TestMain points sign-in at an address that refuses connections. The defaults
+// are String's production servers, so a test that forgets to set authURL and
+// portalURL fails instead of asking them for a device code.
+func TestMain(m *testing.M) {
+	authURL, portalURL = "http://127.0.0.1:1", "http://127.0.0.1:1"
+	os.Exit(m.Run())
+}
+
+func TestSignInInTestsGoesNowhereUnlessATestSetsItsOwnServer(t *testing.T) {
+	for name, value := range map[string]string{"authURL": authURL, "portalURL": portalURL} {
+		address, err := url.Parse(value)
+		if err != nil || address.Hostname() != "127.0.0.1" {
+			t.Fatalf("%s is %q in tests, which is not this machine", name, value)
+		}
+		if connection, err := net.DialTimeout("tcp", address.Host, time.Second); err == nil {
+			connection.Close()
+			t.Errorf("%s is %q in tests, and something there accepts connections", name, value)
+		}
+	}
+}
+
+// signInAnswer is one answer from the stand-in below: a status, a body and,
+// from a busy portal, a Retry-After header.
+type signInAnswer struct {
+	status     int
+	body       string
+	retryAfter string
+}
+
+var (
+	signInApproved = signInAnswer{http.StatusOK, `{"access_token":"access-1","token_type":"Bearer"}`, ""}
+	signInKey      = signInAnswer{http.StatusOK, `{"apiKey":"released-key"}`, ""}
+)
+
+// signInService stands in for the sign-in service and the portal. The token
+// endpoint and the key request each give their answers in order, then repeat
+// the last one.
+type signInService struct {
+	token []signInAnswer
+	key   []signInAnswer
+
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+// start serves the stand-in and points the CLI's sign-in at it for this test.
+func (s *signInService) start(t *testing.T) {
+	t.Helper()
+	s.calls = map[string]int{}
+	next := func(answers *[]signInAnswer, w http.ResponseWriter) {
+		answer := (*answers)[0]
+		if len(*answers) > 1 {
+			*answers = (*answers)[1:]
+		}
+		if answer.retryAfter != "" {
+			w.Header().Set("Retry-After", answer.retryAfter)
+		}
+		w.WriteHeader(answer.status)
+		io.WriteString(w, answer.body)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.calls[r.URL.Path]++
+		switch r.URL.Path {
+		case "/oauth/device_authorization":
+			io.WriteString(w, `{"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri":"https://example.test/device","verification_uri_complete":"https://example.test/device?code=ABCD-EFGH","expires_in":600,"interval":5}`)
+		case "/oauth/token":
+			next(&s.token, w)
+		case "/api/oauth/api-key":
+			if r.Header.Get("Authorization") != "Bearer access-1" {
+				t.Errorf("the key request carried Authorization %q", r.Header.Get("Authorization"))
+			}
+			next(&s.key, w)
+		case "/oauth/userinfo":
+			io.WriteString(w, `{"email":"dev@localhost"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	auth, portal, client := authURL, portalURL, oauthClientID
+	t.Cleanup(func() { authURL, portalURL, oauthClientID = auth, portal, client })
+	authURL, portalURL, oauthClientID = server.URL, server.URL, "test-client"
+}
+
+// requests is how many requests reached path, or every path when it is empty.
+func (s *signInService) requests(path string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	total := 0
+	for called, count := range s.calls {
+		if path == "" || called == path {
+			total += count
+		}
+	}
+	return total
+}
+
+// signInSession is a throwaway home that the commands of one test share. It
+// records the waits the CLI asked for instead of sleeping through them.
+type signInSession struct {
+	env      map[string]string
+	terminal bool
+	progress bool
+	waits    []time.Duration
+}
+
+func newSignInSession(t *testing.T) *signInSession {
+	return &signInSession{env: map[string]string{"HOME": t.TempDir(), "STRING_API_BASE_URL": "http://127.0.0.1:1/v1"}}
+}
+
+func (s *signInSession) run(list ...string) result {
+	var stdout, stderr bytes.Buffer
+	status := run(list, runtime{
+		env: func(name string) (string, bool) {
+			value, ok := s.env[name]
+			return value, ok
+		},
+		lookPath: func(string) (string, error) { return "/usr/local/bin/string", nil },
+		client:   http.DefaultClient,
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		sleep:    func(d time.Duration) { s.waits = append(s.waits, d) },
+		terminal: s.terminal,
+		progress: s.progress,
+	})
+	return result{status, stdout.String(), stderr.String()}
+}
+
+// file is the path of one of the files the CLI keeps under the home.
+func (s *signInSession) file(name string) string {
+	return filepath.Join(s.env["HOME"], ".config", "string", name)
+}
+
+// startThenPoll starts a sign-in the way an agent does and runs the command
+// that finishes it.
+func (s *signInSession) startThenPoll(t *testing.T, poll ...string) result {
+	t.Helper()
+	if got := s.run("login", "--no-wait"); got.status != 0 {
+		t.Fatalf("login --no-wait: %+v", got)
+	}
+	s.waits = nil
+	return s.run(append([]string{"login", "--poll"}, poll...)...)
+}
+
+const (
+	signInByHand = "set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys, or pipe one to `string login --with-token`"
+	signInAgain  = "run `string login` again later, or " + signInByHand
+	signInHint   = "string fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.\n"
+)
+
+func TestAPortalRefusalAfterApprovalEndsLoginWithItsExitCodeAndANextStep(t *testing.T) {
+	refusals := []struct {
+		answer   signInAnswer
+		exit     int
+		message  string
+		next     string
+		requests int
+	}{
+		{signInAnswer{http.StatusForbidden, `{"error":"This app cannot receive String API keys"}`, ""}, exitAuth, "HTTP 403: This app cannot receive String API keys", signInByHand, 1},
+		{signInAnswer{http.StatusForbidden, `{"error":"Your organization already has 100 active API keys. Revoke one at https://portal.usestring.ai/api-keys, then sign in again."}`, ""}, exitAuth, "HTTP 403: Your organization already has 100 active API keys.", signInByHand, 1},
+		{signInAnswer{http.StatusUnauthorized, `{"error":"Invalid or expired access token"}`, ""}, exitAuth, "HTTP 401: Invalid or expired access token", signInByHand, 1},
+		// A 429 turns the request away before it is handled, and the portal
+		// checks the token before it creates a key, so these two are asked again.
+		{signInAnswer{http.StatusTooManyRequests, `{"error":"Too many requests. Retry shortly."}`, ""}, exitRateLimit, "HTTP 429: Too many requests. Retry shortly.", signInAgain, 4},
+		{signInAnswer{http.StatusServiceUnavailable, `{"error":"Could not verify the access token"}`, ""}, exitUpstream, "HTTP 503: Could not verify the access token", signInAgain, 4},
+		// These may follow a key that was created, and a second request would
+		// create another, so they are asked once.
+		{signInAnswer{http.StatusServiceUnavailable, `{"error":"Could not create a key for this sign-in"}`, ""}, exitUpstream, "HTTP 503: Could not create a key for this sign-in", signInAgain, 1},
+		{signInAnswer{http.StatusInternalServerError, `{"error":"Internal Server Error"}`, ""}, exitUpstream, "HTTP 500: Internal Server Error", signInAgain, 1},
+		{signInAnswer{http.StatusBadGateway, "<html>Bad Gateway</html>", ""}, exitUpstream, "HTTP 502 from ", signInAgain, 1},
+	}
+	for _, refusal := range refusals {
+		for _, asJSON := range []bool{false, true} {
+			service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{refusal.answer}}
+			service.start(t)
+			session := newSignInSession(t)
+			poll := []string{}
+			if asJSON {
+				poll = append(poll, "--json")
+			}
+
+			got := session.startThenPoll(t, poll...)
+
+			said := fmt.Sprintf("%d %s, --json %t: %+v", refusal.answer.status, refusal.answer.body, asJSON, got)
+			if got.status != refusal.exit || got.output != "" {
+				t.Errorf("%s: want exit %d and nothing on stdout", said, refusal.exit)
+			}
+			if asJSON {
+				envelope := decode(t, got.errors).(map[string]any)["error"].(map[string]any)
+				message, _ := envelope["message"].(string)
+				if envelope["code"] != "key_release_failed" || envelope["status"] != float64(refusal.answer.status) || !strings.HasPrefix(message, refusal.message) || envelope["next_step"] != refusal.next {
+					t.Errorf("%s: want the message %q and the next step %q", said, refusal.message, refusal.next)
+				}
+			} else if !strings.HasPrefix(got.errors, refusal.message) || !strings.HasSuffix(got.errors, "\nNext: "+refusal.next+"\n") {
+				t.Errorf("%s: want the message %q and the next step %q", said, refusal.message, refusal.next)
+			}
+			if requests := service.requests("/api/oauth/api-key"); requests != refusal.requests {
+				t.Errorf("%s: asked for the key %d times, want %d", said, requests, refusal.requests)
+			}
+			for _, name := range []string{"credentials.json", "pending.json"} {
+				if _, err := os.Stat(session.file(name)); !os.IsNotExist(err) {
+					t.Errorf("%s: %s is there afterwards: %v", said, name, err)
+				}
+			}
+		}
+	}
+}
+
+func TestLoginAsksAgainForTheKeyWhileThePortalIsBusy(t *testing.T) {
+	busyThenReady := func() *signInService {
+		return &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{
+			{http.StatusTooManyRequests, `{"error":"Too many requests. Retry shortly."}`, ""},
+			{http.StatusServiceUnavailable, `{"error":"Could not verify the access token"}`, ""},
+			signInKey,
+		}}
+	}
+
+	// A person at a terminal is told once why the command is still going.
+	service := busyThenReady()
+	service.start(t)
+	session := newSignInSession(t)
+	session.terminal, session.progress = true, true
+	got := session.run("login")
+	if got.status != 0 || !strings.Contains(got.output, "Logged in as dev@localhost.") || got.errors != "Approved. Waiting for String to hand over the key...\n" {
+		t.Errorf("at a terminal: %+v", got)
+	}
+	// The first wait is the poll for approval; the others space out the key requests.
+	if want := []time.Duration{5 * time.Second, 2 * time.Second, 4 * time.Second}; !reflect.DeepEqual(session.waits, want) {
+		t.Errorf("waits %v, want %v", session.waits, want)
+	}
+	if requests := service.requests("/api/oauth/api-key"); requests != 3 {
+		t.Errorf("asked for the key %d times, want 3", requests)
+	}
+	if saved, err := loadCredentials(session.file("credentials.json")); err != nil || saved.APIKey != "released-key" || saved.Email != "dev@localhost" {
+		t.Errorf("saved %+v, %v", saved, err)
+	}
+
+	// An agent's --json run gets one JSON object on stdout and nothing else.
+	service = busyThenReady()
+	service.start(t)
+	session = newSignInSession(t)
+	got = session.startThenPoll(t, "--json")
+	if got.status != 0 || got.errors != "" || decode(t, got.output).(map[string]any)["status"] != "logged_in" {
+		t.Errorf("with --json: %+v", got)
+	}
+	if requests := service.requests("/api/oauth/api-key"); requests != 3 {
+		t.Errorf("with --json: asked for the key %d times, want 3", requests)
+	}
+}
+
+func TestLoginAsksAgainNoSoonerThanThePortalSaysAndNotForLong(t *testing.T) {
+	limited := func(retryAfter string) signInAnswer {
+		return signInAnswer{http.StatusTooManyRequests, `{"error":"Too many requests. Retry shortly."}`, retryAfter}
+	}
+	for _, c := range []struct {
+		key      []signInAnswer
+		exit     int
+		waits    []time.Duration
+		requests int
+	}{
+		// Longer than the CLI's own pause, so the portal's wait is used.
+		{[]signInAnswer{limited("7"), signInKey}, 0, []time.Duration{7 * time.Second}, 2},
+		// Shorter, so the CLI keeps its own.
+		{[]signInAnswer{limited("1"), signInKey}, 0, []time.Duration{2 * time.Second}, 2},
+		// The waits never add up to more than half a minute.
+		{[]signInAnswer{limited("10")}, exitRateLimit, []time.Duration{10 * time.Second, 10 * time.Second, 10 * time.Second}, 4},
+		{[]signInAnswer{limited("20")}, exitRateLimit, []time.Duration{20 * time.Second}, 2},
+		{[]signInAnswer{limited("120")}, exitRateLimit, nil, 1},
+		{[]signInAnswer{limited("9223372036854775807")}, exitRateLimit, nil, 1},
+	} {
+		service := &signInService{token: []signInAnswer{signInApproved}, key: c.key}
+		service.start(t)
+		session := newSignInSession(t)
+		asked := c.key[0].retryAfter
+
+		got := session.startThenPoll(t)
+
+		// The poll for approval waits five seconds before the first key request.
+		if want := append([]time.Duration{5 * time.Second}, c.waits...); got.status != c.exit || !reflect.DeepEqual(session.waits, want) {
+			t.Errorf("Retry-After %s: exit %d after waits %v, want exit %d after %v: %s", asked, got.status, session.waits, c.exit, want, got.errors)
+		}
+		if requests := service.requests("/api/oauth/api-key"); requests != c.requests {
+			t.Errorf("Retry-After %s: asked for the key %d times, want %d", asked, requests, c.requests)
+		}
+		if c.exit != 0 && !strings.Contains(got.errors, "\nRetry-After: "+asked+"\n") {
+			t.Errorf("Retry-After %s: the failure doesn't pass it on: %s", asked, got.errors)
+		}
+	}
+
+	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{limited("120")}}
+	service.start(t)
+	got := newSignInSession(t).startThenPoll(t, "--json")
+	envelope := decode(t, got.errors).(map[string]any)["error"].(map[string]any)
+	if got.status != exitRateLimit || envelope["retry_after_seconds"] != 120.0 {
+		t.Errorf("with --json: %+v", got)
+	}
+}
+
+func TestSignInServerTroubleWhileWaitingForApprovalHasItsOwnExitCode(t *testing.T) {
+	for _, c := range []struct {
+		answer signInAnswer
+		exit   int
+	}{
+		{signInAnswer{http.StatusTooManyRequests, `{"message":"Too many requests"}`, ""}, exitRateLimit},
+		{signInAnswer{http.StatusServiceUnavailable, `{"message":"Service unavailable"}`, ""}, exitUpstream},
+		{signInAnswer{http.StatusBadRequest, `{"message":"Bad request"}`, ""}, exitAuth},
+	} {
+		service := &signInService{token: []signInAnswer{c.answer}, key: []signInAnswer{signInKey}}
+		service.start(t)
+		session := newSignInSession(t)
+
+		got := session.startThenPoll(t)
+
+		if want := fmt.Sprintf("Sign-in failed: HTTP %d\n", c.answer.status); got.status != c.exit || got.errors != want {
+			t.Errorf("the token endpoint answered %d: %+v, want exit %d and %q", c.answer.status, got, c.exit, want)
+		}
+		if _, err := os.Stat(session.file("credentials.json")); !os.IsNotExist(err) {
+			t.Errorf("the token endpoint answered %d, and a key was saved: %v", c.answer.status, err)
+		}
+	}
+}
+
+func TestABuildWithNoClientRefusesLoginAndInitSignsNobodyIn(t *testing.T) {
+	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
+	service.start(t)
+	oauthClientID = ""
+	session := newSignInSession(t)
+	session.terminal = true
+
+	got := session.run("login")
+	if got.status != exitAuth || got.output != "" || !strings.Contains(got.errors, "This build of string cannot sign in through the browser.") || !strings.Contains(got.errors, "Keys are at https://portal.usestring.ai/api-keys.") {
+		t.Errorf("login: %+v", got)
+	}
+	got = session.run("login", "--json")
+	if envelope := decode(t, got.errors).(map[string]any)["error"].(map[string]any); got.status != exitAuth || got.output != "" || envelope["code"] != "login_unavailable" {
+		t.Errorf("login --json: %+v", got)
+	}
+
+	got = session.run("init")
+	if got.status != 0 || got.errors != "" || !strings.Contains(got.output, "Installed the string-cli skill") || !strings.HasSuffix(got.output, "\n\n"+signInHint) || strings.Contains(got.output, "Signing in") {
+		t.Errorf("init from a terminal: %+v", got)
+	}
+
+	if requests := service.requests(""); requests != 0 {
+		t.Errorf("a build with no client sent %d requests", requests)
+	}
+	for _, name := range []string{"credentials.json", "pending.json"} {
+		if _, err := os.Stat(session.file(name)); !os.IsNotExist(err) {
+			t.Errorf("%s is there afterwards: %v", name, err)
+		}
+	}
+}
+
+func TestInitStillSucceedsWhenItsSignInEndsWithoutAKey(t *testing.T) {
+	const before = "\n\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\nOpen https://example.test/device?code=ABCD-EFGH and confirm the code ABCD-EFGH.\n"
+	for _, ending := range []struct {
+		token signInAnswer
+		key   signInAnswer
+		why   string
+	}{
+		{signInAnswer{http.StatusBadRequest, `{"error":"access_denied"}`, ""}, signInKey, "it was denied"},
+		{signInAnswer{http.StatusBadRequest, `{"error":"expired_token"}`, ""}, signInKey, "the code expired"},
+		// Nobody approves, and the code's ten minutes run out.
+		{signInAnswer{http.StatusBadRequest, `{"error":"authorization_pending"}`, ""}, signInKey, "the code expired"},
+		{signInApproved, signInAnswer{http.StatusForbidden, `{"error":"This app cannot receive String API keys"}`, ""}, "HTTP 403: This app cannot receive String API keys"},
+		{signInApproved, signInAnswer{http.StatusTooManyRequests, `{"error":"Too many requests. Retry shortly."}`, ""}, "HTTP 429: Too many requests. Retry shortly"},
+	} {
+		service := &signInService{token: []signInAnswer{ending.token}, key: []signInAnswer{ending.key}}
+		service.start(t)
+		session := newSignInSession(t)
+		session.terminal = true
+
+		got := session.run("init")
+
+		after := "Sign-in did not finish: " + ending.why + ". Run string login to sign in later.\n\n" + signInHint
+		if got.status != 0 || got.errors != "" || !strings.HasPrefix(got.output, "Installed the string-cli skill") || !strings.HasSuffix(got.output, before+after) {
+			t.Errorf("sign-in ended with %q: %+v\nwant exit 0 and output ending\n%s", ending.why, got, before+after)
+		}
+		if _, err := os.Stat(filepath.Join(session.env["HOME"], ".agents", "skills", "string-cli", "SKILL.md")); err != nil {
+			t.Errorf("sign-in ended with %q, and the skill is not installed: %v", ending.why, err)
+		}
+		if _, err := os.Stat(session.file("credentials.json")); !os.IsNotExist(err) {
+			t.Errorf("sign-in ended with %q, and a key was saved: %v", ending.why, err)
+		}
+	}
+}
+
+func TestInitStillSucceedsWhenTheSignInServiceCannotBeReached(t *testing.T) {
+	// No server is started, so sign-in goes to TestMain's address, which refuses.
+	defer func(client string) { oauthClientID = client }(oauthClientID)
+	oauthClientID = "test-client"
+	session := newSignInSession(t)
+	session.terminal = true
+
+	got := session.run("init")
+
+	if got.status != 0 || got.errors != "" || !strings.Contains(got.output, "\nSign-in did not finish: ") || !strings.HasSuffix(got.output, ". Run string login to sign in later.\n\n"+signInHint) {
+		t.Errorf("init from a terminal: %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(session.env["HOME"], ".agents", "skills", "string-cli", "SKILL.md")); err != nil {
+		t.Errorf("the skill is not installed: %v", err)
+	}
+}
+
+func TestInitNoLoginSkipsSignIn(t *testing.T) {
+	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
+	service.start(t)
+	session := newSignInSession(t)
+	session.terminal = true
+
+	got := session.run("init", "--no-login")
+
+	if got.status != 0 || got.errors != "" || !strings.HasSuffix(got.output, "\n\n"+signInHint) || strings.Contains(got.output, "Signing in") {
+		t.Errorf("init --no-login: %+v", got)
+	}
+	if requests := service.requests(""); requests != 0 {
+		t.Errorf("init --no-login sent %d requests", requests)
+	}
+	if _, err := os.Stat(filepath.Join(session.env["HOME"], ".agents", "skills", "string-cli", "SKILL.md")); err != nil {
+		t.Errorf("init --no-login did not install the skill: %v", err)
+	}
+}
+
+func TestHelpDescribesSignInAsItWorks(t *testing.T) {
+	got := newSignInSession(t).run("--help")
+	// The help is wrapped by hand, so compare it with the line breaks taken out.
+	text := strings.Join(strings.Fields(got.output), " ")
+	for _, want := range []string{
+		"login signs in through your browser and saves a new API key that String creates for that sign-in.",
+		"set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.",
+		"string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login]",
+		"--no-login skips the sign-in, and init exits 0 whether or not the sign-in finishes.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the help lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"the API key you choose", "portal.usestring.ai/settings"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("the help still says %q", gone)
+		}
+	}
+}
+
+func TestLoginSaysWhenSTRINGAPIKEYStillWinsOverTheKeyItSaved(t *testing.T) {
+	const stillWins = "STRING_API_KEY is set, and commands keep using it instead until you unset it.\n"
+	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
+	service.start(t)
+	session := newSignInSession(t)
+	loggedIn := "Logged in as dev@localhost. The key is saved in " + session.file("credentials.json") + ".\n"
+
+	if got := session.startThenPoll(t); got.status != 0 || got.output != loggedIn || got.errors != "" {
+		t.Errorf("without STRING_API_KEY: %+v", got)
+	}
+	session.env["STRING_API_KEY"] = "a-key-that-stopped-working"
+	if got := session.startThenPoll(t); got.status != 0 || got.output != loggedIn+stillWins || got.errors != "" {
+		t.Errorf("with STRING_API_KEY: %+v", got)
+	}
+	// With --json, stdout stays one JSON object and the note goes to stderr.
+	got := session.startThenPoll(t, "--json")
+	if got.status != 0 || got.errors != stillWins {
+		t.Errorf("with STRING_API_KEY and --json: %+v", got)
+	}
+	expectJSON(t, got.output, `{"status":"logged_in","email":"dev@localhost","credentials":"`+session.file("credentials.json")+`"}`)
+
+	got = session.run("logout")
+	if got.status != 0 || !strings.Contains(got.output, "The key itself still works until you delete it in https://portal.usestring.ai/api-keys.\n") {
+		t.Errorf("logout: %+v", got)
+	}
+}
+
+func TestLoginShowsWhereToApproveAndHowToFinish(t *testing.T) {
+	const open = "Open https://example.test/device?code=ABCD-EFGH and confirm the code ABCD-EFGH.\n"
+	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
+	service.start(t)
+	session := newSignInSession(t)
+
+	// Without a terminal, or with --no-wait, the command returns at once.
+	for _, list := range [][]string{{"login"}, {"login", "--no-wait"}} {
+		if got := session.run(list...); got.status != 0 || got.output != open+"Then run string login --poll to save the key. The code expires in 10 minutes.\n" {
+			t.Errorf("%v: %+v", list, got)
+		}
+	}
+	session.terminal = true
+	want := open + "Logged in as dev@localhost. The key is saved in " + session.file("credentials.json") + ".\n"
+	if got := session.run("login"); got.status != 0 || got.output != want {
+		t.Errorf("login at a terminal: %+v, want output %q", got, want)
+	}
+}

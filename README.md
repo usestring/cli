@@ -43,7 +43,7 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
   string login --json   # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll"}
   string login --poll   # after the person approves
   ```
-- `string login --with-token` reads a key from [String settings](https://portal.usestring.ai/settings) on stdin, checks it with one free API call, and saves it in the same file. The key stays out of your shell history: `string login --with-token < key.txt`.
+- `string login --with-token` reads a key from [String's API keys page](https://portal.usestring.ai/api-keys) on stdin, checks it with one free API call, and saves it in the same file. The key stays out of your shell history: `string login --with-token < key.txt`.
 - `STRING_API_KEY` in the environment. It wins over a saved key, and the CLI never writes it to a file:
 
   ```bash
