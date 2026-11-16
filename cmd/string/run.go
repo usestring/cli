@@ -150,7 +150,7 @@ var commandHelp = map[string]string{
   string URL [--FIELD VALUE ...]
 
 Fetches URL and prints the page as Markdown. Each flag is the /fetch request
-field of the same name: https://portal.usestring.ai/docs/api-reference/fetch
+field of the same name: https://docs.usestring.ai/api-reference/fetch
 
   --format json|markdown|raw       the response format
   --markdownMode readable|full     how much of the page the Markdown keeps
@@ -185,7 +185,7 @@ same fields as string fetch (string fetch --help).
   string search QUERY [--FIELD VALUE ...] [--input FILE] [--output FILE]
 
 Searches the web and prints the results as JSON. Each flag is the /search
-request field of the same name: https://portal.usestring.ai/docs/api-reference/search
+request field of the same name: https://docs.usestring.ai/api-reference/search
 
   --engine NAME                    google (the default), duckduckgo, brave or google_ai_mode
   --searchType TYPE                web, images, videos, shopping, books, places or forums
@@ -219,7 +219,7 @@ Example:
 
 Crawls one site. submit quotes the crawl and costs nothing; approving starts it
 at the quoted cost. Each field flag is the sitemap request field of the same
-name: https://portal.usestring.ai/docs/api-reference/sitemap
+name: https://docs.usestring.ai/api-reference/sitemap
 
   --maxPages N                     pages to crawl, 1 to 10,000 (10 by default)
   --maxDepth N                     link depth from URL, 1 to 100 (2 by default)

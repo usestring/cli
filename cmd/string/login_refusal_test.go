@@ -531,6 +531,22 @@ func TestHelpDescribesSignInAsItWorks(t *testing.T) {
 	}
 }
 
+// The portal only redirects its old docs addresses now, and a released binary
+// keeps the links it was built with.
+func TestHelpLinksToTheDocsOnTheHostThatServesThem(t *testing.T) {
+	for command, link := range map[string]string{
+		"fetch":        "https://docs.usestring.ai/api-reference/fetch",
+		"search":       "https://docs.usestring.ai/api-reference/search",
+		"sitemap":      "https://docs.usestring.ai/api-reference/sitemap",
+		"integrations": "https://docs.usestring.ai/sites",
+	} {
+		got := newSignInSession(t).run(command, "--help")
+		if got.status != 0 || !strings.Contains(got.output, " "+link+"\n") || strings.Contains(got.output, "portal.usestring.ai/docs") {
+			t.Errorf("string %s --help: exit %d, want the link %s and none to portal.usestring.ai/docs:\n%s", command, got.status, link, got.output)
+		}
+	}
+}
+
 func TestLoginSaysWhenSTRINGAPIKEYStillWinsOverTheKeyItSaved(t *testing.T) {
 	const stillWins = "STRING_API_KEY is set, and commands keep using it instead until you unset it.\n"
 	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}

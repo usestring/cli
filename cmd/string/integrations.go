@@ -18,7 +18,7 @@ A site integration is a set of typed actions over one website, such as reddit
 post. Each run flag is a field of the action's input, spelled as the field:
 the post field is --post. A list field takes one item per flag, or a JSON
 array. list needs no key; run needs one. Add --json to list for the JSON
-catalog. https://portal.usestring.ai/docs/sites
+catalog. https://docs.usestring.ai/sites
 
 Example:
   string integrations list reddit
