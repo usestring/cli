@@ -499,7 +499,7 @@ func TestInitAddsTheMCPServerToClaudeCodeAndCodexOnceWithoutAKey(t *testing.T) {
 		// Like claude mcp add, record the server in Claude Code's user settings.
 		program: func(name string, args ...string) ([]byte, error) {
 			ran = append(ran, append([]string{name}, args...))
-			settings := `{"mcpServers":{"string-web-access":{"type":"http","url":"https://mcp.usestring.ai?login"}}}`
+			settings := `{"mcpServers":{"string":{"type":"http","url":"https://mcp.usestring.ai?login"}}}`
 			return nil, os.WriteFile(filepath.Join(home, ".claude.json"), []byte(settings), 0o600)
 		},
 		stdout: &stdout,
@@ -517,11 +517,11 @@ func TestInitAddsTheMCPServerToClaudeCodeAndCodexOnceWithoutAKey(t *testing.T) {
 			t.Fatalf("status %d: %s", status, stderr.String())
 		}
 	}
-	add := []string{"/opt/bin/claude", "mcp", "add", "--transport", "http", "--scope", "user", "string-web-access", "https://mcp.usestring.ai?login"}
+	add := []string{"/opt/bin/claude", "mcp", "add", "--transport", "http", "--scope", "user", "string", "https://mcp.usestring.ai?login"}
 	if !reflect.DeepEqual(ran, [][]string{add}) {
 		t.Errorf("ran %q, want %q once", ran, add)
 	}
-	want := existing + "\n\n[mcp_servers.string-web-access]\nurl = \"https://mcp.usestring.ai?login\"\n"
+	want := existing + "\n\n[mcp_servers.string]\nurl = \"https://mcp.usestring.ai?login\"\n"
 	if got, _ := os.ReadFile(codexConfig); string(got) != want {
 		t.Errorf("Codex's config is\n%s\nwant\n%s", got, want)
 	}
@@ -536,7 +536,11 @@ func TestInitLeavesACodexConfigItCannotExtendUnchanged(t *testing.T) {
 	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	addCodexMCP(dir)
+	// So init prints the command for the person to run instead.
+	want := `Add String's MCP server to Codex with: codex mcp add string --url "https://mcp.usestring.ai?login"`
+	if got := addCodexMCP(dir); got != want {
+		t.Errorf("init says\n%s\nwant\n%s", got, want)
+	}
 	if got, _ := os.ReadFile(path); string(got) != existing {
 		t.Errorf("config became %q", got)
 	}
