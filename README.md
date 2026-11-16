@@ -2,11 +2,11 @@
 
 Use String Web Access from a terminal. The CLI supports fetch, search, direct HTTP requests, and sitemap jobs. Responses go to stdout, so they can be piped to other commands.
 
-**It works without a key.** `string fetch` and `string search` run keyless, within a daily allowance per IP address, so the first call needs no account:
+**It works without a key.** Once `string` is [installed](#install), `string fetch` and `string search` run keyless, within a daily allowance per IP address, so the first call needs no account:
 
 ```bash
-npx -y @usestring/cli search "string web access"
-npx -y @usestring/cli https://example.com
+string search "string web access"
+string https://example.com
 ```
 
 For more, and for `request` and `sitemap`, sign in with `string login` or set `STRING_API_KEY`.
@@ -16,16 +16,18 @@ For more, and for `request` and `sitemap`, sign in with `string login` or set `S
 Pick whichever fits. Each installs the same native binary, `string`.
 
 ```bash
-# Anywhere with Node.js: installs string, adds the skill to your coding agents and signs you in
-npx -y @usestring/cli init      # or: npm install -g @usestring/cli
-
-# macOS and Linux
+# macOS and Linux: installs string and adds the skill to your coding agents
 curl -fsSL https://raw.githubusercontent.com/usestring/cli/main/install.sh | sh
 brew tap usestring/cli https://github.com/usestring/cli && brew install usestring/cli/string
 
 # Docker, e.g. in CI (pass -e STRING_API_KEY to use a key)
 docker run --rm ghcr.io/usestring/cli search "your query"
+
+# Anywhere with Node.js, once npm serves 0.2.0: installs string, adds the skill and signs you in
+npx -y @usestring/cli init      # or: npm install -g @usestring/cli
 ```
+
+Until `npm view @usestring/cli version` prints 0.2.0 or later, `npx -y @usestring/cli` and `npm install -g @usestring/cli` get 0.1.0, the old Node CLI, which needs `STRING_API_KEY` and has none of the commands here. On Windows, take `string.exe` from `string_windows_amd64.zip` or `string_windows_arm64.zip` on the [latest release](https://github.com/usestring/cli/releases/latest) and run it by its path.
 
 Homebrew builds the binary from the release's source archive, so Go is needed only while it builds. If an npm installation already provides `string`, remove it with `npm uninstall -g @usestring/cli` first; both provide the same command. Upgrade with `brew update && brew upgrade usestring/cli/string`.
 
@@ -37,7 +39,7 @@ Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, o
 
 A key lifts those limits and unlocks every option, `request` and `sitemap`. There are three ways to give the CLI one:
 
-- `string login` prints a code and opens String in your browser. Once you approve, String creates a new API key for that sign-in and the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when you run init from a terminal with no key set. Without a terminal, as under a coding agent, or with `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
+- `string login` prints a code and opens String in your browser. Once you approve, String creates a new API key for that sign-in and the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when you run init from a terminal with no key set, unless you pass `--no-login`; if that sign-in doesn't finish, init still succeeds and says how to sign in later. Without a terminal, as under a coding agent, or with `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
 
   ```bash
   string login --json   # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll"}
@@ -150,6 +152,7 @@ When the API sends `code`, `retryable` or `next_actions`, they are passed throug
 ```bash
 string init                            # the shared directory and every agent found
 string init --agent claude-code,codex  # only these
+string init --no-login                 # without signing in, even at a terminal
 npx skills add usestring/cli           # the same skill through the skills installer
 ```
 
