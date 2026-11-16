@@ -146,7 +146,7 @@ func initCommand(list []string, rt runtime) error {
 		addMCP(&report, chosen, home, rt)
 	}
 	if _, err := rt.lookPath("string"); err != nil {
-		report.WriteString("\nAgents run the skill's commands as `string`, which is not on your PATH. Install it with:\n  npm install -g @usestring/cli\n")
+		report.WriteString("\nAgents run the skill's commands as `string`, which is not on your PATH. " + pathHint(rt) + "\n")
 	}
 	if key, err := apiKey(rt.env); err == nil && key != "" {
 		return write(rt.stdout, []byte(report.String()))
@@ -175,6 +175,22 @@ func initCommand(list []string, rt runtime) error {
 	}
 	report.WriteString("\nstring fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.\n")
 	return write(rt.stdout, []byte(report.String()))
+}
+
+// pathHint is how to put the running copy of string on PATH. Only a copy that
+// npm installed is sent to npm. npm may not have this release, since its
+// publish step can run later or not at all, and the package there is then an
+// older CLI that would take the name the skill calls.
+func pathHint(rt runtime) string {
+	path, err := rt.binary()
+	if err != nil {
+		return "Add this copy's directory to your PATH, or move the binary into a directory that is already on it."
+	}
+	// A path element, whichever separator the system uses.
+	if strings.Contains(strings.ReplaceAll(path, `\`, "/"), "/node_modules/") {
+		return "Install it with:\n  npm install -g @usestring/cli"
+	}
+	return "This copy is at:\n  " + path + "\nAdd its directory to your PATH, or move the binary into a directory that is already on it."
 }
 
 // installSkills copies every embedded skill into dir, replacing an older copy.

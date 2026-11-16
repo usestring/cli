@@ -458,7 +458,7 @@ func TestInitInstallsTheSkillForDetectedAgentsOnly(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".cursor")); !os.IsNotExist(err) {
 		t.Errorf("created a skills directory for an agent that is not installed: %v", err)
 	}
-	for _, hint := range []string{"npm install -g @usestring/cli", "string login"} {
+	for _, hint := range []string{"which is not on your PATH", "string login"} {
 		if !strings.Contains(stdout.String(), hint) {
 			t.Errorf("output lacks %q:\n%s", hint, stdout.String())
 		}

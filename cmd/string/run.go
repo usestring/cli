@@ -40,6 +40,16 @@ type runtime struct {
 	// json is set by --json: machine-readable output for agents.
 	json bool
 	now  func() time.Time
+	// executable gives the path of the running binary, which tells init how
+	// this copy was installed.
+	executable func() (string, error)
+}
+
+func (rt runtime) binary() (string, error) {
+	if rt.executable == nil {
+		return os.Executable()
+	}
+	return rt.executable()
 }
 
 func (rt runtime) pause(d time.Duration) {

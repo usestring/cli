@@ -524,6 +524,49 @@ func TestInitNoLoginSkipsSignIn(t *testing.T) {
 	}
 }
 
+func TestInitSaysHowToPutTheCopyThatIsRunningOnPATH(t *testing.T) {
+	const (
+		missing = "\nAgents run the skill's commands as `string`, which is not on your PATH. "
+		byNPM   = missing + "Install it with:\n  npm install -g @usestring/cli\n"
+		orMove  = "or move the binary into a directory that is already on it.\n"
+	)
+	at := func(path string) string {
+		return missing + "This copy is at:\n  " + path + "\nAdd its directory to your PATH, " + orMove
+	}
+	for _, c := range []struct {
+		about string
+		path  string
+		err   error
+		want  string
+	}{
+		// npm installed these copies, so npm has this version to install.
+		{"npm install -g", "/usr/local/lib/node_modules/@usestring/cli/node_modules/@usestring/cli-linux-x64/bin/string", nil, byNPM},
+		{"npx on Windows", `C:\Users\me\AppData\Local\npm-cache\_npx\1a2b3c\node_modules\@usestring\cli-win32-x64\bin\string.exe`, nil, byNPM},
+		// These came from somewhere else, and the package on npm may be older.
+		{"an unpacked download", "/home/me/Downloads/string_linux_amd64/string", nil, at("/home/me/Downloads/string_linux_amd64/string")},
+		{"the Windows zip", `C:\Users\me\Downloads\string\string.exe`, nil, at(`C:\Users\me\Downloads\string\string.exe`)},
+		{"a directory named like npm's", "/home/me/node_modules.bak/string", nil, at("/home/me/node_modules.bak/string")},
+		{"a system that does not say where the binary is", "", os.ErrNotExist, missing + "Add this copy's directory to your PATH, " + orMove},
+	} {
+		env := map[string]string{"HOME": t.TempDir(), "STRING_API_KEY": "test-key"}
+		var stdout, stderr bytes.Buffer
+		status := run([]string{"init", "--no-mcp"}, runtime{
+			env: func(name string) (string, bool) {
+				value, ok := env[name]
+				return value, ok
+			},
+			lookPath:   func(string) (string, error) { return "", os.ErrNotExist },
+			executable: func() (string, error) { return c.path, c.err },
+			stdout:     &stdout,
+			stderr:     &stderr,
+		})
+		// With a key set, the hint is the last thing init prints.
+		if got := stdout.String(); status != 0 || !strings.HasSuffix(got, c.want) || (c.want != byNPM && strings.Contains(got, "npm install")) {
+			t.Errorf("%s: exit %d, want the output to end with %q, and npm named only for a copy npm installed:\n%s%s", c.about, status, c.want, got, stderr.String())
+		}
+	}
+}
+
 func TestHelpDescribesSignInAsItWorks(t *testing.T) {
 	got := newSignInSession(t).run("--help")
 	// The help is wrapped by hand, so compare it with the line breaks taken out.
