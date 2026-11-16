@@ -30,7 +30,7 @@ const (
 	// are double because cmd.exe passes single ones on as part of the URL,
 	// while PowerShell, bash, zsh and fish take double quotes too.
 	mcpURLArg = `"` + mcpURL + `"`
-	mcpDocs   = "https://portal.usestring.ai/docs/mcp/remote"
+	mcpDocs   = "https://docs.usestring.ai/mcp/remote"
 	// mcpNameTaken is init's line for an agent whose server named mcpName is
 	// not at String's host, as when String's self-hosted server was set up
 	// under the name its docs give. Neither agent keeps two servers under one

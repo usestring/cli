@@ -204,6 +204,20 @@ func TestInitLeavesAnotherServerNamedLikeItsOwnAlone(t *testing.T) {
 	mcpFile(t, home, mcpConfigFile, config)
 }
 
+func TestInitSendsOtherAgentsToTheSetupPageOnTheDocsHost(t *testing.T) {
+	// init adds the server to Claude Code and Codex only, so Cursor gets the
+	// link. The portal only redirects its old docs addresses now, and a
+	// released binary keeps the link it was built with.
+	home := mcpHome(t, "", "")
+	if err := os.Mkdir(filepath.Join(home, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, _ := mcpInit(t, home, true)
+
+	mcpExpect(t, lines, "To add String's MCP server to Cursor, see https://docs.usestring.ai/mcp/remote")
+}
+
 func TestInitReadsEveryWayCodexConfigHasToDefineAServer(t *testing.T) {
 	const (
 		named   = "Codex already has an MCP server named string, so String's hosted server was not added."
