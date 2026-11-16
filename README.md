@@ -109,7 +109,7 @@ Interrupting `--wait` leaves the crawl running, and `string sitemap status JOB_I
 
 ## Site integrations
 
-A [site integration](https://portal.usestring.ai/docs/sites) is a set of typed actions over one website. For example, `reddit post` reads a post with its whole comment tree, and `yelp business` reads business records. An action takes an input and returns rows in a fixed shape. Most actions bill the requests they make, like fetches. Some bill per row returned instead: the Reddit actions do, and each post and each comment is a row, so one large thread can cost far more than a fetch. Cap a per-row call with the action's paging or limit flag, such as `--maxPages` on `reddit post`. The response's `billing` block shows how a call was charged, and the [pricing page](https://portal.usestring.ai/docs/get-started/pricing#site-integrations) has the rates.
+A [site integration](https://docs.usestring.ai/sites) is a set of typed actions over one website. For example, `reddit post` reads a post with its whole comment tree, and `yelp business` reads business records. An action takes an input and returns rows in a fixed shape. Most actions bill the requests they make, like fetches. Some bill per row returned instead: the Reddit actions do, and each post and each comment is a row, so one large thread can cost far more than a fetch. Cap a per-row call with the action's paging or limit flag, such as `--maxPages` on `reddit post`. The response's `billing` block shows how a call was charged, and the [pricing page](https://docs.usestring.ai/get-started/pricing#site-integrations) has the rates.
 
 ```bash
 string integrations                     # every site and its actions; no key needed
