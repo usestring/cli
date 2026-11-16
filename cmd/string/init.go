@@ -127,14 +127,14 @@ func targets(names string, home string, env func(string) (string, bool)) ([]agen
 }
 
 func initCommand(list []string, rt runtime) error {
-	parsed, err := parse(list, spec{options: []string{"agent"}, switches: []string{"no-mcp"}})
+	parsed, err := parse(list, spec{options: []string{"agent"}, switches: []string{"no-mcp", "no-login"}})
 	if err != nil {
 		return usage(err)
 	}
 	if parsed.help {
 		return write(rt.stdout, []byte(help))
 	}
-	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login]"); err != nil {
 		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
@@ -161,20 +161,51 @@ func initCommand(list []string, rt runtime) error {
 		addMCP(&report, chosen, home, rt)
 	}
 	if _, err := rt.lookPath("string"); err != nil {
-		report.WriteString("\nAgents run the skill's commands as `string`, which is not on your PATH. Install it with:\n  npm install -g @usestring/cli\n")
+		report.WriteString("\nAgents run the skill's commands as `string`, which is not on your PATH. " + pathHint(rt) + "\n")
 	}
 	if key, err := apiKey(rt.env); err == nil && key != "" {
 		return write(rt.stdout, []byte(report.String()))
 	}
-	if rt.terminal && oauthClientID != "" {
-		report.WriteString("\nSigning in.\n")
+	if rt.terminal && oauthClientID != "" && !parsed.switches["no-login"] {
+		report.WriteString("\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\n")
 		if err := write(rt.stdout, []byte(report.String())); err != nil {
 			return err
 		}
-		return signIn(rt)
+		err := signIn(rt)
+		if err == nil {
+			return nil
+		}
+		// The skill and MCP steps are done, so init reports a sign-in that
+		// ended without a key and still succeeds.
+		refused := asFailure(err)
+		why, _, _ := strings.Cut(refused.message, "\n")
+		switch refused.code {
+		case "login_expired":
+			why = "the code expired"
+		case "login_denied":
+			why = "it was denied"
+		}
+		report.Reset()
+		fmt.Fprintf(&report, "Sign-in did not finish: %s. Run string login to sign in later.\n", strings.TrimSuffix(why, "."))
 	}
-	report.WriteString("\nstring fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/settings.\n")
+	report.WriteString("\nstring fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.\n")
 	return write(rt.stdout, []byte(report.String()))
+}
+
+// pathHint is how to put the running copy of string on PATH. Only a copy that
+// npm installed is sent to npm. npm may not have this release, since its
+// publish step can run later or not at all, and the package there is then an
+// older CLI that would take the name the skill calls.
+func pathHint(rt runtime) string {
+	path, err := rt.binary()
+	if err != nil {
+		return "Add this copy's directory to your PATH, or move the binary into a directory that is already on it."
+	}
+	// A path element, whichever separator the system uses.
+	if strings.Contains(strings.ReplaceAll(path, `\`, "/"), "/node_modules/") {
+		return "Install it with:\n  npm install -g @usestring/cli"
+	}
+	return "This copy is at:\n  " + path + "\nAdd its directory to your PATH, or move the binary into a directory that is already on it."
 }
 
 // installSkills copies every embedded skill into dir, replacing an older copy.

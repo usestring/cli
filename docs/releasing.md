@@ -21,6 +21,16 @@ goreleaser release --snapshot --clean
 node npm/build.mjs dist npm-dist
 ```
 
+Check browser sign-in as well, against production, from a build of the commit you will tag. A release can't be changed, and a client that the sign-in service doesn't accept fails only after the person approves. Leave `STRING_API_KEY` unset, so that `string status` reads the key that sign-in saved:
+
+```bash
+go build -o string ./cmd/string
+./string login     # approve in the browser
+./string status    # the Key line reads "saved by string login", and there is a balance
+```
+
+Tag only when both succeed.
+
 Then, from an up-to-date `main`:
 
 ```bash

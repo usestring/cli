@@ -43,7 +43,7 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
   string login --json   # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll"}
   string login --poll   # after the person approves
   ```
-- `string login --with-token` reads a key from [String settings](https://portal.usestring.ai/settings) on stdin, checks it with one free API call, and saves it in the same file. The key stays out of your shell history: `string login --with-token < key.txt`.
+- `string login --with-token` reads a key from [String's API keys page](https://portal.usestring.ai/api-keys) on stdin, checks it with one free API call, and saves it in the same file. The key stays out of your shell history: `string login --with-token < key.txt`.
 - `STRING_API_KEY` in the environment. It wins over a saved key, and the CLI never writes it to a file:
 
   ```bash
@@ -82,7 +82,7 @@ string search "coffee grinders" --dateRange week --sortBy date
 string request POST https://example.com/api --body '{"name":"example"}' --headers '{"Content-Type":"application/json"}'
 ```
 
-**Every API field is a flag of the same name.** A field from the [API reference](https://portal.usestring.ai/docs/api-reference/fetch) works on the command line as written: `executeJS` is `--executeJS`, and `countryCode` is `--countryCode DE`. A boolean flag alone is true, and `=false` turns it off (`--solveCaptcha=false`). An object or array field takes JSON, or `@` and a file path (`--jsonSchema @./schema.json`). `string fetch --help`, `string search --help` and `string sitemap --help` list each command's fields, and a near miss such as `--max-pages` gets the right name back.
+**Every API field is a flag of the same name.** A field from the [API reference](https://docs.usestring.ai/api-reference/fetch) works on the command line as written: `executeJS` is `--executeJS`, and `countryCode` is `--countryCode DE`. A boolean flag alone is true, and `=false` turns it off (`--solveCaptcha=false`). An object or array field takes JSON, or `@` and a file path (`--jsonSchema @./schema.json`). `string fetch --help`, `string search --help` and `string sitemap --help` list each command's fields, and a near miss such as `--max-pages` gets the right name back.
 
 `fetch` prints the page as Markdown. `--format json` gives the full response with the status, headers and final URL, and `--format raw` gives the response bytes. A field that only JSON carries, such as `--jsonSchema` or `--screenshot`, makes JSON the default. `request`, `search` and `sitemap` print JSON. `--output FILE`, or `-o FILE`, writes the response to a file instead.
 
