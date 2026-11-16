@@ -177,6 +177,7 @@ func (s *signInSession) startThenPoll(t *testing.T, poll ...string) result {
 const (
 	signInByHand = "set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys, or pipe one to `string login --with-token`"
 	signInAgain  = "run `string login` again later, or " + signInByHand
+	signInPoll   = "run `string login --poll` to finish this sign-in with the same code"
 	signInHint   = "string fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.\n"
 )
 
@@ -332,10 +333,12 @@ func TestSignInServerTroubleWhileWaitingForApprovalHasItsOwnExitCode(t *testing.
 	for _, c := range []struct {
 		answer signInAnswer
 		exit   int
+		next   string
 	}{
-		{signInAnswer{http.StatusTooManyRequests, `{"message":"Too many requests"}`, ""}, exitRateLimit},
-		{signInAnswer{http.StatusServiceUnavailable, `{"message":"Service unavailable"}`, ""}, exitUpstream},
-		{signInAnswer{http.StatusBadRequest, `{"message":"Bad request"}`, ""}, exitAuth},
+		// Only a busy server leaves a code to go on with.
+		{signInAnswer{http.StatusTooManyRequests, `{"message":"Too many requests"}`, ""}, exitRateLimit, "Next: " + signInPoll + "\n"},
+		{signInAnswer{http.StatusServiceUnavailable, `{"message":"Service unavailable"}`, ""}, exitUpstream, "Next: " + signInPoll + "\n"},
+		{signInAnswer{http.StatusBadRequest, `{"message":"Bad request"}`, ""}, exitAuth, ""},
 	} {
 		service := &signInService{token: []signInAnswer{c.answer}, key: []signInAnswer{signInKey}}
 		service.start(t)
@@ -343,7 +346,7 @@ func TestSignInServerTroubleWhileWaitingForApprovalHasItsOwnExitCode(t *testing.
 
 		got := session.startThenPoll(t)
 
-		if want := fmt.Sprintf("Sign-in failed: HTTP %d\n", c.answer.status); got.status != c.exit || got.errors != want {
+		if want := fmt.Sprintf("Sign-in failed: HTTP %d\n%s", c.answer.status, c.next); got.status != c.exit || got.errors != want {
 			t.Errorf("the token endpoint answered %d: %+v, want exit %d and %q", c.answer.status, got, c.exit, want)
 		}
 		if _, err := os.Stat(session.file("credentials.json")); !os.IsNotExist(err) {
@@ -360,21 +363,32 @@ func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
 		{signInAnswer{http.StatusTooManyRequests, `{"message":"Too many requests"}`, ""}, exitRateLimit},
 		{signInAnswer{http.StatusServiceUnavailable, `{"message":"Service unavailable"}`, ""}, exitUpstream},
 	} {
-		// A person waits at a terminal; an agent starts the sign-in and polls.
-		for _, atTerminal := range []bool{true, false} {
+		// A person waits at a terminal; an agent starts the sign-in and polls,
+		// with --json or without.
+		for _, way := range []struct{ atTerminal, asJSON bool }{{true, false}, {false, false}, {false, true}} {
 			service := &signInService{token: []signInAnswer{c.answer, signInApproved}, key: []signInAnswer{signInKey}}
 			service.start(t)
 			session := newSignInSession(t)
-			session.terminal = atTerminal
-			said := fmt.Sprintf("the token endpoint answered %d, at a terminal %t", c.answer.status, atTerminal)
+			session.terminal = way.atTerminal
+			said := fmt.Sprintf("the token endpoint answered %d, at a terminal %t, --json %t", c.answer.status, way.atTerminal, way.asJSON)
 
 			var busy result
-			if atTerminal {
+			switch {
+			case way.atTerminal:
 				busy = session.run("login")
-			} else {
+			case way.asJSON:
+				busy = session.startThenPoll(t, "--json")
+			default:
 				busy = session.startThenPoll(t)
 			}
-			if want := fmt.Sprintf("Sign-in failed: HTTP %d\n", c.answer.status); busy.status != c.exit || busy.errors != want {
+			// The failure says that the code is still good and how to go on with it.
+			message := fmt.Sprintf("Sign-in failed: HTTP %d", c.answer.status)
+			if way.asJSON {
+				envelope := decode(t, busy.errors).(map[string]any)["error"].(map[string]any)
+				if busy.status != c.exit || envelope["code"] != "login_failed" || envelope["message"] != message || envelope["next_step"] != signInPoll {
+					t.Errorf("%s: %+v, want exit %d, the message %q and the next step %q", said, busy, c.exit, message, signInPoll)
+				}
+			} else if want := message + "\nNext: " + signInPoll + "\n"; busy.status != c.exit || busy.errors != want {
 				t.Errorf("%s: %+v, want exit %d and %q", said, busy, c.exit, want)
 			}
 
@@ -400,8 +414,8 @@ func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
 		service := &signInService{token: []signInAnswer{refusal, signInApproved}, key: []signInAnswer{signInKey}}
 		service.start(t)
 		session := newSignInSession(t)
-		if got := session.startThenPoll(t); got.status != exitAuth {
-			t.Errorf("the token endpoint answered %s: %+v, want exit %d", refusal.body, got, exitAuth)
+		if got := session.startThenPoll(t); got.status != exitAuth || strings.Contains(got.errors, "login --poll") {
+			t.Errorf("the token endpoint answered %s: %+v, want exit %d and no word of login --poll", refusal.body, got, exitAuth)
 		}
 		if got := session.run("login", "--poll"); got.status != exitUsage || !strings.HasPrefix(got.errors, "No sign-in is waiting.") {
 			t.Errorf("the token endpoint answered %s, then login --poll: %+v, want exit %d and no sign-in waiting", refusal.body, got, exitUsage)

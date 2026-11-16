@@ -442,10 +442,12 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 	}
 	token, err := deviceToken(rt, pending.DeviceCode, time.Duration(pending.Interval)*time.Second, pending.ExpiresAt.Sub(rt.clock()))
 	// A busy sign-in server has not spent the code, so the code stays saved
-	// for string login --poll to try again.
+	// and the failure says that string login --poll can still finish with it.
 	var refused *failure
 	if err == nil || (errors.As(err, &refused) && refused.exit != exitRateLimit && refused.exit != exitUpstream) {
 		os.Remove(pendingFile)
+	} else if refused != nil {
+		refused.nextStep = "run `string login --poll` to finish this sign-in with the same code"
 	}
 	if err != nil {
 		return err
