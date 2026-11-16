@@ -16,11 +16,26 @@ import (
 
 // String's hosted MCP server. Claude Code and Codex sign in to it with
 // String, so init can add it to them without putting a key in their settings.
+// ?login is what asks for that sign-in: with no credential, the bare address
+// serves keyless fetch and search and never asks.
 const (
-	mcpName = "string-web-access"
+	// mcpName is the name String's docs give the server, so the commands they
+	// show work on an entry init wrote. init never renames an entry, so a
+	// later release cannot change the name for anyone who already has one.
+	mcpName = "string"
 	mcpHost = "mcp.usestring.ai"
-	mcpURL  = "https://" + mcpHost + "/v3/mcp"
-	mcpDocs = "https://portal.usestring.ai/docs/mcp/remote"
+	mcpURL  = "https://" + mcpHost + "?login"
+	// mcpURLArg is mcpURL in a command printed for a person to paste, quoted
+	// because zsh reads its ? as a glob and refuses the command. The quotes
+	// are double because cmd.exe passes single ones on as part of the URL,
+	// while PowerShell, bash, zsh and fish take double quotes too.
+	mcpURLArg = `"` + mcpURL + `"`
+	mcpDocs   = "https://docs.usestring.ai/mcp/remote"
+	// mcpNameTaken is init's line for an agent whose server named mcpName is
+	// not at String's host, as when String's self-hosted server was set up
+	// under the name its docs give. Neither agent keeps two servers under one
+	// name, and init never replaces an entry.
+	mcpNameTaken = "%s already has an MCP server named " + mcpName + ", so String's hosted server was not added."
 )
 
 // agent is a coding agent that loads skills from a directory under the
@@ -217,13 +232,13 @@ func addClaudeMCP(home string, rt runtime) string {
 	if dir, ok := rt.env("CLAUDE_CONFIG_DIR"); ok && dir != "" {
 		settings = filepath.Join(dir, ".claude.json")
 	}
-	if claudeHasMCP(settings) {
-		return "Claude Code already has String's MCP server."
+	if line := alreadyThere("Claude Code", claudeServers(settings)); line != "" {
+		return line
 	}
 	add := []string{"mcp", "add", "--transport", "http", "--scope", "user", mcpName, mcpURL}
 	claude, err := rt.lookPath("claude")
 	if err != nil {
-		return "Add String's MCP server to Claude Code with: claude " + strings.Join(add, " ")
+		return "Add String's MCP server to Claude Code with: claude " + strings.Join(add[:len(add)-1], " ") + " " + mcpURLArg
 	}
 	if output, err := rt.program(claude, add...); err != nil {
 		reason, _, _ := strings.Cut(strings.TrimSpace(string(output)), "\n")
@@ -235,12 +250,34 @@ func addClaudeMCP(home string, rt runtime) string {
 	return "Added String's MCP server to Claude Code. Sign in to it with: claude mcp login " + mcpName
 }
 
-// claudeHasMCP reports whether Claude Code's user settings already have a
-// server by this name or at String's MCP host.
-func claudeHasMCP(path string) bool {
+// alreadyThere is init's line for an agent it adds nothing to, or "" when it
+// can add the server. servers maps the name of each MCP server the agent has
+// to the text of its entry. A server at String's host is String's under
+// whatever name it has, and init says that name: it is the one the agent's
+// sign-in command takes.
+func alreadyThere(label string, servers map[string]string) string {
+	var hosted string
+	for name, entry := range servers {
+		// The first by name, so two such servers give the same line on every run.
+		if strings.Contains(entry, mcpHost) && (hosted == "" || name < hosted) {
+			hosted = name
+		}
+	}
+	if hosted != "" {
+		return fmt.Sprintf("%s already has String's MCP server, as %s.", label, hosted)
+	}
+	if _, taken := servers[mcpName]; taken {
+		return fmt.Sprintf(mcpNameTaken, label)
+	}
+	return ""
+}
+
+// claudeServers reads the MCP servers in Claude Code's user settings: each
+// server's name and its URL, which a server run as a local program lacks.
+func claudeServers(path string) map[string]string {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return nil
 	}
 	var settings struct {
 		MCPServers map[string]struct {
@@ -248,20 +285,86 @@ func claudeHasMCP(path string) bool {
 		} `json:"mcpServers"`
 	}
 	if json.Unmarshal(data, &settings) != nil {
-		return false
+		return nil
 	}
+	servers := map[string]string{}
 	for name, server := range settings.MCPServers {
-		if name == mcpName || strings.Contains(server.URL, mcpHost) {
-			return true
-		}
+		servers[name] = server.URL
 	}
-	return false
+	return servers
 }
 
 // codexInlineServers matches mcp_servers written as an inline table, which
 // TOML forbids extending with an [mcp_servers.NAME] table: appending one would
 // leave Codex unable to load its config.
 var codexInlineServers = regexp.MustCompile(`(?m)^\s*["']?mcp_servers["']?\s*=`)
+
+// codexInlineName matches mcpName where an inline table has its keys. The
+// servers of an inline mcp_servers are not read one by one, so any such key
+// counts as the name being taken.
+var codexInlineName = regexp.MustCompile(`[{,]\s*["']?` + regexp.QuoteMeta(mcpName) + `["']?\s*[.=]`)
+
+// tomlKey matches one part of a TOML key, bare or quoted, and the spaces TOML
+// allows around it.
+var tomlKey = regexp.MustCompile(`^[ \t]*(?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_-]+))[ \t]*`)
+
+// tomlPath reads the dotted key that starts s, as in a."b".c, and returns its
+// parts and what follows them.
+func tomlPath(s string) (path []string, rest string) {
+	for {
+		part := tomlKey.FindStringSubmatch(s)
+		if part == nil {
+			return nil, s
+		}
+		path, s = append(path, part[1]+part[2]+part[3]), s[len(part[0]):]
+		if !strings.HasPrefix(s, ".") {
+			return path, s
+		}
+		s = s[1:]
+	}
+}
+
+// codexServers reads the MCP servers in Codex's config.toml: each server's
+// name and the lines that define it. It follows every way TOML has to write
+// mcp_servers.NAME outside an inline table: a [mcp_servers.NAME] table, a NAME
+// key under [mcp_servers], and a key that starts with mcp_servers.NAME. A
+// second definition of a server stops Codex loading its config, so init must
+// see the name it would append in any of them. Searching the file for the
+// name would not do: nearly every config has the word "string" in it.
+func codexServers(config string) map[string]string {
+	servers := map[string]string{}
+	var table []string
+	var name string
+	// A byte order mark, which Codex accepts, would hide a table on line one.
+	for line := range strings.SplitSeq(strings.TrimPrefix(config, "\ufeff"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		var path []string
+		if header := strings.TrimLeft(line, "["); header != line {
+			keys, rest := tomlPath(header)
+			if end := strings.TrimLeft(rest, "] \t"); strings.HasPrefix(rest, "]") && (end == "" || end[0] == '#') {
+				table, path = keys, keys
+			}
+		} else if keys, rest := tomlPath(line); strings.HasPrefix(rest, "=") {
+			path = slices.Concat(table, keys)
+		}
+		// A line that is neither a table header nor a key carries on the
+		// value above it, such as a long args list, and stays with that
+		// value's server.
+		if path != nil {
+			name = ""
+			if len(path) > 1 && path[0] == "mcp_servers" {
+				name = path[1]
+			}
+		}
+		if name != "" {
+			servers[name] += line + "\n"
+		}
+	}
+	return servers
+}
 
 // addCodexMCP appends the server to Codex's config.toml. codex mcp add would
 // also start a sign-in and wait for it, holding init until someone finishes it.
@@ -272,11 +375,21 @@ func addCodexMCP(dir string) string {
 		return "Could not add String's MCP server to Codex: " + err.Error()
 	}
 	config := string(data)
+	if line := alreadyThere("Codex", codexServers(config)); line != "" {
+		return line
+	}
 	switch {
-	case strings.Contains(config, mcpName) || strings.Contains(config, mcpHost):
+	case strings.Contains(config, mcpHost):
+		// The host is where no server's name was read, such as an inline
+		// table or a comment. Any mention of it leaves the file alone.
 		return "Codex already has String's MCP server."
 	case codexInlineServers.MatchString(config):
-		return "Add String's MCP server to Codex with: codex mcp add " + mcpName + " --url " + mcpURL
+		// codex mcp add replaces a server that has the name it is given, so
+		// the command is printed only when the name is free.
+		if codexInlineName.MatchString(config) {
+			return fmt.Sprintf(mcpNameTaken, "Codex")
+		}
+		return "Add String's MCP server to Codex with: codex mcp add " + mcpName + " --url " + mcpURLArg
 	}
 	entry := "[mcp_servers." + mcpName + "]\nurl = \"" + mcpURL + "\"\n"
 	if config != "" {
