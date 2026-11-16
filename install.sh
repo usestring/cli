@@ -20,7 +20,7 @@ fail() {
 case "$(uname -s)" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
-  *) fail "unsupported system $(uname -s); on Windows use npx -y @usestring/cli init or the zip from the GitHub release" ;;
+  *) fail "unsupported system $(uname -s); on Windows, take string.exe from the zip for your CPU at $repo/latest and run it by its path" ;;
 esac
 case "$(uname -m)" in
   x86_64 | amd64) arch=amd64 ;;
