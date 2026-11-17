@@ -359,7 +359,10 @@ func startSignIn(rt runtime, wait bool) (pendingLogin, error) {
 	}
 	status, err := postForm(rt, authURL+"/oauth/device_authorization", url.Values{
 		"client_id": {oauthClientID},
-		"scope":     {"web_access email"},
+		// The email labels the saved key. With web_access in the request too,
+		// the sign-in of an account that has never granted it stays pending
+		// after the person approves, until the code expires.
+		"scope": {"email"},
 	}, &device)
 	if err != nil {
 		return pendingLogin{}, err
