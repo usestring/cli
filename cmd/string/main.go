@@ -45,11 +45,6 @@ func main() {
 	}))
 }
 
-func isTerminal(file *os.File) bool {
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
-}
-
 // runProgram runs name with args and returns what it printed. The deadline
 // stops a program that hangs from holding the command that ran it.
 func runProgram(name string, args ...string) ([]byte, error) {
