@@ -1,0 +1,69 @@
+# Tests every pull request and every push to main on Linux, macOS and Windows,
+# the systems a release has binaries for. The release workflow tests on Linux
+# only, and only once the tag is pushed, and a published tag is never moved: a
+# failure there leaves a tag without a release. Here a commit is tested before
+# it is tagged.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels the run of the push before it. A push to
+# main is in a group of its own, so no run on main is cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Longer than the ten minutes after which go test stops a test that hangs
+    # and prints where, so that report is not cut off.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - if: runner.os != 'Windows'
+        run: go test ./...
+      # A step has no terminal, so go test ./... skips the test that a real
+      # terminal counts as one. script(1) runs the terminal tests in a terminal
+      # of its own and records what they print, and this step fails unless that
+      # test passed. Linux's script takes the command as one string and the
+      # file last; macOS's takes the file, then the command. Both exit with the
+      # command's status, Linux's because of -e. -count=1 makes Go run the
+      # tests: a cached result says nothing about this terminal.
+      - name: Run the terminal tests in a terminal
+        if: runner.os != 'Windows'
+        run: |
+          tests="go test ./cmd/string -run 'Terminal|NullDevice' -count=1 -v"
+          log="$RUNNER_TEMP/terminal-tests.log"
+          if [ "$RUNNER_OS" = Linux ]; then
+            script -q -e -c "$tests" "$log"
+          else
+            script -q "$log" sh -c "$tests"
+          fi
+          if ! grep -q 'PASS: TestTheTerminalTheTestsRunFromIsATerminal' "$log"; then
+            echo "::error::TestTheTerminalTheTestsRunFromIsATerminal did not pass, so nothing shows that a real terminal counts as one here."
+            exit 1
+          fi
+      # Windows runs the terminal tests alone. Other tests check that the files
+      # holding a key are mode 0600 (run_test.go, trial_test.go), which no file
+      # on Windows is, so go test ./... cannot pass there. The test that a real
+      # terminal counts as one is skipped if the runner gives the step no
+      # console; the log says which.
+      - if: runner.os == 'Windows'
+        run: go build ./...
+      - if: runner.os == 'Windows'
+        run: go test ./cmd/string -run 'Terminal|NullDevice' -count=1 -v
