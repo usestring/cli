@@ -21,11 +21,11 @@ goreleaser release --snapshot --clean
 node npm/build.mjs dist npm-dist
 ```
 
-Check browser sign-in as well, against production, from a build of the commit you will tag. A release can't be changed, and a client that the sign-in service doesn't accept fails only after the person approves. Leave `STRING_API_KEY` unset, so that `string status` reads the key that sign-in saved:
+Check browser sign-in as well, against production, from a build of the commit you will tag. A release can't be changed, and a client that the sign-in service doesn't accept fails only after the person approves. Use a new account, one that has never signed in with the CLI and has never connected an MCP client: an account that has done either can sign in where a new one fails. Run the check from a terminal, where `./string login` waits for the approval. Without one, as under a coding agent or in CI, it prints the link and code and exits, and `./string login --poll` then waits for the approval and saves the key. Leave `STRING_API_KEY` unset, so that `string status` reads the key that sign-in saved:
 
 ```bash
 go build -o string ./cmd/string
-./string login     # approve in the browser
+./string login     # approve in the browser; without a terminal, run ./string login --poll as well
 ./string status    # the Key line reads "saved by string login", and there is a balance
 ```
 

@@ -553,7 +553,7 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 		r.ParseForm()
 		switch r.URL.Path {
 		case "/oauth/device_authorization":
-			if r.Form.Get("client_id") != "test-client" || !strings.Contains(r.Form.Get("scope"), "web_access") {
+			if r.Form.Get("client_id") != "test-client" || !strings.Contains(r.Form.Get("scope"), "email") {
 				t.Errorf("device authorization form %v", r.Form)
 			}
 			io.WriteString(w, `{"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri":"https://example.test/device","verification_uri_complete":"https://example.test/device?code=ABCD-EFGH","expires_in":600,"interval":5}`)
