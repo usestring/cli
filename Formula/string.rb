@@ -1,8 +1,8 @@
 class String < Formula
   desc "Command-line access to String Web Access"
   homepage "https://github.com/usestring/cli"
-  url "https://github.com/usestring/cli/releases/download/v0.1.0/string-0.1.0.tar.gz"
-  sha256 "e01321aa3912f30db663a50d05c86fa492f6869e1818f733964417d80197b8a3"
+  url "https://github.com/usestring/cli/releases/download/v0.2.0/string-0.2.0.tar.gz"
+  sha256 "b988b96d7f75731e2116c16116de92c307eb145d7b4a4112e6b52c0c6eace831"
   license "MIT"
 
   livecheck do
