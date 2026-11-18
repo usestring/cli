@@ -80,7 +80,6 @@ func TestUpdateTriggerStartsACheckOnlyWhenOneIsDueAndAllowed(t *testing.T) {
 				if !check.checked.IsZero() {
 					c.record(updateState{CheckedAt: check.checked})
 				}
-				before, _ := os.ReadFile(c.file("update.json"))
 
 				alone := c.runAlone(list...)
 				if got := c.run(list...); got != alone {
@@ -90,7 +89,7 @@ func TestUpdateTriggerStartsACheckOnlyWhenOneIsDueAndAllowed(t *testing.T) {
 				if check.due && (!slices.Equal(c.spawned, []string{c.binary}) || !c.state().CheckedAt.Equal(now)) {
 					t.Errorf("no check started: spawned %v, update.json %s", c.spawned, after)
 				}
-				if !check.due && (len(c.spawned) > 0 || !bytes.Equal(before, after)) {
+				if !check.due && (len(c.spawned) > 0 || !c.state().CheckedAt.Equal(check.checked)) {
 					t.Errorf("a check started: spawned %v, update.json %s", c.spawned, after)
 				}
 				// The command only starts the check; the check asks the host.

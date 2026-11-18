@@ -414,8 +414,9 @@ func removeLeftovers(path string) {
 	removeStale(os.TempDir(), archiveTempPrefix)
 }
 
-// updateState is update.json: what the daily check last found and did, and
-// what the notices have already said, so that each says it once.
+// updateState is update.json: what the daily check last found and did, what
+// the notices have already said, so that each says it once, and the release
+// that last rewrote the skill.
 type updateState struct {
 	CheckedAt time.Time `json:"checked_at,omitzero"`
 	Latest    string    `json:"latest,omitempty"`
@@ -429,6 +430,7 @@ type updateState struct {
 	// The release a notice last said was out, and when.
 	NoticedVersion string    `json:"noticed_version,omitempty"`
 	NoticedAt      time.Time `json:"noticed_at,omitzero"`
+	SeenVersion    string    `json:"seen_version,omitempty"`
 }
 
 func readUpdateState(path string) updateState {

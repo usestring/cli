@@ -82,17 +82,19 @@ func probeOrUpdate(list []string) bool {
 }
 
 // afterCommand follows every command but a probe once the command's own
-// output is done. Once a day it starts the update check in the background,
-// and on a terminal it passes on what an earlier check found. When nothing is
-// due it reads one small file. It never writes to stdout, never changes how
-// the command ended, and fails silently.
+// output is done. On the first command of a new release it rewrites the skill
+// where init installed it. Once a day it starts the update check in the
+// background, and on a terminal it passes on what an earlier check found.
+// When nothing is due it reads one small file. It never writes to stdout,
+// never changes how the command ended, and fails silently.
 func afterCommand(list []string, rt runtime) {
 	defer func() { _ = recover() }()
 	list, asJSON := takeJSONFlag(list)
 	if probeOrUpdate(list) {
 		return
 	}
-	if _, err := release.ParseVersion(version); err != nil {
+	current, err := release.ParseVersion(version)
+	if err != nil {
 		return
 	}
 	statePath, ok := stringFile(rt.env, "update.json")
@@ -100,6 +102,7 @@ func afterCommand(list []string, rt runtime) {
 		return
 	}
 	state := readUpdateState(statePath)
+	refreshSkills(rt, statePath, state.SeenVersion, current)
 	now := rt.clock()
 	due := aDayPast(state.CheckedAt, now)
 	updated := state.UpdatedTo == version && !state.UpdateAnnounced

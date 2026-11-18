@@ -161,8 +161,9 @@ until a plain string update. Homebrew, npm and Scoop update the copies they
 installed, so for those update prints their command instead. --check shows the
 version, the latest release, how this copy was installed and whether it
 updates itself: a copy from the install script checks once a day and installs
-a new release in the background. STRING_AUTO_UPDATE=0 turns that off, and so
-does CI being set.
+a new release in the background. A new release's first command also rewrites
+the skill wherever init installed it. STRING_AUTO_UPDATE=0 turns both off, and
+so does CI being set.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.

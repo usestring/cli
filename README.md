@@ -157,11 +157,13 @@ string update --check          # the version, the latest release, and whether th
 
 A copy that the install script installed checks for a new release once a day and installs it in the background after a command has finished, without changing that command's output or exit code. The next command run at a terminal says it did. Any other copy only says, at a terminal, that a release is out and how to update. The daily check asks `https://cli.usestring.ai/stable` which release is the latest, and fetches a release's manifest, signature and archive from the same host only to install it. Each request carries the version of `string`, the system and the CPU type in its `User-Agent`, as in `string/0.3.0 (linux; amd64)`, and nothing else: no key, no account and nothing about the machine.
 
-`STRING_AUTO_UPDATE=0` (or `false`, `off`, `no`) turns off the daily check, the background install and the notices; `string update` still works when you run it. A `CI` variable turns them off too, and the Docker image sets `STRING_AUTO_UPDATE=0`, since every run in a fresh container would otherwise look like the first of the day.
+`STRING_AUTO_UPDATE=0` (or `false`, `off`, `no`) turns off everything `string` does by itself: the daily check, the background install, the notices and the [skill refresh](#agent-skills). `string update` still works when you run it, and `string init` refreshes the skill by hand. A `CI` variable turns them off too, and the Docker image sets `STRING_AUTO_UPDATE=0`, since every run in a fresh container would otherwise look like the first of the day.
 
 ## Agent skills
 
 `skills/string-cli` is an [Agent Skills](https://agentskills.io) skill that teaches a coding agent the `string` commands. The native binary carries it, and `string init` installs it into `~/.agents/skills` (read by Codex and others) and into every agent it finds on the machine: Claude Code, Cursor, Gemini CLI, OpenCode, GitHub Copilot, Windsurf, Goose, Droid, Kiro CLI, Qwen Code, Grok Build, OpenClaw and Hermes Agent. Run it again after an upgrade to update the skill.
+
+The first command of a new release also rewrites the skill wherever it is already installed, however `string` was installed, and never installs it anywhere new.
 
 ```bash
 string init                            # the shared directory and every agent found
