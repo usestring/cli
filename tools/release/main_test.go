@@ -98,6 +98,91 @@ func TestKeygenWritesTheSeedToItsFileAlone(t *testing.T) {
 	}
 }
 
+func TestKeysTakesOnlyKeysThatCanSignARelease(t *testing.T) {
+	primary, primaryPublic := newKey(t)
+	recovery, recoveryPublic := newKey(t)
+	previous, previousPublic := newKey(t)
+	_, otherPublic := newKey(t)
+	trusted := []ed25519.PublicKey{primaryPublic, recoveryPublic}
+	short := base64.StdEncoding.EncodeToString(make([]byte, 31))
+	encode := base64.StdEncoding.EncodeToString
+	listed := "This build trusts these release signing keys:\n  " + encode(primaryPublic) + "\n  " + encode(recoveryPublic) + "\n"
+	holds := func(public ed25519.PublicKey) string {
+		return "RELEASE_SIGNING_KEY has the public key " + encode(public) + ", one of them.\n"
+	}
+	alsoSigns := "RELEASE_SIGNING_KEY_PREVIOUS is set, with the public key " + encode(previousPublic) + ", so each release is signed with it as well.\n"
+	shows := func(t *testing.T, got outcome) {
+		t.Helper()
+		for _, seed := range []string{primary, recovery, previous} {
+			if leaks(got.stdout+got.stderr, seed) {
+				t.Errorf("keys printed a seed: %+v", got)
+			}
+		}
+	}
+
+	for name, check := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"the primary key": {map[string]string{signingKey: primary}, listed + holds(primaryPublic)},
+		// A secret set from a file can end in a newline, or CRLF on Windows.
+		"the primary key set from a file":              {map[string]string{signingKey: primary + "\n"}, listed + holds(primaryPublic)},
+		"the primary key set from a file with CRLF":    {map[string]string{signingKey: primary + "\r\n"}, listed + holds(primaryPublic)},
+		"the primary key pasted with spaces around it": {map[string]string{signingKey: " " + primary + " "}, listed + holds(primaryPublic)},
+		"the other key this build trusts":              {map[string]string{signingKey: recovery}, listed + holds(recoveryPublic)},
+		// After a rotation, the build no longer trusts the key it replaced.
+		"a previous key while one key replaces another": {map[string]string{signingKey: primary, previousSigningKey: previous + "\r\n"}, listed + holds(primaryPublic) + alsoSigns},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := runTool(t, check.env, trusted, "keys")
+			if got.code != 0 || got.stdout != check.want || got.stderr != "" {
+				t.Errorf("%+v, want stdout %q", got, check.want)
+			}
+			shows(t, got)
+		})
+	}
+
+	for name, check := range map[string]struct {
+		env     map[string]string
+		trusted []ed25519.PublicKey
+		reason  string
+	}{
+		"with no key set":                  {map[string]string{}, trusted, "RELEASE_SIGNING_KEY is not set"},
+		"with an empty key":                {map[string]string{signingKey: ""}, trusted, "RELEASE_SIGNING_KEY is not set"},
+		"with a key of white space alone":  {map[string]string{signingKey: " \r\n"}, trusted, "RELEASE_SIGNING_KEY is not set"},
+		"with only the previous key set":   {map[string]string{previousSigningKey: previous}, trusted, "RELEASE_SIGNING_KEY is not set"},
+		"with a key that is not base64":    {map[string]string{signingKey: "not base64 " + primary}, trusted, "RELEASE_SIGNING_KEY is not the base64"},
+		"with a key that is too short":     {map[string]string{signingKey: short}, trusted, "RELEASE_SIGNING_KEY is not the base64"},
+		"with both seed files in a secret": {map[string]string{signingKey: primary + "\n" + recovery + "\n"}, trusted, "RELEASE_SIGNING_KEY is not the base64"},
+		// The refusal names the public key, to compare with keys.go.
+		"with a key the build does not trust":    {map[string]string{signingKey: primary}, []ed25519.PublicKey{otherPublic}, "RELEASE_SIGNING_KEY has the public key " + encode(primaryPublic) + ", which is not one of the keys this build trusts"},
+		"with only the previous key trusted":     {map[string]string{signingKey: primary, previousSigningKey: previous}, []ed25519.PublicKey{previousPublic}, "RELEASE_SIGNING_KEY has the public key " + encode(primaryPublic) + ", which is not one of the keys this build trusts"},
+		"in a build that trusts no key":          {map[string]string{signingKey: primary}, nil, "this build trusts no release signing key"},
+		"with a previous key that is not base64": {map[string]string{signingKey: primary, previousSigningKey: previous + "!"}, trusted, "RELEASE_SIGNING_KEY_PREVIOUS is not the base64"},
+		"with a previous key that is too short":  {map[string]string{signingKey: primary, previousSigningKey: short}, trusted, "RELEASE_SIGNING_KEY_PREVIOUS is not the base64"},
+		"with the same key twice":                {map[string]string{signingKey: primary, previousSigningKey: primary}, trusted, "RELEASE_SIGNING_KEY_PREVIOUS holds the same key as RELEASE_SIGNING_KEY"},
+		"with the same key twice, set two ways":  {map[string]string{signingKey: primary + "\n", previousSigningKey: " " + primary + "\r\n"}, trusted, "RELEASE_SIGNING_KEY_PREVIOUS holds the same key as RELEASE_SIGNING_KEY"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := runTool(t, check.env, check.trusted, "keys")
+			if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, "release keys: ") || !strings.Contains(got.stderr, check.reason) {
+				t.Errorf("%+v, want a refusal that mentions %q", got, check.reason)
+			}
+			shows(t, got)
+		})
+	}
+
+	t.Run("when the trusted keys cannot be read", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"keys"}, &stdout, &stderr, func(name string) string { return map[string]string{signingKey: primary}[name] }, func() ([]ed25519.PublicKey, error) {
+			return nil, errors.New("not a key")
+		})
+		if code != 1 || stdout.Len() > 0 || !strings.Contains(stderr.String(), "the keys this build trusts: not a key") {
+			t.Errorf("keys: %d %q %q", code, stdout.String(), stderr.String())
+		}
+	})
+}
+
 // releaseDir is a release's assets as the publish job downloads them: the six
 // archives, a package and the source archive beside them, and checksums.txt
 // listing them all.
@@ -297,6 +382,12 @@ func TestSignSignsOnlyWithAKeyThisBuildTrusts(t *testing.T) {
 		if again := runTool(t, map[string]string{signingKey: primary}, trusted, "sign", path); again.stdout != got.stdout {
 			t.Error("signing again gave another signature")
 		}
+		// A secret set from a file can end in a newline, or CRLF on Windows.
+		for _, end := range []string{"\n", "\r\n"} {
+			if again := runTool(t, map[string]string{signingKey: primary + end}, trusted, "sign", path); again.code != 0 || again.stdout != got.stdout {
+				t.Errorf("with a key that ends in %q: %+v", end, again)
+			}
+		}
 	})
 
 	t.Run("with the previous key as well, while one key replaces another", func(t *testing.T) {
@@ -315,6 +406,9 @@ func TestSignSignsOnlyWithAKeyThisBuildTrusts(t *testing.T) {
 		}
 		if leaks(got.stdout+got.stderr, primary) || leaks(got.stdout+got.stderr, previous) {
 			t.Error("sign printed a key")
+		}
+		if again := runTool(t, map[string]string{signingKey: primary + "\r\n", previousSigningKey: previous + "\r\n"}, trusted, "sign", path); again.code != 0 || again.stdout != got.stdout {
+			t.Errorf("with both keys set from files with CRLF: %+v", again)
 		}
 	})
 
@@ -425,7 +519,7 @@ func TestPromoteMovesStableOnlyAsTheReleaseRulesAllow(t *testing.T) {
 }
 
 func TestUsageForACommandLineItDoesNotKnow(t *testing.T) {
-	for _, args := range [][]string{nil, {"help"}, {"publish"}, {"keygen"}, {"keygen", "a", "b"}, {"manifest", "dir", "0.3.0"}, {"promote", "push", "0.3.0"}} {
+	for _, args := range [][]string{nil, {"help"}, {"publish"}, {"keygen"}, {"keygen", "a", "b"}, {"keys", "RELEASE_SIGNING_KEY"}, {"manifest", "dir", "0.3.0"}, {"promote", "push", "0.3.0"}} {
 		if got := runTool(t, nil, nil, args...); got.code != 2 || got.stdout != "" || !strings.HasPrefix(got.stderr, "Usage:") {
 			t.Errorf("%q: %+v", args, got)
 		}

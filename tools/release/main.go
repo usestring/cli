@@ -2,10 +2,12 @@
 // download host beside a release's archives: manifest.json, which lists each
 // platform's archive with its size and SHA-256, and manifest.json.sig, the
 // signatures an installed copy of string checks it with. It also makes the
-// signing keys, and answers the workflow's questions about a tag and about
-// moving /stable, so that the workflow orders versions exactly as string does.
+// signing keys, checks the ones a release run holds before it builds
+// anything, and answers the workflow's questions about a tag and about moving
+// /stable, so that the workflow orders versions exactly as string does.
 //
 //	go run ./tools/release keygen FILE
+//	go run ./tools/release keys
 //	go run ./tools/release manifest DIR VERSION PUBLISHED > manifest.json
 //	go run ./tools/release sign manifest.json > manifest.json.sig
 //	go run ./tools/release verify manifest.json manifest.json.sig
@@ -32,6 +34,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,6 +43,7 @@ import (
 
 const usage = `Usage:
   release keygen FILE                     make a signing key: its seed goes to FILE, the public key to stdout
+  release keys                            check RELEASE_SIGNING_KEY, and RELEASE_SIGNING_KEY_PREVIOUS if set
   release manifest DIR VERSION PUBLISHED  print manifest.json for the archives and checksums.txt in DIR
   release sign MANIFEST                   print manifest.json.sig, signed with RELEASE_SIGNING_KEY
   release verify MANIFEST SIGNATURES      check both as a copy of string built from this commit would
@@ -47,8 +51,8 @@ const usage = `Usage:
   release promote EVENT VERSION CURRENT   print how /stable moves from CURRENT to VERSION, or refuse
 `
 
-// The environment variables sign reads each key from, as the base64 of its
-// 32-byte seed. The second is set only while one key replaces another.
+// The environment variables keys and sign read each key from, as the base64
+// of its 32-byte seed. The second is set only while one key replaces another.
 const (
 	signingKey         = "RELEASE_SIGNING_KEY"
 	previousSigningKey = "RELEASE_SIGNING_KEY_PREVIOUS"
@@ -72,7 +76,7 @@ func main() {
 // run is the command with what it takes from outside passed in. trusted gives
 // the keys that copies built from this commit accept, which tests replace.
 func run(args []string, stdout, stderr io.Writer, getenv func(string) string, trusted func() ([]ed25519.PublicKey, error)) int {
-	arity := map[string]int{"keygen": 1, "manifest": 3, "sign": 1, "verify": 2, "tag": 1, "promote": 3}
+	arity := map[string]int{"keygen": 1, "keys": 0, "manifest": 3, "sign": 1, "verify": 2, "tag": 1, "promote": 3}
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -86,6 +90,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string, tr
 	switch command {
 	case "keygen":
 		err = keygen(args[0], stdout)
+	case "keys":
+		err = keys(getenv, trusted, stdout)
 	case "manifest":
 		err = manifest(args[0], args[1], args[2], stdout)
 	case "sign":
@@ -134,6 +140,63 @@ func keygen(path string, stdout io.Writer) error {
 	}
 	_, err = fmt.Fprintln(stdout, base64.StdEncoding.EncodeToString(public))
 	return err
+}
+
+// keys checks the signing keys a release run holds, before it builds
+// anything: RELEASE_SIGNING_KEY must be one of the keys this build trusts, so
+// that sign takes it later, and RELEASE_SIGNING_KEY_PREVIOUS, set while one
+// key replaces another, must be a key, and another one. It prints the public
+// keys, which are not secret, and nothing of a seed.
+func keys(getenv func(string) string, trusted func() ([]ed25519.PublicKey, error), stdout io.Writer) error {
+	list, err := trustedKeys(trusted)
+	if err != nil {
+		return err
+	}
+	primary, err := seedFrom(getenv, signingKey)
+	if err != nil {
+		return err
+	}
+	if primary == nil {
+		return fmt.Errorf("%s is not set", signingKey)
+	}
+	public := ed25519.NewKeyFromSeed(primary).Public().(ed25519.PublicKey)
+	if !slices.ContainsFunc(list, func(key ed25519.PublicKey) bool { return key.Equal(public) }) {
+		return fmt.Errorf("%s has the public key %s, which is not one of the keys this build trusts, so the copies built from this commit would refuse its releases. Either the secret holds another key, or internal/release/keys.go at this commit does not have it yet, as before a rotation's pull request is merged", signingKey, encodeKey(public))
+	}
+	previous, err := seedFrom(getenv, previousSigningKey)
+	if err != nil {
+		return err
+	}
+	if previous != nil && bytes.Equal(previous, primary) {
+		return fmt.Errorf("%s holds the same key as %s", previousSigningKey, signingKey)
+	}
+	var out strings.Builder
+	out.WriteString("This build trusts these release signing keys:\n")
+	for _, key := range list {
+		fmt.Fprintf(&out, "  %s\n", encodeKey(key))
+	}
+	fmt.Fprintf(&out, "%s has the public key %s, one of them.\n", signingKey, encodeKey(public))
+	if previous != nil {
+		fmt.Fprintf(&out, "%s is set, with the public key %s, so each release is signed with it as well.\n", previousSigningKey, encodeKey(ed25519.NewKeyFromSeed(previous).Public().(ed25519.PublicKey)))
+	}
+	_, err = io.WriteString(stdout, out.String())
+	return err
+}
+
+// trustedKeys gives the keys this build trusts, and refuses none at all.
+func trustedKeys(trusted func() ([]ed25519.PublicKey, error)) ([]ed25519.PublicKey, error) {
+	list, err := trusted()
+	if err != nil {
+		return nil, fmt.Errorf("the keys this build trusts: %w", err)
+	}
+	if len(list) == 0 {
+		return nil, errors.New("this build trusts no release signing key, so no copy built from it could check a release; put the public keys in internal/release/keys.go first")
+	}
+	return list, nil
+}
+
+func encodeKey(key ed25519.PublicKey) string {
+	return base64.StdEncoding.EncodeToString(key)
 }
 
 // manifest prints manifest.json for the release whose archives and
@@ -249,12 +312,9 @@ func sign(path string, getenv func(string) string, trusted func() ([]ed25519.Pub
 	if err != nil {
 		return err
 	}
-	keys, err := trusted()
+	keys, err := trustedKeys(trusted)
 	if err != nil {
-		return fmt.Errorf("the keys this build trusts: %w", err)
-	}
-	if len(keys) == 0 {
-		return errors.New("this build trusts no release signing key, so no copy built from it could check a release; put the public keys in internal/release/keys.go first")
+		return err
 	}
 	signers := [][]byte{primary}
 	if previous != nil {
@@ -286,7 +346,8 @@ func sign(path string, getenv func(string) string, trusted func() ([]ed25519.Pub
 }
 
 // seedFrom reads the seed in the environment variable name, or nil when it is
-// not set. Its error never quotes the value.
+// not set. A secret set from a file can end in a newline or CRLF, which it
+// ignores. Its error never quotes the value.
 func seedFrom(getenv func(string) string, name string) ([]byte, error) {
 	value := strings.TrimSpace(getenv(name))
 	if value == "" {
