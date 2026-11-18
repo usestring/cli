@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,15 @@ type runtime struct {
 	// executable gives the path of the running binary, which tells init how
 	// this copy was installed.
 	executable func() (string, error)
+	// spawn starts string update --background from the binary at path, for
+	// the daily update check. When it is nil, as in tests, nothing starts.
+	spawn func(path string) error
+	// versionOf runs the binary at path with --version, as the updater does
+	// to a new release before putting it in place.
+	versionOf func(path string) ([]byte, error)
+	// keys are the release signing keys an update must be signed with: the
+	// ones the build was made with, unless a test gives its own.
+	keys func() ([]ed25519.PublicKey, error)
 }
 
 func (rt runtime) binary() (string, error) {
@@ -94,6 +104,8 @@ Usage:
   string trial claim (--email ADDRESS [--no-wait] | --poll)
   string status
   string balance
+  string update [--version X.Y.Z]
+  string update --check
   string --version
 
 Each API request field is a flag spelled exactly as the field, so the API
@@ -148,6 +160,15 @@ auto top-up; without one, what the last keyless call left of today's allowance.
 balance prints the same balance, plan and auto top-up as JSON, exactly as the
 API sends them, and needs a key. Unlike status, it fails when the API can't
 answer.
+update replaces this copy of string with the latest release once its signature
+and checksum check out, or with the release --version names, which then stays
+until a plain string update. Homebrew, npm and Scoop update the copies they
+installed, so for those update prints their command instead. --check shows the
+version, the latest release, how this copy was installed and whether it
+updates itself: a copy from the install script checks once a day and installs
+a new release in the background. A new release's first command also rewrites
+the skill wherever init installed it. STRING_AUTO_UPDATE=0 turns both off, and
+so does CI set to anything but false or 0.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
@@ -1027,6 +1048,8 @@ func execute(list []string, rt runtime) error {
 		return statusCommand(list[1:], rt)
 	case "balance":
 		return balanceCommand(list[1:], rt)
+	case "update":
+		return updateCommand(list[1:], rt)
 	}
 	op, err := operationFor(list[0], list[1:], rt.stdin)
 	if err != nil {
