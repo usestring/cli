@@ -87,7 +87,7 @@ Usage:
   string integrations [list [SITE]]
   string integrations run SITE ACTION [--FIELD VALUE ...]
   string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login]
-  string login [--with-token | --no-wait | --poll]
+  string login [--with-token | --no-wait | --poll] [--env-file PATH]
   string logout
   string whoami
   string trial
@@ -122,13 +122,16 @@ Other fields, request and sitemap need a key. What is left of the allowance is
 printed to stderr after each keyless call.
 init installs the string-cli skill for the coding agents found on this machine,
 adds String's MCP server to Claude Code and Codex unless --no-mcp is given,
-then signs in when run from a terminal with no key set. --no-login skips the
-sign-in, and init exits 0 whether or not the sign-in finishes.
+then signs in when no key is set: it waits for the approval at a terminal, and
+without one, outside CI, prints the link and code as login does. --no-login
+skips the sign-in, and init exits 0 whether or not the sign-in finishes.
 login signs in through your browser and saves a new API key that String
 creates for that sign-in. Without a terminal, or with --no-wait, it prints the
 link and code and exits; string login --poll then waits for the approval and
 saves the key. With --json both print JSON. login --with-token reads an API key
-from stdin, checks it and saves it.
+from stdin, checks it and saves it. --env-file PATH also writes the key to that
+file as its STRING_API_KEY line and keeps the file's other lines; a new file is
+readable only by you.
 STRING_API_KEY wins over a saved key; whoami says which one is in use.
 trial registers an agent for a trial key with no account: after a few seconds'
 proof of work, it saves a key with a small balance that works for 24 hours,

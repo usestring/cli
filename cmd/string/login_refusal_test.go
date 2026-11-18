@@ -505,6 +505,29 @@ func TestInitStillSucceedsWhenTheSignInServiceCannotBeReached(t *testing.T) {
 	}
 }
 
+func TestInitWithoutATerminalStartsTheSignInThatLoginPollFinishes(t *testing.T) {
+	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
+	service.start(t)
+	session := newSignInSession(t)
+
+	// As under a coding agent: init hands back the link and code at once.
+	got := session.run("init")
+	const started = "\n\nSigning in. string fetch and string search already work without a key, within a daily allowance. For more:\nOpen https://example.test/device?code=ABCD-EFGH and confirm the code ABCD-EFGH.\nThen run string login --poll to save the key. The code expires in 10 minutes.\n"
+	if got.status != 0 || got.errors != "" || !strings.HasSuffix(got.output, started) || service.requests("/oauth/token") != 0 {
+		t.Errorf("init without a terminal: %+v, and the token was asked for %d times; want exit 0, output ending\n%s\nand no wait", got, service.requests("/oauth/token"), started)
+	}
+	if done := session.run("login", "--poll"); done.status != 0 || !strings.HasPrefix(done.output, "Logged in as dev@localhost.") {
+		t.Errorf("login --poll after init: %+v", done)
+	}
+
+	// In CI nobody is there to approve, so init starts no sign-in.
+	ci := newSignInSession(t)
+	ci.env["CI"] = "true"
+	if got := ci.run("init"); got.status != 0 || !strings.HasSuffix(got.output, "\n\n"+signInHint) || service.requests("/oauth/device_authorization") != 1 {
+		t.Errorf("init in CI: %+v, and %d sign-ins started in all, want the keyless note and one", got, service.requests("/oauth/device_authorization"))
+	}
+}
+
 func TestInitNoLoginSkipsSignIn(t *testing.T) {
 	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
 	service.start(t)
