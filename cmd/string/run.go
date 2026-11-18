@@ -122,9 +122,10 @@ Other fields, request and sitemap need a key. What is left of the allowance is
 printed to stderr after each keyless call.
 init installs the string-cli skill for the coding agents found on this machine,
 adds String's MCP server to Claude Code and Codex unless --no-mcp is given,
-then signs in when no key is set: it waits for the approval at a terminal, and
-without one, outside CI, prints the link and code as login does. --no-login
-skips the sign-in, and init exits 0 whether or not the sign-in finishes.
+then signs in when no key is set. At a terminal it waits for the approval;
+when its output is captured, as under an agent outside CI, it prints the link
+and code as login does. --no-login skips the sign-in, and init exits 0
+whether or not the sign-in finishes.
 login signs in through your browser and saves a new API key that String
 creates for that sign-in. Without a terminal, or with --no-wait, it prints the
 link and code and exits; string login --poll then waits for the approval and

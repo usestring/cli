@@ -505,7 +505,7 @@ func TestInitStillSucceedsWhenTheSignInServiceCannotBeReached(t *testing.T) {
 	}
 }
 
-func TestInitWithoutATerminalStartsTheSignInThatLoginPollFinishes(t *testing.T) {
+func TestInitUnderAnAgentStartsTheSignInThatLoginPollFinishes(t *testing.T) {
 	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
 	service.start(t)
 	session := newSignInSession(t)
@@ -520,11 +520,18 @@ func TestInitWithoutATerminalStartsTheSignInThatLoginPollFinishes(t *testing.T) 
 		t.Errorf("login --poll after init: %+v", done)
 	}
 
-	// In CI nobody is there to approve, so init starts no sign-in.
+	// In CI nobody is there to approve. A person who pipes install.sh into sh
+	// reads stderr at a terminal, and the first run stays keyless. Neither run
+	// sends a request.
 	ci := newSignInSession(t)
 	ci.env["CI"] = "true"
-	if got := ci.run("init"); got.status != 0 || !strings.HasSuffix(got.output, "\n\n"+signInHint) || service.requests("/oauth/device_authorization") != 1 {
-		t.Errorf("init in CI: %+v, and %d sign-ins started in all, want the keyless note and one", got, service.requests("/oauth/device_authorization"))
+	piped := newSignInSession(t)
+	piped.progress = true
+	for name, session := range map[string]*signInSession{"in CI": ci, "piped, with stderr at a terminal": piped} {
+		before := service.requests("")
+		if got := session.run("init"); got.status != 0 || !strings.HasSuffix(got.output, "\n\n"+signInHint) || service.requests("") != before {
+			t.Errorf("init %s: %+v, and %d requests sent, want the keyless note and none", name, got, service.requests("")-before)
+		}
 	}
 }
 

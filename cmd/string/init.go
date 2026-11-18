@@ -167,7 +167,9 @@ func initCommand(list []string, rt runtime) error {
 	if key, err := apiKey(rt.env); err == nil && key != "" {
 		return write(rt.stdout, []byte(report.String()))
 	}
-	if oauthClientID != "" && !parsed.switches["no-login"] && (rt.terminal || !inCI(rt.env)) {
+	// A person who pipes install.sh into sh reads stderr at a terminal, and starts keyless.
+	captured := !rt.progress && !inCI(rt.env)
+	if oauthClientID != "" && !parsed.switches["no-login"] && (rt.terminal || captured) {
 		var err error
 		if rt.terminal {
 			report.WriteString("\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\n")
