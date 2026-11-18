@@ -517,6 +517,7 @@ func startSignIn(rt runtime, wait bool, envFile string) (pendingLogin, error) {
 	if link == "" {
 		link = device.VerificationURI
 	}
+	link = approvalLink(link, device.UserCode)
 	var shown []byte
 	switch {
 	case rt.json:
@@ -540,6 +541,15 @@ func startSignIn(rt runtime, wait bool, envFile string) (pendingLogin, error) {
 		_ = rt.openURL(link)
 	}
 	return pending, nil
+}
+
+// approvalLink sends people to String's approval page; the sign-in service links its hosted page, where some approvals stay pending.
+func approvalLink(sent, userCode string) string {
+	parsed, err := url.Parse(sent)
+	if err != nil || userCode == "" || !strings.EqualFold(parsed.Host, "accounts.portal.usestring.ai") || parsed.Path != "/device" {
+		return sent
+	}
+	return portalURL + "/device?user_code=" + url.QueryEscape(userCode)
 }
 
 // finishPending finishes the sign-in an earlier command started. envFile, from
