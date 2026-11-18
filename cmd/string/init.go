@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -166,12 +167,30 @@ func initCommand(list []string, rt runtime) error {
 	if key, err := apiKey(rt.env); err == nil && key != "" {
 		return write(rt.stdout, []byte(report.String()))
 	}
-	if rt.terminal && oauthClientID != "" && !parsed.switches["no-login"] {
-		report.WriteString("\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\n")
-		if err := write(rt.stdout, []byte(report.String())); err != nil {
-			return err
+	// A person who pipes install.sh into sh reads stderr at a terminal, and starts keyless.
+	captured := !rt.progress && !inCI(rt.env)
+	if oauthClientID != "" && !parsed.switches["no-login"] && (rt.terminal || captured) {
+		var err error
+		if rt.terminal {
+			report.WriteString("\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\n")
+			if err := write(rt.stdout, []byte(report.String())); err != nil {
+				return err
+			}
+			report.Reset()
+			err = signIn(rt, "")
+		} else {
+			// Nobody approves while init waits under an agent, so init hands
+			// back the link and code, as string login does there, and
+			// string login --poll saves the key. init prints text only.
+			var started bytes.Buffer
+			text := rt
+			text.json, text.stdout = false, &started
+			if _, err = startSignIn(text, false, ""); err == nil {
+				fmt.Fprintf(&report, "\nSigning in. string fetch and string search already work without a key, within a daily allowance. For more:\n%s", started.Bytes())
+				return write(rt.stdout, []byte(report.String()))
+			}
+			report.WriteString("\n")
 		}
-		err := signIn(rt)
 		if err == nil {
 			return nil
 		}
@@ -185,11 +204,17 @@ func initCommand(list []string, rt runtime) error {
 		case "login_denied":
 			why = "it was denied"
 		}
-		report.Reset()
 		fmt.Fprintf(&report, "Sign-in did not finish: %s. Run string login to sign in later.\n", strings.TrimSuffix(why, "."))
 	}
 	report.WriteString("\nstring fetch and string search work now, without a key, within a daily allowance. For more, run string login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.\n")
 	return write(rt.stdout, []byte(report.String()))
+}
+
+// inCI reports a CI job, where nobody is there to approve a sign-in that init
+// would start.
+func inCI(env func(string) (string, bool)) bool {
+	value, _ := env("CI")
+	return value != "" && value != "false" && value != "0"
 }
 
 // pathHint is how to put the running copy of string on PATH. Only a copy that
