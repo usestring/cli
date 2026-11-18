@@ -47,6 +47,8 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
   ```
 
   Add `--env-file .env` to `string login`, to `--poll` or to `--with-token` to also write the key to that file as its `STRING_API_KEY=` line, without printing it. Every other line stays as it was, and a new file is created readable only by you.
+
+  `string login --browser` needs no code. It prints a link to a String page, and opens it when it can; there you sign in or create an account and click Authorize. The link works for 15 minutes. `--no-wait`, `--poll`, `--json` and `--env-file` work with it as above, and `string init --browser` signs in the same way.
 - `string login --with-token` reads a key from [String's API keys page](https://portal.usestring.ai/api-keys) on stdin, checks it with one free API call, and saves it in the same file. The key stays out of your shell history: `string login --with-token < key.txt`.
 - `STRING_API_KEY` in the environment. It wins over a saved key, and the CLI never writes it to a file:
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -53,15 +54,18 @@ var (
 )
 
 // signInService stands in for the sign-in service and the portal. The token
-// endpoint and the key request each give their answers in order, then repeat
-// the last one.
+// endpoint, the key request and the status check of string login --browser
+// each give their answers in order, then repeat the last one. An answer with
+// no status closes the connection instead.
 type signInService struct {
-	token []signInAnswer
-	key   []signInAnswer
+	token  []signInAnswer
+	key    []signInAnswer
+	status []signInAnswer
 
 	mu     sync.Mutex
 	calls  map[string]int
 	polled []string
+	asked  []browserCheck
 }
 
 // start serves the stand-in and points the CLI's sign-in at it for this test.
@@ -72,6 +76,12 @@ func (s *signInService) start(t *testing.T) {
 		answer := (*answers)[0]
 		if len(*answers) > 1 {
 			*answers = (*answers)[1:]
+		}
+		if answer.status == 0 {
+			if connection, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				connection.Close()
+			}
+			return
 		}
 		if answer.retryAfter != "" {
 			w.Header().Set("Retry-After", answer.retryAfter)
@@ -96,6 +106,15 @@ func (s *signInService) start(t *testing.T) {
 			next(&s.key, w)
 		case "/oauth/userinfo":
 			io.WriteString(w, `{"email":"dev@localhost"}`)
+		case "/api/agent-auth/status":
+			var check browserCheck
+			decoder := json.NewDecoder(r.Body)
+			decoder.DisallowUnknownFields()
+			if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Origin") != "" || decoder.Decode(&check) != nil {
+				t.Errorf("a status check is not a POST of JSON with only session_id and code_verifier, without Origin")
+			}
+			s.asked = append(s.asked, check)
+			next(&s.status, w)
 		default:
 			http.NotFound(w, r)
 		}
@@ -127,16 +146,18 @@ func (s *signInService) codes() []string {
 }
 
 // signInSession is a throwaway home that the commands of one test share. It
-// records the waits the CLI asked for instead of sleeping through them.
+// records the waits the CLI asked for instead of sleeping through them, and
+// its clock moves on by each one.
 type signInSession struct {
 	env      map[string]string
 	terminal bool
 	progress bool
 	waits    []time.Duration
+	now      time.Time
 }
 
 func newSignInSession(t *testing.T) *signInSession {
-	return &signInSession{env: map[string]string{"HOME": t.TempDir(), "STRING_API_BASE_URL": "http://127.0.0.1:1/v1"}}
+	return &signInSession{env: map[string]string{"HOME": t.TempDir(), "STRING_API_BASE_URL": "http://127.0.0.1:1/v1"}, now: time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)}
 }
 
 func (s *signInSession) run(list ...string) result {
@@ -151,7 +172,11 @@ func (s *signInSession) run(list ...string) result {
 		stdin:    strings.NewReader(""),
 		stdout:   &stdout,
 		stderr:   &stderr,
-		sleep:    func(d time.Duration) { s.waits = append(s.waits, d) },
+		sleep: func(d time.Duration) {
+			s.waits = append(s.waits, d)
+			s.now = s.now.Add(d)
+		},
+		now:      func() time.Time { return s.now },
 		terminal: s.terminal,
 		progress: s.progress,
 	})
@@ -424,24 +449,28 @@ func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
 }
 
 func TestABuildWithNoClientRefusesLoginAndInitSignsNobodyIn(t *testing.T) {
-	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
+	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}, status: []signInAnswer{browserComplete}}
 	service.start(t)
 	oauthClientID = ""
 	session := newSignInSession(t)
 	session.terminal = true
 
-	got := session.run("login")
-	if got.status != exitAuth || got.output != "" || !strings.Contains(got.errors, "This build of string cannot sign in through the browser.") || !strings.Contains(got.errors, "Keys are at https://portal.usestring.ai/api-keys.") {
-		t.Errorf("login: %+v", got)
+	for _, command := range [][]string{{"login"}, {"login", "--browser"}} {
+		got := session.run(command...)
+		if got.status != exitAuth || got.output != "" || !strings.Contains(got.errors, "This build of string cannot sign in through the browser.") || !strings.Contains(got.errors, "Keys are at https://portal.usestring.ai/api-keys.") {
+			t.Errorf("%s: %+v", strings.Join(command, " "), got)
+		}
 	}
-	got = session.run("login", "--json")
+	got := session.run("login", "--json")
 	if envelope := decode(t, got.errors).(map[string]any)["error"].(map[string]any); got.status != exitAuth || got.output != "" || envelope["code"] != "login_unavailable" {
 		t.Errorf("login --json: %+v", got)
 	}
 
-	got = session.run("init")
-	if got.status != 0 || got.errors != "" || !strings.Contains(got.output, "Installed the string-cli skill") || !strings.HasSuffix(got.output, "\n\n"+signInHint) || strings.Contains(got.output, "Signing in") {
-		t.Errorf("init from a terminal: %+v", got)
+	for _, command := range [][]string{{"init"}, {"init", "--browser"}} {
+		got = session.run(command...)
+		if got.status != 0 || got.errors != "" || !strings.Contains(got.output, "Installed the string-cli skill") || !strings.HasSuffix(got.output, "\n\n"+signInHint) || strings.Contains(got.output, "Signing in") {
+			t.Errorf("%s from a terminal: %+v", strings.Join(command, " "), got)
+		}
 	}
 
 	if requests := service.requests(""); requests != 0 {

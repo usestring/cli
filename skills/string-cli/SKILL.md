@@ -39,8 +39,10 @@ to sign in. Errors go to stderr with a nonzero exit status.
   `string login --json`. It returns at once with `verification_uri_complete` and `user_code`: give
   both to the user, ask them to approve, then run `string login --poll`, which waits for the
   approval and saves a new key for their organization. Add `--env-file .env` to either command to
-  put the key in the project's `.env` too, without printing it. If `string login` says this build
-  can't sign in through the browser, or the user prefers, they can create a key at
+  put the key in the project's `.env` too, without printing it. For a user with no String account
+  yet, run `string login --browser --json` instead: it returns only the link, where they create an
+  account and click Authorize, and `string login --poll` works the same. If `string login` says
+  this build can't sign in through the browser, or the user prefers, they can create a key at
   https://portal.usestring.ai/api-keys and save it with `string login --with-token < key.txt`.
   Never ask for a key in chat, and never put one in a URL, a query, a header value, a command line
   or a file you commit. In an unattended run, don't start a login; stay keyless or stop and report.
