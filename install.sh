@@ -10,7 +10,8 @@
 # sets where the binary goes (default: ~/.local/bin).
 #
 # Releases come from https://cli.usestring.ai, or from the GitHub release when
-# that host fails in any way. STRING_DOWNLOAD_URL replaces the host, with no
+# that host fails in any way: without a word when it only lacks the release,
+# and with the reason otherwise. STRING_DOWNLOAD_URL replaces the host, with no
 # fallback, for tests and rehearsals.
 #
 # Everything runs from main, at the end, so that a download cut short runs
@@ -38,19 +39,25 @@ release_version() {
 # fetch downloads $1 to $2 within five minutes, so that a stalled transfer
 # ends. From an https URL it follows redirects over https only. When it cannot
 # download, it says why in $problem, with curl's reason, rather than leaving
-# curl to print a line of its own.
+# curl to print a line of its own, and sets $missing if the answer was 404.
 fetch() {
   url="$1"
   out="$2"
+  missing=
   set --
   case "$url" in
     https://*) set -- --proto =https --proto-redir =https ;;
   esac
-  if curl -fsSL --connect-timeout 15 --max-time 300 "$@" -o "$out" "$url" 2>"$tmp/curl-error"; then
+  if answer="$(curl -fsSL --connect-timeout 15 --max-time 300 "$@" -w '%{http_code}' -o "$out" "$url" 2>"$tmp/curl-error")"; then
     return 0
   fi
   reason="$(sed -n 's/^curl: ([0-9]*) //p' "$tmp/curl-error" | tail -n 1)"
   problem="could not download $url${reason:+ ($reason)}"
+  # The status itself, because curl's reason words it differently from one
+  # version to the next: older ones add its name, as in "404 Not Found".
+  if [ "$answer" = 404 ]; then
+    missing=yes
+  fi
   return 1
 }
 
@@ -81,9 +88,9 @@ download() {
 }
 
 # from_host downloads $version, or the release $host/stable names, from $host.
-# With $1 set to stable, a pre-release named there counts as the host failing:
-# while a release is rehearsed, the default host's /stable can name one, which
-# only STRING_VERSION or STRING_DOWNLOAD_URL installs.
+# With $1 set to stable, a pre-release named there counts as the host lacking
+# the release: while a release is rehearsed, the default host's /stable can
+# name one, which only STRING_VERSION or STRING_DOWNLOAD_URL installs.
 from_host() {
   if [ -z "$version" ]; then
     fetch "$host/stable" "$tmp/stable" || return 1
@@ -96,6 +103,7 @@ from_host() {
       *-*)
         if [ "$1" = stable ]; then
           problem="$host/stable names $version, a pre-release"
+          missing=yes
           version=
           return 1
         fi
@@ -168,9 +176,17 @@ main() {
     from_host any || fail "$problem"
   else
     host="https://cli.usestring.ai"
+    # Before a release is promoted, and while one is rehearsed, the host lacks
+    # what is asked for and GitHub has it, which is not worth a line. Any other
+    # failure is, and an install that fails on GitHub too names both reasons.
     if ! from_host stable; then
-      echo "install.sh: $problem; trying the GitHub release instead" >&2
-      from_github || fail "$problem"
+      if [ -n "$missing" ]; then
+        first="$problem"
+        from_github || fail "$first; then $problem"
+      else
+        echo "install.sh: $problem; trying the GitHub release instead" >&2
+        from_github || fail "$problem"
+      fi
     fi
   fi
 

@@ -211,26 +211,31 @@ func checksums(files map[string][]byte) []byte {
 
 // releaseHost serves what cli.usestring.ai does, /stable and each release
 // under /v<version>/, or, through publishOnGitHub, what GitHub serves under
-// the repository's /releases.
+// the repository's /releases. It answers 404 for any other path.
 type releaseHost struct {
 	url      string
 	mu       sync.Mutex
 	files    map[string][]byte
+	statuses map[string]int
 	requests []string
 }
 
 func newReleaseHost(t *testing.T) *releaseHost {
-	h := &releaseHost{files: map[string][]byte{}}
+	h := &releaseHost{files: map[string][]byte{}, statuses: map[string]int{}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		h.requests = append(h.requests, r.URL.Path)
 		body, ok := h.files[r.URL.Path]
+		status := h.statuses[r.URL.Path]
 		h.mu.Unlock()
-		if !ok {
+		switch {
+		case status != 0:
+			http.Error(w, http.StatusText(status), status)
+		case !ok:
 			http.NotFound(w, r)
-			return
+		default:
+			w.Write(body)
 		}
-		w.Write(body)
 	}))
 	t.Cleanup(server.Close)
 	h.url = server.URL
@@ -241,6 +246,13 @@ func (h *releaseHost) put(path string, body []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.files[path] = body
+}
+
+// answer makes the host answer path with status, as a host that fails does.
+func (h *releaseHost) answer(path string, status int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.statuses[path] = status
 }
 
 func (h *releaseHost) drop(path string) {
@@ -513,13 +525,33 @@ func (m *machine) installSh(args ...string) (bool, string) {
 
 func (m *machine) installShWith(path string, args ...string) (bool, string) {
 	m.t.Helper()
+	return m.run(m.installShCommand(path, args...))
+}
+
+func (m *machine) installShCommand(path string, args ...string) *exec.Cmd {
+	m.t.Helper()
 	cmd := exec.Command("sh", append([]string{"-s", "--"}, args...)...)
 	cmd.Stdin = bytes.NewReader(m.script("install.sh"))
 	cmd.Env = []string{"PATH=" + path, "HOME=" + m.home, "TMPDIR=" + m.temp}
 	for name, value := range m.env {
 		cmd.Env = append(cmd.Env, name+"="+value)
 	}
-	return m.run(cmd)
+	return cmd
+}
+
+// installShApart is installSh with what install.sh printed to stdout and to
+// stderr kept apart.
+func (m *machine) installShApart(args ...string) (ok bool, stdout, stderr string) {
+	m.t.Helper()
+	cmd := m.installShCommand("/usr/bin:/bin:/usr/sbin:/sbin", args...)
+	var out, errs bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errs
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if err != nil && !errors.As(err, &exit) {
+		m.t.Fatal(err)
+	}
+	return err == nil, out.String(), errs.String()
 }
 
 func TestInstallShReplacesARunningCopyWithTheLatestRelease(t *testing.T) {
@@ -645,44 +677,85 @@ func (m *machine) checkUnchanged(binary string) {
 }
 
 // choice is a release an installer picks: the version it installs, whether
-// it pins the copy to it, and what it asks the host and GitHub for.
+// it pins the copy to it, what it asks the host and GitHub for, and why it
+// says it turned to GitHub, as a regular expression, if it says so at all.
 type choice struct {
 	name          string
 	setUp         func(m *machine)
 	want          string
 	pinned        bool
 	asked, github []string
+	says          func(m *machine) string
 }
 
 // choices are made without STRING_DOWNLOAD_URL, so that the installers use
-// their default host and GitHub, except where a case sets it again.
+// their default host and GitHub, except where a case sets it again. When the
+// host only lacks what they ask for, as it does before a release is promoted
+// and while one is rehearsed, they turn to GitHub without a word.
 func choices() []choice {
 	files := func(dir string) []string { return []string{dir + "/" + archiveName(), dir + "/checksums.txt"} }
 	defaults := func(m *machine) { delete(m.env, "STRING_DOWNLOAD_URL") }
 	return []choice{
-		{"the release /stable names", defaults, "0.3.1", false, append([]string{"/stable"}, files("/v0.3.1")...), nil},
+		{"the release /stable names", defaults, "0.3.1", false, append([]string{"/stable"}, files("/v0.3.1")...), nil, nil},
+		// Before the first release is promoted.
+		{"from GitHub, the latest when the host has no /stable", func(m *machine) {
+			defaults(m)
+			m.host.drop("/stable")
+		}, "0.3.1", false, []string{"/stable"}, files("/latest/download"), nil},
 		{"from GitHub, a release the host lacks", func(m *machine) {
 			defaults(m)
 			m.host.drop("/v0.3.1/" + archiveName())
-		}, "0.3.1", false, []string{"/stable", "/v0.3.1/" + archiveName()}, files("/download/v0.3.1")},
+		}, "0.3.1", false, []string{"/stable", "/v0.3.1/" + archiveName()}, files("/download/v0.3.1"), nil},
+		{"from GitHub, a release whose checksums.txt the host lacks", func(m *machine) {
+			defaults(m)
+			m.host.drop("/v0.3.1/checksums.txt")
+		}, "0.3.1", false, append([]string{"/stable"}, files("/v0.3.1")...), files("/download/v0.3.1"), nil},
+		// As CI installs a release from before the host.
+		{"from GitHub, a pinned release the host lacks", func(m *machine) {
+			defaults(m)
+			m.host.drop("/v0.3.0/" + archiveName())
+			m.env["STRING_VERSION"] = "0.3.0"
+		}, "0.3.0", true, []string{"/v0.3.0/" + archiveName()}, files("/download/v0.3.0"), nil},
 		// While a release is rehearsed.
 		{"GitHub's latest over a pre-release /stable names", func(m *machine) {
 			defaults(m)
 			m.host.publish(m.t, "0.3.2-rc.1")
 			m.host.point("0.3.2-rc.1")
-		}, "0.3.1", false, []string{"/stable"}, files("/latest/download")},
+		}, "0.3.1", false, []string{"/stable"}, files("/latest/download"), nil},
 		{"a pre-release STRING_VERSION names", func(m *machine) {
 			defaults(m)
 			m.host.publish(m.t, "0.3.2-rc.1")
 			m.env["STRING_VERSION"] = "0.3.2-rc.1"
-		}, "0.3.2-rc.1", true, files("/v0.3.2-rc.1"), nil},
+		}, "0.3.2-rc.1", true, files("/v0.3.2-rc.1"), nil, nil},
 		// How a rehearsal installs its release candidate through /stable.
 		{"a pre-release /stable names on the host STRING_DOWNLOAD_URL sets", func(m *machine) {
 			m.host.publish(m.t, "0.3.2-rc.1")
 			m.host.point("0.3.2-rc.1")
-		}, "0.3.2-rc.1", false, append([]string{"/stable"}, files("/v0.3.2-rc.1")...), nil},
+		}, "0.3.2-rc.1", false, append([]string{"/stable"}, files("/v0.3.2-rc.1")...), nil, nil},
+		// The host failing, which a 404 is not, whatever words curl or
+		// PowerShell give each status.
+		{"from GitHub, the latest when /stable fails", func(m *machine) {
+			defaults(m)
+			m.host.answer("/stable", http.StatusInternalServerError)
+		}, "0.3.1", false, []string{"/stable"}, files("/latest/download"), func(m *machine) string {
+			return regexp.QuoteMeta("could not download "+m.host.url+"/stable (") + `.*\b500\b.*\)`
+		}},
+		{"from GitHub, a release the host refuses", func(m *machine) {
+			defaults(m)
+			m.host.answer("/v0.3.1/"+archiveName(), http.StatusForbidden)
+		}, "0.3.1", false, []string{"/stable", "/v0.3.1/" + archiveName()}, files("/download/v0.3.1"), func(m *machine) string {
+			return regexp.QuoteMeta("could not download "+m.host.url+"/v0.3.1/"+archiveName()+" (") + `.*\b403\b.*\)`
+		}},
+		{"from GitHub, a release that does not match the host's checksums.txt", func(m *machine) {
+			defaults(m)
+			m.host.put("/v0.3.1/"+archiveName(), releaseArchive(m.t, map[string][]byte{exe("string"): release(m.t, "0.3.1"), "README.md": []byte("# changed\n")}))
+		}, "0.3.1", false, append([]string{"/stable"}, files("/v0.3.1")...), files("/download/v0.3.1"), func(m *machine) string {
+			return regexp.QuoteMeta(m.host.url + "/v0.3.1/" + archiveName() + " does not match its checksums.txt")
+		}},
 	}
 }
+
+const turning = "; trying the GitHub release instead"
 
 // checkChoice fails unless binary is release c.want, registered as pinned or
 // not, and the installer asked each host for exactly what c lists.
@@ -706,10 +779,84 @@ func TestInstallShChoosesTheReleaseAndWhereToGetIt(t *testing.T) {
 		t.Run(check.name, func(t *testing.T) {
 			m := newMachine(t)
 			check.setUp(m)
-			if ok, output := m.installSh("--no-init"); !ok {
-				t.Fatalf("install.sh failed:\n%s", output)
+			ok, stdout, stderr := m.installShApart("--no-init")
+			if !ok {
+				t.Fatalf("install.sh failed:\n%s%s", stdout, stderr)
 			}
 			m.checkChoice(m.path(".local", "bin", "string"), check)
+			// The one line, or nothing at all.
+			want := ""
+			if check.says != nil {
+				want = `^install\.sh: ` + check.says(m) + regexp.QuoteMeta(turning) + "\n$"
+			}
+			if want == "" && stderr != "" || want != "" && !regexp.MustCompile(want).MatchString(stderr) {
+				t.Errorf("install.sh printed to stderr:\n%s\nwant it to match %q", stderr, want)
+			}
+		})
+	}
+}
+
+// gitHubFailures are installs that GitHub's release fails after the host
+// did, each saying whether the host's failure gets a line of its own. GitHub's
+// stand-in lacks its latest release's archive for them.
+func gitHubFailures() []struct {
+	name  string
+	setUp func(m *machine)
+	said  bool
+} {
+	return []struct {
+		name  string
+		setUp func(m *machine)
+		said  bool
+	}{
+		{"after a host that has no /stable", func(m *machine) { m.host.drop("/stable") }, false},
+		{"after a host whose /stable fails", func(m *machine) { m.host.answer("/stable", http.StatusInternalServerError) }, true},
+	}
+}
+
+// checkBothReasons fails unless output, from an install that failed on the
+// host and then on GitHub, gives both reasons, and the host's on a line of its
+// own only if said is set.
+func (m *machine) checkBothReasons(output string, said bool) {
+	m.t.Helper()
+	for _, reason := range []string{"could not download " + m.host.url + "/stable", "could not download " + m.github.url + "/latest/download/" + archiveName()} {
+		if !mentions(output, reason) {
+			m.t.Errorf("the installer did not say %q:\n%s", reason, output)
+		}
+	}
+	if mentions(output, turning) != said {
+		m.t.Errorf("the installer said it turned to GitHub (%t), want %t:\n%s", !said, said, output)
+	}
+	if got, want := m.host.requested(), []string{"/stable"}; !slices.Equal(got, want) {
+		m.t.Errorf("requests to the host %v, want %v", got, want)
+	}
+	if got, want := m.github.requested(), []string{"/latest/download/" + archiveName()}; !slices.Equal(got, want) {
+		m.t.Errorf("requests to GitHub %v, want %v", got, want)
+	}
+}
+
+func TestInstallShNamesBothReasonsWhenGitHubFailsToo(t *testing.T) {
+	skipUnlessUnix(t)
+	for _, check := range gitHubFailures() {
+		t.Run(check.name, func(t *testing.T) {
+			m := newMachine(t)
+			binary := m.path(".local", "bin", "string")
+			m.place(binary, release(t, "0.3.0"))
+			delete(m.env, "STRING_DOWNLOAD_URL")
+			m.github.drop("/latest/download/" + archiveName())
+			check.setUp(m)
+			ok, stdout, stderr := m.installShApart("--no-init")
+			if ok {
+				t.Fatalf("install.sh succeeded:\n%s%s", stdout, stderr)
+			}
+			m.checkBothReasons(stderr, check.said)
+			// Each once, whether on its own line or in the error.
+			for _, url := range []string{m.host.url + "/stable", m.github.url + "/latest/download/" + archiveName()} {
+				if n := strings.Count(stderr, "could not download "+url+" ("); n != 1 {
+					t.Errorf("install.sh gave the reason for %s %d times, want once:\n%s", url, n, stderr)
+				}
+			}
+			m.checkUnchanged(binary)
 		})
 	}
 }
@@ -1013,20 +1160,60 @@ func TestInstallPs1ChangesNothingWhenItCannotInstall(t *testing.T) {
 	}
 }
 
-// One PowerShell is enough here: the choice is the script's own logic.
+// Both PowerShells, because the status of a failed download reaches the
+// script in an exception of a different type in each.
 func TestInstallPs1ChoosesTheReleaseAndWhereToGetIt(t *testing.T) {
 	shells := findPowershells(t)
-	for _, check := range choices() {
-		t.Run(check.name, func(t *testing.T) {
-			keepUserPath(t)
-			m := newMachine(t)
-			m.env["STRING_NO_INIT"] = "1"
-			check.setUp(m)
-			if ok, output := m.powershell(shells.windows, "-File", m.scriptFile("install.ps1")); !ok {
-				t.Fatalf("install.ps1 failed:\n%s", output)
-			}
-			m.checkChoice(m.path(".local", "bin", "string.exe"), check)
-		})
+	for _, shell := range []struct{ name, path string }{
+		{"Windows PowerShell", shells.windows},
+		{"PowerShell 7", shells.core},
+	} {
+		for _, check := range choices() {
+			t.Run(shell.name+"/"+check.name, func(t *testing.T) {
+				keepUserPath(t)
+				m := newMachine(t)
+				m.env["STRING_NO_INIT"] = "1"
+				check.setUp(m)
+				ok, output := m.powershell(shell.path, "-File", m.scriptFile("install.ps1"))
+				if !ok {
+					t.Fatalf("install.ps1 failed:\n%s", output)
+				}
+				m.checkChoice(m.path(".local", "bin", "string.exe"), check)
+				if check.says == nil {
+					if mentions(output, turning) || mentions(output, m.host.url) {
+						t.Errorf("install.ps1 mentioned the host:\n%s", output)
+					}
+				} else if want := `(?m)^install\.ps1: ` + check.says(m) + regexp.QuoteMeta(turning) + `\r?$`; !regexp.MustCompile(want).MatchString(output) {
+					t.Errorf("install.ps1 printed:\n%s\nwant a line that matches %q", output, want)
+				}
+			})
+		}
+	}
+}
+
+func TestInstallPs1NamesBothReasonsWhenGitHubFailsToo(t *testing.T) {
+	shells := findPowershells(t)
+	for _, shell := range []struct{ name, path string }{
+		{"Windows PowerShell", shells.windows},
+		{"PowerShell 7", shells.core},
+	} {
+		for _, check := range gitHubFailures() {
+			t.Run(shell.name+"/"+check.name, func(t *testing.T) {
+				m := newMachine(t)
+				binary := m.path(".local", "bin", "string.exe")
+				m.place(binary, release(t, "0.3.0"))
+				m.env["STRING_NO_INIT"] = "1"
+				delete(m.env, "STRING_DOWNLOAD_URL")
+				m.github.drop("/latest/download/" + archiveName())
+				check.setUp(m)
+				ok, output := m.powershell(shell.path, "-File", m.scriptFile("install.ps1"))
+				if ok {
+					t.Fatalf("install.ps1 succeeded:\n%s", output)
+				}
+				m.checkBothReasons(output, check.said)
+				m.checkUnchanged(binary)
+			})
+		}
 	}
 }
 

@@ -55,11 +55,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: go test . -count=1 -v
-      # The download host has no release from before 0.3.0, so each installer
-      # gets 0.2.0 from the GitHub release instead, as it does whenever the host
-      # fails. 0.2.0 has no string update, so registering it fails, and that
-      # must not show. A home of their own, and no init, keep the runner's
-      # agents and accounts out of both. Windows PowerShell, with its older TLS
+      # The download host has no release from before 0.3.0 and answers 404 for
+      # 0.2.0's archive, so each installer gets 0.2.0 from the GitHub release
+      # instead, without a word, as it does whenever the host lacks a release.
+      # 0.2.0 has no string update, so registering it fails, and that must not
+      # show either. A home of their own, and no init, keep the runner's agents
+      # and accounts out of both. Windows PowerShell, with its older TLS
       # defaults, runs the second.
       - name: Fall back to the GitHub release with install.sh
         if: matrix.os == 'ubuntu-latest'
@@ -70,6 +71,10 @@ jobs:
           test "$("$home/.local/bin/string" --version)" = "string 0.2.0"
           if grep -i 'unknown command' "$RUNNER_TEMP/fallback.log"; then
             echo "::error::install.sh showed what string update --register printed on 0.2.0"
+            exit 1
+          fi
+          if grep 'trying the GitHub release instead' "$RUNNER_TEMP/fallback.log"; then
+            echo "::error::install.sh said why it turned to GitHub, which it should not when the host answers 404"
             exit 1
           fi
       - name: Fall back to the GitHub release with install.ps1
@@ -87,6 +92,7 @@ jobs:
           $version = & (Join-Path $throwaway '.local\bin\string.exe') --version
           if ($version -ne 'string 0.2.0') { throw "string.exe reports $version" }
           if ($output -match 'unknown command') { throw 'install.ps1 showed what string update --register printed on 0.2.0' }
+          if ($output -match 'trying the GitHub release instead') { throw 'install.ps1 said why it turned to GitHub, which it should not when the host answers 404' }
       # A step has no terminal, so go test ./... skips the test that a real
       # terminal counts as one. script(1) runs the terminal tests in a terminal
       # of its own and records what they print, and this step fails unless that

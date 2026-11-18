@@ -14,7 +14,8 @@
 #   -Agent       STRING_INIT_AGENT   string init --agent, e.g. claude-code
 #
 # Releases come from https://cli.usestring.ai, or from the GitHub release when
-# that host fails in any way. STRING_DOWNLOAD_URL replaces the host, with no
+# that host fails in any way: without a word when it only lacks the release,
+# and with the reason otherwise. STRING_DOWNLOAD_URL replaces the host, with no
 # fallback, for tests and rehearsals.
 #
 # irm | iex runs this in the session that ran it. The parameters' variables
@@ -58,6 +59,25 @@ param(
         return $null
     }
 
+    # New-MissingError is the error for what a host lacks: a file it answers
+    # 404 for, or a stable release when its /stable names a pre-release.
+    function New-MissingError([string]$Message) {
+        $exception = New-Object Exception $Message
+        $exception.Data['missing'] = $true
+        return $exception
+    }
+
+    # Get-HttpStatus returns the status of the response a failed download got,
+    # or 0 if it got none. Windows PowerShell throws a WebException and
+    # PowerShell 7 an HttpResponseException, and each holds the response.
+    function Get-HttpStatus([Exception]$Exception) {
+        $response = $Exception.PSObject.Properties['Response']
+        if (-not $response -or -not $response.Value) {
+            return 0
+        }
+        return [int]$response.Value.StatusCode
+    }
+
     function Save-Url([string]$Url, [string]$Path, [int]$Seconds) {
         # -TimeoutSec covers only the wait for the response's headers. From
         # PowerShell 7.4, -OperationTimeoutSeconds also ends a download that
@@ -70,7 +90,11 @@ param(
                 Invoke-WebRequest -Uri $Url -OutFile $Path -UseBasicParsing -TimeoutSec $Seconds
             }
         } catch {
-            throw "could not download $Url ($($_.Exception.Message))"
+            $problem = "could not download $Url ($($_.Exception.Message))"
+            if ((Get-HttpStatus $_.Exception) -eq 404) {
+                throw (New-MissingError $problem)
+            }
+            throw $problem
         }
     }
 
@@ -227,7 +251,7 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wP
                 if ($fallback -and $want.Contains('-')) {
                     $named = $want
                     $want = $null
-                    throw "$server/stable names $named, a pre-release"
+                    throw (New-MissingError "$server/stable names $named, a pre-release")
                 }
             }
             $exe = Get-Release "$server/v$want"
@@ -235,7 +259,15 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wP
             if (-not $fallback) {
                 Fail $_.Exception.Message
             }
-            Write-Host "install.ps1: $($_.Exception.Message); trying the GitHub release instead"
+            # Before a release is promoted, and while one is rehearsed, the
+            # host lacks what is asked for and GitHub has it, which is not
+            # worth a line. Any other failure is, and an install that fails on
+            # GitHub too names both reasons.
+            $first = $_.Exception.Message
+            $missing = $_.Exception.Data['missing']
+            if (-not $missing) {
+                Write-Host "install.ps1: $first; trying the GitHub release instead"
+            }
             try {
                 if ($want) {
                     $exe = Get-Release "$github/download/v$want"
@@ -243,6 +275,9 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wP
                     $exe = Get-Release "$github/latest/download"
                 }
             } catch {
+                if ($missing) {
+                    Fail "$first; then $($_.Exception.Message)"
+                }
                 Fail $_.Exception.Message
             }
         }
