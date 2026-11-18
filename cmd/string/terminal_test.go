@@ -135,11 +135,11 @@ func TestGivenTheNullDeviceAsStdinTheCommandWaitsForNobody(t *testing.T) {
 		t.Errorf("login: %+v", login)
 	}
 	initialized := runCommand(t, authURL, nil, "init")
-	if initialized.status != 0 || strings.Contains(initialized.output, "Signing in") || !strings.HasSuffix(initialized.output, signInHint) {
+	if initialized.status != 0 || strings.Contains(initialized.output, "press Ctrl-C") || !strings.Contains(initialized.output, "Then run string login --poll") {
 		t.Errorf("init: %+v", initialized)
 	}
-	if started, asked := service.requests("/oauth/device_authorization"), service.requests("/oauth/token"); started != 1 || asked != 0 {
-		t.Errorf("%d sign-ins were started and the token was asked for %d times; login starts one, init none, and neither waits", started, asked)
+	if started, asked := service.requests("/oauth/device_authorization"), service.requests("/oauth/token"); started != 2 || asked != 0 {
+		t.Errorf("%d sign-ins were started and the token was asked for %d times; login and init start one each, and neither waits", started, asked)
 	}
 	token := runCommand(t, authURL, nil, "login", "--with-token")
 	if token.status != 2 || !strings.Contains(token.errors, "No key on stdin") {
