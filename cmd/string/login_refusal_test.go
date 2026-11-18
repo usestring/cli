@@ -449,24 +449,28 @@ func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
 }
 
 func TestABuildWithNoClientRefusesLoginAndInitSignsNobodyIn(t *testing.T) {
-	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
+	service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}, status: []signInAnswer{browserComplete}}
 	service.start(t)
 	oauthClientID = ""
 	session := newSignInSession(t)
 	session.terminal = true
 
-	got := session.run("login")
-	if got.status != exitAuth || got.output != "" || !strings.Contains(got.errors, "This build of string cannot sign in through the browser.") || !strings.Contains(got.errors, "Keys are at https://portal.usestring.ai/api-keys.") {
-		t.Errorf("login: %+v", got)
+	for _, command := range [][]string{{"login"}, {"login", "--browser"}} {
+		got := session.run(command...)
+		if got.status != exitAuth || got.output != "" || !strings.Contains(got.errors, "This build of string cannot sign in through the browser.") || !strings.Contains(got.errors, "Keys are at https://portal.usestring.ai/api-keys.") {
+			t.Errorf("%s: %+v", strings.Join(command, " "), got)
+		}
 	}
-	got = session.run("login", "--json")
+	got := session.run("login", "--json")
 	if envelope := decode(t, got.errors).(map[string]any)["error"].(map[string]any); got.status != exitAuth || got.output != "" || envelope["code"] != "login_unavailable" {
 		t.Errorf("login --json: %+v", got)
 	}
 
-	got = session.run("init")
-	if got.status != 0 || got.errors != "" || !strings.Contains(got.output, "Installed the string-cli skill") || !strings.HasSuffix(got.output, "\n\n"+signInHint) || strings.Contains(got.output, "Signing in") {
-		t.Errorf("init from a terminal: %+v", got)
+	for _, command := range [][]string{{"init"}, {"init", "--browser"}} {
+		got = session.run(command...)
+		if got.status != 0 || got.errors != "" || !strings.Contains(got.output, "Installed the string-cli skill") || !strings.HasSuffix(got.output, "\n\n"+signInHint) || strings.Contains(got.output, "Signing in") {
+			t.Errorf("%s from a terminal: %+v", strings.Join(command, " "), got)
+		}
 	}
 
 	if requests := service.requests(""); requests != 0 {

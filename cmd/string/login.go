@@ -479,11 +479,13 @@ func signIn(rt runtime, browser bool, envFile string) error {
 // sign-in, saves it as pending and shows the person where to approve it. wait
 // says whether this command goes on to wait.
 func startSignIn(rt runtime, browser, wait bool, envFile string) (pendingLogin, error) {
-	if browser {
-		return startBrowserSignIn(rt, wait, envFile)
-	}
+	// The browser sign-in needs no OAuth client, but a build that clears it
+	// signs nobody in, and its tests rely on that.
 	if oauthClientID == "" {
 		return pendingLogin{}, &failure{exit: exitAuth, code: "login_unavailable", message: "This build of string cannot sign in through the browser. Set STRING_API_KEY, or pipe a key to string login --with-token. Keys are at https://portal.usestring.ai/api-keys."}
+	}
+	if browser {
+		return startBrowserSignIn(rt, wait, envFile)
 	}
 	path, ok := pendingPath(rt.env)
 	if !ok {
