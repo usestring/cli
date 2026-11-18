@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,19 +75,128 @@ func writePrivate(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".credentials-*")
+	return replaceFile(path, append(data, '\n'), 0o600)
+}
+
+// replaceFile writes data to path through a temporary file beside it, which
+// only its owner can read until it takes mode, so a reader never sees the file
+// half written.
+func replaceFile(path string, data []byte, mode fs.FileMode) error {
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(file.Name())
-	if _, err := file.Write(append(data, '\n')); err != nil {
+	if _, err := file.Write(data); err != nil {
 		file.Close()
 		return err
+	}
+	if mode != 0o600 {
+		if err := file.Chmod(mode); err != nil {
+			file.Close()
+			return err
+		}
 	}
 	if err := file.Close(); err != nil {
 		return err
 	}
 	return os.Rename(file.Name(), path)
+}
+
+// envFileOption is --env-file as an absolute path, so the command that
+// finishes a sign-in writes the same file from any directory. The path is
+// checked before the sign-in starts: once the person has approved, a file that
+// can't be written would leave the key only in credentials.json.
+func envFileOption(parsed args) (string, error) {
+	value, ok := parsed.value("env-file")
+	if !ok {
+		return "", nil
+	}
+	if value == "" {
+		return "", errors.New("--env-file needs the path of a file, such as .env")
+	}
+	path, err := filepath.Abs(value)
+	if err != nil {
+		return "", err
+	}
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return "", fmt.Errorf("--env-file %s is a directory; name a file in it, such as %s", value, filepath.Join(value, ".env"))
+	}
+	if info, err := os.Stat(filepath.Dir(path)); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("--env-file %s is in a directory that does not exist", value)
+	}
+	return path, nil
+}
+
+// envKeyLine matches a line of an env file that sets STRING_API_KEY, with or
+// without the export that lets a shell source the file.
+var envKeyLine = regexp.MustCompile(`^(\s*(?:export\s+)?)STRING_API_KEY\s*=`)
+
+// setEnvKey makes key the value of every line of the env file at path that
+// sets STRING_API_KEY, or adds that line, and leaves every other line as it
+// was. Every line is set because tools differ on which of two lines wins. A
+// new file is readable only by its owner; an existing one keeps its mode.
+func setEnvKey(path, key string) error {
+	// Writing through a symlink keeps the link, and every file that shares it.
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	}
+	mode := fs.FileMode(0o600)
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		mode = info.Mode().Perm()
+	case !errors.Is(err, fs.ErrNotExist):
+		return err
+	}
+	lines := strings.SplitAfter(string(data), "\n")
+	set := false
+	for i, line := range lines {
+		text := strings.TrimRight(line, "\r\n")
+		if prefix := envKeyLine.FindStringSubmatch(text); prefix != nil {
+			lines[i] = prefix[1] + "STRING_API_KEY=" + key + line[len(text):]
+			set = true
+		}
+	}
+	content := strings.Join(lines, "")
+	if !set {
+		newline := "\n"
+		if strings.Contains(content, "\r\n") {
+			newline = "\r\n"
+		}
+		if content != "" && !strings.HasSuffix(content, "\n") {
+			content += newline
+		}
+		content += "STRING_API_KEY=" + key + newline
+	}
+	return replaceFile(path, []byte(content), mode)
+}
+
+// keepKey saves a sign-in's key in credentials.json at path, where commands
+// read it, and in envFile when --env-file named one.
+func keepKey(path string, saved credentials, envFile string) error {
+	if err := saveCredentials(path, saved); err != nil {
+		return err
+	}
+	if envFile == "" {
+		return nil
+	}
+	if err := setEnvKey(envFile, saved.APIKey); err != nil {
+		return fmt.Errorf("The key is saved in %s, but it could not be written to %s: %w", path, envFile, err)
+	}
+	return nil
+}
+
+// envFileNote is the line that says where --env-file put the key.
+func envFileNote(envFile string) string {
+	if envFile == "" {
+		return ""
+	}
+	return fmt.Sprintf("Wrote it to %s as STRING_API_KEY.\n", envFile)
 }
 
 func validKey(key string) bool {
@@ -242,27 +352,41 @@ func loginCommand(list []string, rt runtime) error {
 		}
 		return false
 	})
-	if done, err := noOptions(list, "login", rt); done {
-		return err
+	parsed, err := parseArgs(list, "env-file")
+	if err != nil {
+		return usage(err)
+	}
+	if parsed.help {
+		return write(rt.stdout, []byte(help))
+	}
+	if err := expectPositionals(parsed.positionals, 0, "string login [--with-token | --no-wait | --poll] [--env-file PATH]"); err != nil {
+		return usage(err)
+	}
+	if _, ok := parsed.value("input"); ok {
+		return usage(errors.New("--input does not apply to login"))
 	}
 	if len(chosen) > 1 {
 		return usage(errors.New("Use only one of --with-token, --no-wait and --poll"))
 	}
+	envFile, err := envFileOption(parsed)
+	if err != nil {
+		return usage(err)
+	}
 	switch {
 	case slices.Contains(chosen, "--with-token"):
-		return saveToken(rt)
+		return saveToken(rt, envFile)
 	case slices.Contains(chosen, "--poll"):
-		return finishPending(rt)
+		return finishPending(rt, envFile)
 	case slices.Contains(chosen, "--no-wait") || rt.json || !rt.terminal:
-		_, err := startSignIn(rt, false)
+		_, err := startSignIn(rt, false, envFile)
 		return err
 	}
-	return signIn(rt)
+	return signIn(rt, envFile)
 }
 
 // saveToken saves a key read from stdin, so it never appears in argv or the
 // shell history, after checking it with one free API call.
-func saveToken(rt runtime) error {
+func saveToken(rt runtime, envFile string) error {
 	if rt.terminal {
 		return usage(errors.New("Pipe the key on stdin, as in: string login --with-token < key.txt"))
 	}
@@ -306,10 +430,10 @@ func saveToken(rt runtime) error {
 		f.message = "The key was not saved. " + f.message
 		return f
 	}
-	if err := saveCredentials(path, credentials{APIKey: key}); err != nil {
+	if err := keepKey(path, credentials{APIKey: key}, envFile); err != nil {
 		return err
 	}
-	fmt.Fprintf(&report, "Saved the key in %s.\n", path)
+	fmt.Fprintf(&report, "Saved the key in %s.\n%s", path, envFileNote(envFile))
 	if env, _ := rt.env("STRING_API_KEY"); env != "" {
 		report.WriteString("STRING_API_KEY is set, and commands keep using it instead.\n")
 	}
@@ -322,6 +446,8 @@ type pendingLogin struct {
 	DeviceCode string    `json:"deviceCode"`
 	Interval   int       `json:"interval"`
 	ExpiresAt  time.Time `json:"expiresAt"`
+	// EnvFile is where --env-file asked for the key when the sign-in started.
+	EnvFile string `json:"envFile,omitempty"`
 }
 
 func pendingPath(env func(string) (string, bool)) (string, bool) {
@@ -330,8 +456,8 @@ func pendingPath(env func(string) (string, bool)) (string, bool) {
 }
 
 // signIn waits in the foreground for the person to approve.
-func signIn(rt runtime) error {
-	pending, err := startSignIn(rt, true)
+func signIn(rt runtime, envFile string) error {
+	pending, err := startSignIn(rt, true, envFile)
 	if err != nil {
 		return err
 	}
@@ -340,7 +466,7 @@ func signIn(rt runtime) error {
 
 // startSignIn asks for a device code, saves it as pending and shows the person
 // where to approve it. wait says whether this command goes on to wait.
-func startSignIn(rt runtime, wait bool) (pendingLogin, error) {
+func startSignIn(rt runtime, wait bool, envFile string) (pendingLogin, error) {
 	if oauthClientID == "" {
 		return pendingLogin{}, &failure{exit: exitAuth, code: "login_unavailable", message: "This build of string cannot sign in through the browser. Set STRING_API_KEY, or pipe a key to string login --with-token. Keys are at https://portal.usestring.ai/api-keys."}
 	}
@@ -382,6 +508,7 @@ func startSignIn(rt runtime, wait bool) (pendingLogin, error) {
 		DeviceCode: device.DeviceCode,
 		Interval:   device.Interval,
 		ExpiresAt:  rt.clock().Add(time.Duration(device.ExpiresIn) * time.Second),
+		EnvFile:    envFile,
 	}
 	if err := writePrivate(path, pending); err != nil {
 		return pendingLogin{}, err
@@ -425,7 +552,9 @@ func approvalLink(sent, userCode string) string {
 	return portalURL + "/device?user_code=" + url.QueryEscape(userCode)
 }
 
-func finishPending(rt runtime) error {
+// finishPending finishes the sign-in an earlier command started. envFile, from
+// --env-file now, wins over the one given when it started.
+func finishPending(rt runtime, envFile string) error {
 	path, ok := pendingPath(rt.env)
 	if !ok {
 		return errors.New("Cannot find your home directory; set HOME")
@@ -441,6 +570,9 @@ func finishPending(rt runtime) error {
 	if err := json.Unmarshal(data, &pending); err != nil || pending.DeviceCode == "" {
 		os.Remove(path)
 		return usage(errors.New("The waiting sign-in could not be read. Run string login --no-wait again."))
+	}
+	if envFile != "" {
+		pending.EnvFile = envFile
 	}
 	return finishSignIn(rt, pending)
 }
@@ -477,7 +609,7 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 	if status, _, err := getWithToken(rt, authURL+"/oauth/userinfo", token, &profile); err == nil && status == http.StatusOK {
 		saved.Email = profile.Email
 	}
-	if err := saveCredentials(path, saved); err != nil {
+	if err := keepKey(path, saved, pending.EnvFile); err != nil {
 		return err
 	}
 	// STRING_API_KEY wins over the key just saved. Someone who signed in to
@@ -491,14 +623,18 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 		if inUse != "" {
 			fmt.Fprint(rt.stderr, inUse)
 		}
-		shown, _ := json.Marshal(map[string]string{"status": "logged_in", "email": saved.Email, "credentials": path})
+		fields := map[string]string{"status": "logged_in", "email": saved.Email, "credentials": path}
+		if pending.EnvFile != "" {
+			fields["env_file"] = pending.EnvFile
+		}
+		shown, _ := json.Marshal(fields)
 		return write(rt.stdout, append(shown, '\n'))
 	}
 	who := ""
 	if saved.Email != "" {
 		who = " as " + saved.Email
 	}
-	return write(rt.stdout, []byte(fmt.Sprintf("Logged in%s. The key is saved in %s.\n%s", who, path, inUse)))
+	return write(rt.stdout, []byte(fmt.Sprintf("Logged in%s. The key is saved in %s.\n%s%s", who, path, envFileNote(pending.EnvFile), inUse)))
 }
 
 // keyPauses are the waits before the second, third and fourth tries of the key
