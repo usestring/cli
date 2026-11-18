@@ -47,10 +47,14 @@ jobs:
           sh -n install.sh
           if [ "$RUNNER_OS" = Linux ]; then shellcheck install.sh; fi
       # install.ps1's tests change the user's PATH, which a runner throws away
-      # afterwards, so they run in CI only.
+      # afterwards, so they run in CI only. pwsh runs them on purpose: Windows
+      # PowerShell started under PowerShell 7 inherits its module path, as for
+      # a person whose terminal began in PowerShell 7, and finds PowerShell 7's
+      # modules first, so install.ps1 must not need one loaded.
       - name: Test install.ps1
         if: runner.os == 'Windows'
-        run: go test . -run InstallPs1 -count=1 -v
+        shell: pwsh
+        run: go test . -count=1 -v
       # The download host has no release from before 0.3.0, so each installer
       # gets 0.2.0 from the GitHub release instead, as it does whenever the host
       # fails. 0.2.0 has no string update, so registering it fails, and that

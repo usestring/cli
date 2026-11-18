@@ -41,9 +41,9 @@ Homebrew builds the binary from the release's source archive, so Go is needed on
 Each [GitHub release](https://github.com/usestring/cli/releases) also has the binaries for macOS, Linux and Windows, and `.deb`, `.rpm` and `.apk` packages for Debian, Fedora and Alpine. The packages are not signed yet, so `rpm -i` and a plain `apk add` refuse them. Install one with these commands from the directory you saved it in, with `arm64` in place of `amd64` on Arm:
 
 ```bash
-sudo apt install ./string_*_linux_amd64.deb                # Debian and Ubuntu
-sudo dnf install ./string_*_linux_amd64.rpm                # Fedora
-sudo apk add --allow-untrusted ./string_*_linux_amd64.apk  # Alpine
+sudo apt install ./string_*_linux_amd64.deb           # Debian and Ubuntu
+sudo dnf install ./string_*_linux_amd64.rpm           # Fedora
+apk add --allow-untrusted ./string_*_linux_amd64.apk  # Alpine, as root
 ```
 
 ## Keys

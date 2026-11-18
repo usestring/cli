@@ -81,6 +81,9 @@ download() {
 }
 
 # from_host downloads $version, or the release $host/stable names, from $host.
+# With $1 set to stable, a pre-release named there counts as the host failing:
+# while a release is rehearsed, the default host's /stable can name one, which
+# only STRING_VERSION or STRING_DOWNLOAD_URL installs.
 from_host() {
   if [ -z "$version" ]; then
     fetch "$host/stable" "$tmp/stable" || return 1
@@ -89,6 +92,15 @@ from_host() {
       problem="$host/stable does not name a release"
       return 1
     fi
+    case "$version" in
+      *-*)
+        if [ "$1" = stable ]; then
+          problem="$host/stable names $version, a pre-release"
+          version=
+          return 1
+        fi
+        ;;
+    esac
   fi
   download "$host/v$version"
 }
@@ -153,10 +165,10 @@ main() {
 
   if [ -n "${STRING_DOWNLOAD_URL:-}" ]; then
     host="${STRING_DOWNLOAD_URL%/}"
-    from_host || fail "$problem"
+    from_host any || fail "$problem"
   else
     host="https://cli.usestring.ai"
-    if ! from_host; then
+    if ! from_host stable; then
       echo "install.sh: $problem; trying the GitHub release instead" >&2
       from_github || fail "$problem"
     fi

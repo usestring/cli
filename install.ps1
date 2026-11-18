@@ -88,7 +88,18 @@ param(
                 $expected = $fields[0]
             }
         }
-        if (-not $expected -or $expected -ne (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash) {
+        # .NET rather than Get-FileHash, which Windows PowerShell loads from a
+        # module, and cannot under PowerShell 7: there it finds PowerShell 7's
+        # module directories first.
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        $stream = [IO.File]::OpenRead($archive)
+        try {
+            $actual = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
+        } finally {
+            $stream.Dispose()
+            $sha256.Dispose()
+        }
+        if (-not $expected -or $expected -ne $actual) {
             throw "$Base/$zip does not match its checksums.txt"
         }
         if (-not ('System.IO.Compression.ZipFile' -as [type])) {
@@ -150,24 +161,29 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wP
     }
 
     # The machine's own CPU. PowerShell running as x86 or x64 under emulation on
-    # an Arm machine finds the CPU it emulates in PROCESSOR_ARCHITECTURE.
-    $cpu = $null
+    # an Arm machine finds the CPU it emulates in PROCESSOR_ARCHITECTURE, but
+    # the system's value in the registry, whose SYSTEM hive every process sees
+    # the same, names the machine's.
+    $native = $null
     try {
-        $cpu = @(Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop)[0].Architecture
-    } catch {
-        # PROCESSOR_ARCHITEW6432 below still sees through x86 emulation.
-    }
-    if ($cpu -eq 12) {
-        $arch = 'arm64'
-    } elseif ($cpu -eq 9) {
-        $arch = 'amd64'
-    } else {
-        $native = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
-        switch ($native) {
-            'AMD64' { $arch = 'amd64' }
-            'ARM64' { $arch = 'arm64' }
-            default { Fail "unsupported CPU $native" }
+        $system = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment')
+        if ($system) {
+            try {
+                $native = $system.GetValue('PROCESSOR_ARCHITECTURE')
+            } finally {
+                $system.Close()
+            }
         }
+    } catch {
+        # The environment says the same, except under x64 emulation.
+    }
+    if (-not $native) {
+        $native = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    }
+    switch ($native) {
+        'AMD64' { $arch = 'amd64' }
+        'ARM64' { $arch = 'arm64' }
+        default { Fail "unsupported CPU $native" }
     }
 
     $want = $null
@@ -204,6 +220,14 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wP
                 $want = Get-ReleaseVersion (@([IO.File]::ReadAllLines($stable)) + '')[0]
                 if (-not $want) {
                     throw "$server/stable does not name a release"
+                }
+                # While a release is rehearsed, the default host's /stable can
+                # name a pre-release, which only -Version or
+                # STRING_DOWNLOAD_URL installs.
+                if ($fallback -and $want.Contains('-')) {
+                    $named = $want
+                    $want = $null
+                    throw "$server/stable names $named, a pre-release"
                 }
             }
             $exe = Get-Release "$server/v$want"

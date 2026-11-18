@@ -18,12 +18,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 )
 
 // These make this test binary stand in for string. runningEnv makes it a copy
@@ -207,8 +209,9 @@ func checksums(files map[string][]byte) []byte {
 	return out.Bytes()
 }
 
-// releaseHost serves what cli.usestring.ai does: /stable, and each release
-// under /v<version>/.
+// releaseHost serves what cli.usestring.ai does, /stable and each release
+// under /v<version>/, or, through publishOnGitHub, what GitHub serves under
+// the repository's /releases.
 type releaseHost struct {
 	url      string
 	mu       sync.Mutex
@@ -238,6 +241,12 @@ func (h *releaseHost) put(path string, body []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.files[path] = body
+}
+
+func (h *releaseHost) drop(path string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.files, path)
 }
 
 // holding packs binary as a release's archive for this system.
@@ -272,6 +281,21 @@ func (h *releaseHost) publishArchive(v string, archive []byte) {
 
 func (h *releaseHost) point(v string) { h.put("/stable", []byte(v+"\n")) }
 
+// publishOnGitHub puts release v where GitHub serves a release's files, and
+// where it serves the latest release's as well when latest is set.
+func (h *releaseHost) publishOnGitHub(t *testing.T, v string, latest bool) {
+	archive := releaseArchiveOf(t, v)
+	sums := checksums(map[string][]byte{archiveName(): archive})
+	dirs := []string{"/download/v" + v}
+	if latest {
+		dirs = append(dirs, "/latest/download")
+	}
+	for _, dir := range dirs {
+		h.put(dir+"/"+archiveName(), archive)
+		h.put(dir+"/checksums.txt", sums)
+	}
+}
+
 func (h *releaseHost) requested() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -279,12 +303,12 @@ func (h *releaseHost) requested() []string {
 }
 
 // machine is a home of its own, with a temporary directory of its own, whose
-// installer downloads from a releaseHost.
+// installers download from stand-ins for the release host and for GitHub.
 type machine struct {
-	t          *testing.T
-	home, temp string
-	host       *releaseHost
-	env        map[string]string
+	t            *testing.T
+	home, temp   string
+	host, github *releaseHost
+	env          map[string]string
 }
 
 func newMachine(t *testing.T) *machine {
@@ -299,7 +323,11 @@ func newMachine(t *testing.T) *machine {
 	host.publish(t, "0.3.0")
 	host.publish(t, "0.3.1")
 	host.point("0.3.1")
-	return &machine{t: t, home: home, temp: t.TempDir(), host: host, env: map[string]string{
+	github := newReleaseHost(t)
+	github.publishOnGitHub(t, "0.3.0", false)
+	github.publishOnGitHub(t, "0.3.1", true)
+	return &machine{t: t, home: home, temp: t.TempDir(), host: host, github: github, env: map[string]string{
+		// The host with no fallback to GitHub, unless a test takes it out.
 		"STRING_DOWNLOAD_URL": host.url,
 		// Otherwise string init, from a release that has the daily check,
 		// starts one that outlives the test.
@@ -309,6 +337,41 @@ func newMachine(t *testing.T) *machine {
 
 func (m *machine) path(elements ...string) string {
 	return filepath.Join(append([]string{m.home}, elements...)...)
+}
+
+// script is the installer name with this machine's stand-ins in place of the
+// default host and the GitHub releases URL, each quoted exactly once in it.
+func (m *machine) script(name string) []byte {
+	m.t.Helper()
+	data, err := os.ReadFile(name)
+	if err != nil {
+		m.t.Fatal(err)
+	}
+	text := string(data)
+	for _, swap := range []struct{ real, local string }{
+		{"https://cli.usestring.ai", m.host.url},
+		{"https://github.com/usestring/cli/releases", m.github.url},
+	} {
+		found := 0
+		for _, quote := range []string{`"`, `'`} {
+			found += strings.Count(text, quote+swap.real+quote)
+			text = strings.ReplaceAll(text, quote+swap.real+quote, quote+swap.local+quote)
+		}
+		if found != 1 {
+			m.t.Fatalf("%s quotes %s %d times, want once", name, swap.real, found)
+		}
+	}
+	return []byte(text)
+}
+
+// scriptFile is script(name) saved under that name, to run by its path.
+func (m *machine) scriptFile(name string) string {
+	m.t.Helper()
+	path := filepath.Join(m.t.TempDir(), name)
+	if err := os.WriteFile(path, m.script(name), 0o644); err != nil {
+		m.t.Fatal(err)
+	}
+	return path
 }
 
 // place puts data at path as an executable, the way an earlier install left it.
@@ -450,12 +513,8 @@ func (m *machine) installSh(args ...string) (bool, string) {
 
 func (m *machine) installShWith(path string, args ...string) (bool, string) {
 	m.t.Helper()
-	script, err := os.ReadFile("install.sh")
-	if err != nil {
-		m.t.Fatal(err)
-	}
 	cmd := exec.Command("sh", append([]string{"-s", "--"}, args...)...)
-	cmd.Stdin = bytes.NewReader(script)
+	cmd.Stdin = bytes.NewReader(m.script("install.sh"))
 	cmd.Env = []string{"PATH=" + path, "HOME=" + m.home, "TMPDIR=" + m.temp}
 	for name, value := range m.env {
 		cmd.Env = append(cmd.Env, name+"="+value)
@@ -523,33 +582,51 @@ func TestInstallShInstallsAndPinsTheVersionItIsGiven(t *testing.T) {
 	m.checkRegistered(binary, true)
 }
 
-// failures are the ways an install cannot go ahead, each with what the
-// installer asks the host for before it stops.
+// failures are the ways an install cannot go ahead, each with the reason both
+// installers give and what they ask the host for before they stop. None of
+// them asks GitHub instead.
 func failures() []struct {
-	name  string
-	setUp func(m *machine)
-	asked []string
+	name, reason string
+	setUp        func(m *machine)
+	asked        []string
 } {
 	latest := []string{"/stable", "/v0.3.1/" + archiveName(), "/v0.3.1/checksums.txt"}
 	return []struct {
-		name  string
-		setUp func(m *machine)
-		asked []string
+		name, reason string
+		setUp        func(m *machine)
+		asked        []string
 	}{
 		// One that unpacks to the right release, so that only the checksum
 		// can stop it.
-		{"an archive that does not match checksums.txt", func(m *machine) {
+		{"an archive that does not match checksums.txt", "does not match its checksums.txt", func(m *machine) {
 			archive := releaseArchive(m.t, map[string][]byte{exe("string"): release(m.t, "0.3.1"), "README.md": []byte("# changed\n")})
 			m.host.put("/v0.3.1/"+archiveName(), archive)
 		}, latest},
-		{"an archive that holds another release", func(m *machine) {
+		{"an archive that holds another release", "holds string 0.3.0", func(m *machine) {
 			m.host.publishArchive("0.3.1", holding(m.t, release(m.t, "0.3.0")))
 		}, latest},
-		{"a /stable that names no release", func(m *machine) { m.host.put("/stable", []byte("<html>\n")) }, []string{"/stable"}},
-		{"a STRING_VERSION that names no release", func(m *machine) { m.env["STRING_VERSION"] = "0.3" }, nil},
-		// The GitHub release has 0.2.0, which must not be fetched instead.
-		{"a release the host set by STRING_DOWNLOAD_URL lacks", func(m *machine) { m.env["STRING_VERSION"] = "0.2.0" }, []string{"/v0.2.0/" + archiveName()}},
+		{"a /stable that names no release", "does not name a release", func(m *machine) { m.host.put("/stable", []byte("<html>\n")) }, []string{"/stable"}},
+		{"a STRING_VERSION that names no release", "names no release", func(m *machine) { m.env["STRING_VERSION"] = "0.3" }, nil},
+		// GitHub's stand-in has 0.3.0 and 0.3.1 only, so a fallback that
+		// should not happen shows in what it is asked.
+		{"a release the host set by STRING_DOWNLOAD_URL lacks", "could not download", func(m *machine) { m.env["STRING_VERSION"] = "0.2.0" }, []string{"/v0.2.0/" + archiveName()}},
 	}
+}
+
+var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// mentions reports whether output says reason, wherever PowerShell wrapped
+// the line, and whatever gutter and colours it wrapped it with.
+func mentions(output, reason string) bool {
+	squeeze := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) || r == '|' {
+				return -1
+			}
+			return r
+		}, ansiEscape.ReplaceAllString(s, ""))
+	}
+	return strings.Contains(squeeze(output), squeeze(reason))
 }
 
 // checkUnchanged fails unless the copy at binary is still release 0.3.0, alone
@@ -567,6 +644,76 @@ func (m *machine) checkUnchanged(binary string) {
 	}
 }
 
+// choice is a release an installer picks: the version it installs, whether
+// it pins the copy to it, and what it asks the host and GitHub for.
+type choice struct {
+	name          string
+	setUp         func(m *machine)
+	want          string
+	pinned        bool
+	asked, github []string
+}
+
+// choices are made without STRING_DOWNLOAD_URL, so that the installers use
+// their default host and GitHub, except where a case sets it again.
+func choices() []choice {
+	files := func(dir string) []string { return []string{dir + "/" + archiveName(), dir + "/checksums.txt"} }
+	defaults := func(m *machine) { delete(m.env, "STRING_DOWNLOAD_URL") }
+	return []choice{
+		{"the release /stable names", defaults, "0.3.1", false, append([]string{"/stable"}, files("/v0.3.1")...), nil},
+		{"from GitHub, a release the host lacks", func(m *machine) {
+			defaults(m)
+			m.host.drop("/v0.3.1/" + archiveName())
+		}, "0.3.1", false, []string{"/stable", "/v0.3.1/" + archiveName()}, files("/download/v0.3.1")},
+		// While a release is rehearsed.
+		{"GitHub's latest over a pre-release /stable names", func(m *machine) {
+			defaults(m)
+			m.host.publish(m.t, "0.3.2-rc.1")
+			m.host.point("0.3.2-rc.1")
+		}, "0.3.1", false, []string{"/stable"}, files("/latest/download")},
+		{"a pre-release STRING_VERSION names", func(m *machine) {
+			defaults(m)
+			m.host.publish(m.t, "0.3.2-rc.1")
+			m.env["STRING_VERSION"] = "0.3.2-rc.1"
+		}, "0.3.2-rc.1", true, files("/v0.3.2-rc.1"), nil},
+		// How a rehearsal installs its release candidate through /stable.
+		{"a pre-release /stable names on the host STRING_DOWNLOAD_URL sets", func(m *machine) {
+			m.host.publish(m.t, "0.3.2-rc.1")
+			m.host.point("0.3.2-rc.1")
+		}, "0.3.2-rc.1", false, append([]string{"/stable"}, files("/v0.3.2-rc.1")...), nil},
+	}
+}
+
+// checkChoice fails unless binary is release c.want, registered as pinned or
+// not, and the installer asked each host for exactly what c lists.
+func (m *machine) checkChoice(binary string, c choice) {
+	m.t.Helper()
+	if got := versionAt(binary); got != "string "+c.want {
+		m.t.Errorf("%s reports %q, want string %s", binary, got, c.want)
+	}
+	if got := m.host.requested(); !slices.Equal(got, c.asked) {
+		m.t.Errorf("requests to the host %v, want %v", got, c.asked)
+	}
+	if got := m.github.requested(); !slices.Equal(got, c.github) {
+		m.t.Errorf("requests to GitHub %v, want %v", got, c.github)
+	}
+	m.checkRegistered(binary, c.pinned)
+}
+
+func TestInstallShChoosesTheReleaseAndWhereToGetIt(t *testing.T) {
+	skipUnlessUnix(t)
+	for _, check := range choices() {
+		t.Run(check.name, func(t *testing.T) {
+			m := newMachine(t)
+			check.setUp(m)
+			if ok, output := m.installSh("--no-init"); !ok {
+				t.Fatalf("install.sh failed:\n%s", output)
+			}
+			m.checkChoice(m.path(".local", "bin", "string"), check)
+		})
+	}
+}
+
 func TestInstallShChangesNothingWhenItCannotInstall(t *testing.T) {
 	skipUnlessUnix(t)
 	for _, check := range failures() {
@@ -575,11 +722,14 @@ func TestInstallShChangesNothingWhenItCannotInstall(t *testing.T) {
 			binary := m.path(".local", "bin", "string")
 			m.place(binary, release(t, "0.3.0"))
 			check.setUp(m)
-			if ok, output := m.installSh("--no-init"); ok {
-				t.Errorf("install.sh succeeded:\n%s", output)
+			if ok, output := m.installSh("--no-init"); ok || !mentions(output, check.reason) {
+				t.Errorf("install.sh succeeded (%t) or did not say %q:\n%s", ok, check.reason, output)
 			}
 			if got := m.host.requested(); !slices.Equal(got, check.asked) {
 				t.Errorf("requests %v, want %v", got, check.asked)
+			}
+			if got := m.github.requested(); len(got) > 0 {
+				t.Errorf("requests to GitHub %v", got)
 			}
 			m.checkUnchanged(binary)
 		})
@@ -732,10 +882,6 @@ func (m *machine) powershell(shell string, args ...string) (bool, string) {
 
 func TestInstallPs1InstallsTheLatestReleaseThroughIrmIex(t *testing.T) {
 	shells := findPowershells(t)
-	script, err := os.ReadFile("install.ps1")
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, check := range []struct{ name, shell string }{
 		{"Windows PowerShell", shells.windows},
 		{"PowerShell 7", shells.core},
@@ -745,7 +891,7 @@ func TestInstallPs1InstallsTheLatestReleaseThroughIrmIex(t *testing.T) {
 		t.Run(check.name, func(t *testing.T) {
 			kind, before := keepUserPath(t)
 			m := newMachine(t)
-			m.host.put("/install.ps1", script)
+			m.host.put("/install.ps1", m.script("install.ps1"))
 			m.env["STRING_NO_INIT"] = "1"
 			ok, output := m.powershell(check.shell, "-Command", "irm '"+m.host.url+"/install.ps1' | iex; (Get-Command string -CommandType Application).Source")
 			if !ok {
@@ -804,7 +950,7 @@ func TestInstallPs1ReplacesARunningCopyWithTheVersionItIsGiven(t *testing.T) {
 			dir := m.path("tools")
 			binary := filepath.Join(dir, "string.exe")
 			running := m.start(binary)
-			ok, output := m.powershell(check.shell, "-File", "install.ps1", "-Version", "v0.3.0", "-InstallDir", dir, "-Agent", "claude-code")
+			ok, output := m.powershell(check.shell, "-File", m.scriptFile("install.ps1"), "-Version", "v0.3.0", "-InstallDir", dir, "-Agent", "claude-code")
 			if !ok {
 				t.Fatalf("install.ps1 failed:\n%s", output)
 			}
@@ -830,7 +976,7 @@ func TestInstallPs1SucceedsWhenInitWritesToARedirectedStderr(t *testing.T) {
 	m := newMachine(t)
 	m.host.publishArchive("0.3.1", holding(t, thisBinary(t)))
 	m.env[noisyEnv] = m.home
-	ok, output := m.powershell(shells.windows, "-Command", `try { & .\install.ps1 *>&1 | Out-String } catch { $_; exit 1 }; exit 0`)
+	ok, output := m.powershell(shells.windows, "-Command", "try { & '"+m.scriptFile("install.ps1")+"' *>&1 | Out-String } catch { $_; exit 1 }; exit 0")
 	if !ok {
 		t.Fatalf("install.ps1 failed:\n%s", output)
 	}
@@ -852,14 +998,67 @@ func TestInstallPs1ChangesNothingWhenItCannotInstall(t *testing.T) {
 				m.place(binary, release(t, "0.3.0"))
 				m.env["STRING_NO_INIT"] = "1"
 				check.setUp(m)
-				if ok, output := m.powershell(shell.path, "-File", "install.ps1"); ok {
-					t.Errorf("install.ps1 succeeded:\n%s", output)
+				if ok, output := m.powershell(shell.path, "-File", m.scriptFile("install.ps1")); ok || !mentions(output, check.reason) {
+					t.Errorf("install.ps1 succeeded (%t) or did not say %q:\n%s", ok, check.reason, output)
 				}
 				if got := m.host.requested(); !slices.Equal(got, check.asked) {
 					t.Errorf("requests %v, want %v", got, check.asked)
 				}
+				if got := m.github.requested(); len(got) > 0 {
+					t.Errorf("requests to GitHub %v", got)
+				}
 				m.checkUnchanged(binary)
 			})
+		}
+	}
+}
+
+// One PowerShell is enough here: the choice is the script's own logic.
+func TestInstallPs1ChoosesTheReleaseAndWhereToGetIt(t *testing.T) {
+	shells := findPowershells(t)
+	for _, check := range choices() {
+		t.Run(check.name, func(t *testing.T) {
+			keepUserPath(t)
+			m := newMachine(t)
+			m.env["STRING_NO_INIT"] = "1"
+			check.setUp(m)
+			if ok, output := m.powershell(shells.windows, "-File", m.scriptFile("install.ps1")); !ok {
+				t.Fatalf("install.ps1 failed:\n%s", output)
+			}
+			m.checkChoice(m.path(".local", "bin", "string.exe"), check)
+		})
+	}
+}
+
+// install.ps1 takes the machine's CPU from the system's environment in the
+// registry, which Windows does not redirect for a 32-bit process, so x86
+// PowerShell reads the machine's own CPU there, also on Arm.
+func TestWindowsPowerShellAsX86ReadsTheMachinesCPUFromTheRegistry(t *testing.T) {
+	shells := findPowershells(t)
+	output, err := exec.Command(shells.x86, "-NoProfile", "-NonInteractive", "-Command",
+		`[Environment]::Is64BitProcess; `+
+			`[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment').GetValue('PROCESSOR_ARCHITECTURE')`).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Fields(string(output)), []string{"False", strings.ToUpper(runtime.GOARCH)}; !slices.Equal(got, want) {
+		t.Errorf("Windows PowerShell as x86 prints %v, want %v", got, want)
+	}
+}
+
+// Windows PowerShell reads a script file that has no byte-order mark in the
+// machine's ANSI code page, so the installers keep to ASCII.
+func TestInstallersAreASCII(t *testing.T) {
+	for _, name := range []string{"install.sh", "install.ps1"} {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, b := range data {
+			if b > 0x7f {
+				t.Errorf("%s has byte %#x on line %d", name, b, bytes.Count(data[:i], []byte("\n"))+1)
+				break
+			}
 		}
 	}
 }
