@@ -331,6 +331,9 @@ var errUpdateRunning = errors.New("another update is running")
 // a stale lock can be renamed aside on Windows.
 type updateLock struct {
 	path string
+	// file is from File.Stat on the handle that created the lock. On Windows
+	// only a FileInfo from a handle holds the file's identity for os.SameFile;
+	// one from os.Stat finds the file again by its path.
 	file os.FileInfo
 }
 
@@ -360,7 +363,7 @@ func takeUpdateLock(path string) (*updateLock, error) {
 		if err != nil {
 			continue
 		}
-		if time.Since(held.ModTime()) < staleAfter {
+		if !staleLock(held.ModTime()) {
 			return nil, errUpdateRunning
 		}
 		aside := path + "." + randomSuffix() + ".stale"
@@ -369,13 +372,24 @@ func takeUpdateLock(path string) (*updateLock, error) {
 		}
 		// Another process may have taken the stale lock over between the
 		// check and the rename, so what was moved aside could be its live one.
-		if moved, err := os.Stat(aside); err != nil || !os.SameFile(held, moved) {
+		// The rename kept the file's modification time, which tells the two
+		// apart. os.SameFile cannot: on Windows it finds a file from os.Stat
+		// again by its path, and that path has just been moved.
+		if moved, err := os.Stat(aside); err != nil || !staleLock(moved.ModTime()) {
 			os.Rename(aside, path)
 			return nil, errUpdateRunning
 		}
 		os.Remove(aside)
 	}
 	return nil, errUpdateRunning
+}
+
+// staleLock reports whether a lock last modified at t was left by an update
+// that is gone: it is older than any update runs, or as far in the future,
+// as a clock that was wrong when the lock was made leaves it.
+func staleLock(t time.Time) bool {
+	age := time.Since(t)
+	return age >= staleAfter || age <= -staleAfter
 }
 
 // release removes the lock, unless another update has since taken it over.

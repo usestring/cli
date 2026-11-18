@@ -624,13 +624,22 @@ func TestUpdateLeavesWhileAnotherUpdateHoldsTheLockAndTakesOverAStaleOne(t *test
 	host := newUpdateHost(t)
 	host.point("0.3.1")
 	host.add(t, goodRelease(t, "0.3.1", seed))
-	c := newTestCopy(t, host, []ed25519.PublicKey{public}, ".local/bin")
-	c.run("update", "--register")
-	lock := c.file("update.lock")
-	if err := os.WriteFile(lock, nil, 0o600); err != nil {
-		t.Fatal(err)
+	// locked is a registered copy whose update.lock was last modified at made.
+	locked := func(made time.Time) (*testCopy, string) {
+		t.Helper()
+		c := newTestCopy(t, host, []ed25519.PublicKey{public}, ".local/bin")
+		c.run("update", "--register")
+		lock := c.file("update.lock")
+		if err := os.WriteFile(lock, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(lock, made, made); err != nil {
+			t.Fatal(err)
+		}
+		return c, lock
 	}
 
+	c, _ := locked(time.Now())
 	if got := c.run("update", "--background"); got.status != 0 || got.output+got.errors != "" || len(host.requested()) > 0 || c.state() != (updateState{}) {
 		t.Errorf("the background update ran beside a live lock: %+v, requests %v, state %+v", got, host.requested(), c.state())
 	}
@@ -638,18 +647,20 @@ func TestUpdateLeavesWhileAnotherUpdateHoldsTheLockAndTakesOverAStaleOne(t *test
 		t.Errorf("string update ran beside a live lock: %+v", got)
 	}
 
-	gone := time.Now().Add(-staleAfter - time.Minute)
-	if err := os.Chtimes(lock, gone, gone); err != nil {
-		t.Fatal(err)
-	}
-	if got := c.run("update", "--background"); got.status != 0 || c.installed() != "string 0.3.1\n" {
-		t.Errorf("the background update did not take over a stale lock: %+v, state %+v", got, c.state())
-	}
-	if _, err := os.Stat(lock); !os.IsNotExist(err) {
-		t.Errorf("the lock is still there after the update: %v", err)
-	}
-	if entries, _ := os.ReadDir(filepath.Dir(lock)); slices.ContainsFunc(entries, func(e os.DirEntry) bool { return strings.HasPrefix(e.Name(), "update.lock.") }) {
-		t.Errorf("the stale lock was left aside: %v", entries)
+	for _, made := range []time.Time{
+		time.Now().Add(-staleAfter - time.Minute), // by an update that was killed
+		time.Now().Add(staleAfter + time.Minute),  // while the clock was ahead
+	} {
+		c, lock := locked(made)
+		if got := c.run("update", "--background"); got.status != 0 || c.installed() != "string 0.3.1\n" {
+			t.Errorf("the background update did not take over a lock made at %v: %+v, state %+v", made, got, c.state())
+		}
+		if _, err := os.Stat(lock); !os.IsNotExist(err) {
+			t.Errorf("the lock made at %v is still there after the update: %v", made, err)
+		}
+		if entries, _ := os.ReadDir(filepath.Dir(lock)); slices.ContainsFunc(entries, func(e os.DirEntry) bool { return strings.HasPrefix(e.Name(), "update.lock.") }) {
+			t.Errorf("the lock made at %v was left aside: %v", made, entries)
+		}
 	}
 }
 
