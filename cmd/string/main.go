@@ -30,7 +30,7 @@ func main() {
 	// Node's fetch gives up on a response that sends no headers for five
 	// minutes; without this a stalled request would hang forever.
 	transport.ResponseHeaderTimeout = 5 * time.Minute
-	os.Exit(run(os.Args[1:], runtime{
+	rt := runtime{
 		env:      os.LookupEnv,
 		lookPath: exec.LookPath,
 		client:   &http.Client{Transport: transport},
@@ -42,7 +42,11 @@ func main() {
 		program:  runProgram,
 		terminal: isTerminal(os.Stdin),
 		progress: isTerminal(os.Stderr),
-	}))
+		spawn:    spawnDetached,
+	}
+	status := run(os.Args[1:], rt)
+	afterCommand(os.Args[1:], rt)
+	os.Exit(status)
 }
 
 // runProgram runs name with args and returns what it printed. The deadline

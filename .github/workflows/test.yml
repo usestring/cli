@@ -58,12 +58,15 @@ jobs:
             echo "::error::TestTheTerminalTheTestsRunFromIsATerminal did not pass, so nothing shows that a real terminal counts as one here."
             exit 1
           fi
-      # Windows runs the terminal tests alone. Other tests check that the files
-      # holding a key are mode 0600 (run_test.go, trial_test.go), which no file
-      # on Windows is, so go test ./... cannot pass there. The test that a real
-      # terminal counts as one is skipped if the runner gives the step no
-      # console; the log says which.
+      # Windows runs the release package's tests, the terminal tests and the
+      # update tests, which replace a binary while it runs, as Windows makes
+      # hard. Other tests check that the files holding a key are mode 0600
+      # (run_test.go, trial_test.go), which no file on Windows is, so go test
+      # ./... cannot pass there. The test that a real terminal counts as one is
+      # skipped if the runner gives the step no console; the log says which.
       - if: runner.os == 'Windows'
         run: go build ./...
       - if: runner.os == 'Windows'
-        run: go test ./cmd/string -run 'Terminal|NullDevice' -count=1 -v
+        run: go test ./internal/... -count=1
+      - if: runner.os == 'Windows'
+        run: go test ./cmd/string -run 'Terminal|NullDevice|Update' -count=1 -v
