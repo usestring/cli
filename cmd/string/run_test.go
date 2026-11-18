@@ -447,7 +447,7 @@ func TestInitInstallsTheSkillForDetectedAgentsOnly(t *testing.T) {
 		stderr:   &stderr,
 	}
 
-	if status := run([]string{"init"}, rt); status != 0 {
+	if status := run([]string{"init", "--no-login"}, rt); status != 0 {
 		t.Fatalf("status %d: %s", status, stderr.String())
 	}
 	for _, dir := range []string{".agents/skills", ".claude/skills"} {
