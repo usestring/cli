@@ -1,15 +1,105 @@
-# Publishes a release when a v* tag is pushed: GitHub release assets and Linux
-# packages, the source archive the Homebrew formula builds from and the Docker
-# image, then npm in a job of its own. If npm fails, "Re-run failed jobs"
-# publishes what npm is missing without touching the GitHub release.
+# Releases the CLI. Pushing a v* tag builds the release, publishes it to the
+# download host and installs it from there on every system it has a build for,
+# then, for a version without a pre-release suffix, points /stable at it.
+# Running the workflow by hand on a release's tag publishes and installs that
+# release again and, with promote, points /stable at it, which can move
+# /stable back:
+#
+#   gh workflow run release.yml --ref v0.3.1 -f promote=true
+#
+# docs/releasing.md says what each job does and what to re-run when one fails.
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: Point /stable at this tag's version, even when that moves it back
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  HOST: https://cli.usestring.ai
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  # What can be checked before anything is built: the tag, that its commit is
+  # on main, that it has both installers, and the release environment's keys.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Check the tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "::error::$GITHUB_REF is not a tag. Run this workflow on a release's tag, as in: gh workflow run release.yml --ref v0.3.1"
+            exit 1
+          fi
+          if ! tag=$(go run ./tools/release tag "$GITHUB_REF_NAME" 2>"$RUNNER_TEMP/error"); then
+            echo "::error::$(cat "$RUNNER_TEMP/error")"
+            exit 1
+          fi
+          echo "$tag" | tee -a "$GITHUB_OUTPUT"
+          # With squash merges, a commit tagged on a branch never reaches main.
+          commit=$(git rev-parse "$GITHUB_REF^{commit}")
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is on $commit, which is not on main. Tag a commit of main."
+            exit 1
+          fi
+          for file in install.sh install.ps1; do
+            if [ ! -f "$file" ]; then
+              echo "::error::$GITHUB_REF_NAME has no $file, which the download host serves from each release, so this workflow cannot release it."
+              exit 1
+            fi
+          done
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && ! gh release view "$GITHUB_REF_NAME" >/dev/null; then
+            echo "::error::$GITHUB_REF_NAME has no GitHub release to publish. Pushing the tag makes one."
+            exit 1
+          fi
+      - name: Check the signing keys
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_KEY_PREVIOUS: ${{ secrets.RELEASE_SIGNING_KEY_PREVIOUS }}
+        run: |
+          if ! keys=$(go run ./tools/release keys 2>&1); then
+            echo "::error::$keys"
+            exit 1
+          fi
+          echo "$keys"
+      - name: Check the R2 keys
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: tools/release/host.sh check
+
+  # The GitHub release with its archives and packages, and the image. A run by
+  # hand starts after this, on a release that exists.
   release:
+    needs: check
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -35,6 +125,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A rehearsal's tag and the release's can name one commit.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
       # The npm job builds its packages from these binaries.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -46,8 +138,12 @@ jobs:
             dist/*/string.exe
           if-no-files-found: error
 
+  # If npm fails, "Re-run failed jobs" publishes what npm is missing without
+  # touching the GitHub release. npm makes each version it publishes its
+  # latest, so a pre-release does not go there.
   npm:
-    needs: release
+    needs: [check, release]
+    if: needs.check.outputs.prerelease == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -87,3 +183,262 @@ jobs:
             npm publish "$dir" --access public --provenance
           done
           npm deprecate "@usestring/cli@<0.2.0" "This is the old Node CLI, which needs STRING_API_KEY. Install the current one: npm install -g @usestring/cli@latest"
+
+  # Puts the release on the download host for good: /vVERSION/ gets every
+  # asset of the GitHub release, and the manifest and its signatures, which
+  # are attached to the GitHub release as well. Each file is then read back
+  # through the host.
+  publish:
+    needs: [check, release]
+    if: ${{ !cancelled() && needs.check.result == 'success' && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    outputs:
+      stable: ${{ steps.stable.outputs.stable }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Check the R2 keys
+        run: tools/release/host.sh check
+      - name: Download the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/release"
+          gh release view "$GITHUB_REF_NAME" --json publishedAt --jq .publishedAt > "$RUNNER_TEMP/published"
+      # The manifest gives the time the GitHub release was published, so a
+      # re-run builds the same bytes, and Ed25519 the same signatures.
+      - name: Sign the manifest
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_KEY_PREVIOUS: ${{ secrets.RELEASE_SIGNING_KEY_PREVIOUS }}
+        run: |
+          signed="$RUNNER_TEMP/signed"
+          mkdir "$signed"
+          go run ./tools/release manifest "$RUNNER_TEMP/release" "$VERSION" "$(cat "$RUNNER_TEMP/published")" > "$signed/manifest.json"
+          go run ./tools/release sign "$signed/manifest.json" > "$signed/manifest.json.sig"
+          go run ./tools/release verify "$signed/manifest.json" "$signed/manifest.json.sig"
+      - name: Attach the manifest to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for name in manifest.json manifest.json.sig; do
+            attached="$RUNNER_TEMP/release/$name"
+            if [ ! -f "$attached" ]; then
+              gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/signed/$name"
+              cp "$RUNNER_TEMP/signed/$name" "$attached"
+            elif ! cmp -s "$attached" "$RUNNER_TEMP/signed/$name"; then
+              echo "::error::The GitHub release has a $name other than the one this run made, and a published file is never replaced."
+              exit 1
+            fi
+          done
+      - name: Publish to the download host
+        run: tools/release/host.sh publish "$VERSION" "$RUNNER_TEMP/release"
+      - name: Read /stable
+        id: stable
+        run: |
+          tools/release/host.sh stable "$RUNNER_TEMP/stable"
+          echo "stable=$(cat "$RUNNER_TEMP/stable")" >> "$GITHUB_OUTPUT"
+
+  # Installs the release from the download host with the tag's own installers
+  # and updates to it from the version /stable names. Each installer is told
+  # the host's address: without it, it would turn to the GitHub release and
+  # hide a host that fails.
+  smoke:
+    needs: [check, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-26-intel, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    # A macOS job is now and then given no machine and is cancelled at its
+    # limit with no step run. A longer limit only delays the re-run that
+    # fixes it, as docs/releasing.md says.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 20 || 15 }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      STABLE: ${{ needs.publish.outputs.stable }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install this release
+        if: runner.os != 'Windows'
+        run: |
+          root="$RUNNER_TEMP/install"
+          mkdir -p "$root"
+          export HOME="$root" XDG_CONFIG_HOME="$root/.config" STRING_DOWNLOAD_URL="$HOST"
+          STRING_VERSION="$VERSION" sh install.sh --no-init
+          got=$("$root/.local/bin/string" --version)
+          if [ "$got" != "string $VERSION" ]; then
+            echo "::error::The installed copy says $got."
+            exit 1
+          fi
+          "$root/.local/bin/string" update --check
+      - name: Update to this release from the version /stable names
+        if: runner.os != 'Windows' && env.STABLE != '' && env.STABLE != env.VERSION
+        run: |
+          root="$RUNNER_TEMP/update"
+          mkdir -p "$root"
+          export HOME="$root" XDG_CONFIG_HOME="$root/.config" STRING_DOWNLOAD_URL="$HOST"
+          STRING_VERSION="$STABLE" sh install.sh --no-init
+          "$root/.local/bin/string" update --version "$VERSION"
+          got=$("$root/.local/bin/string" --version)
+          if [ "$got" != "string $VERSION" ]; then
+            echo "::error::string $STABLE did not update to $VERSION. It says $got."
+            exit 1
+          fi
+      - name: Install this release
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'install'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $env:HOME = $root
+          $env:USERPROFILE = $root
+          $env:XDG_CONFIG_HOME = Join-Path $root '.config'
+          $env:STRING_DOWNLOAD_URL = $env:HOST
+          $env:STRING_VERSION = $env:VERSION
+          $env:STRING_NO_INIT = '1'
+          Get-Content -Raw install.ps1 | Invoke-Expression
+          $string = Join-Path $root '.local\bin\string.exe'
+          $got = & $string --version
+          if ($got -ne "string $env:VERSION") { throw "The installed copy says $got." }
+          & $string update --check
+          if ($LASTEXITCODE -ne 0) { throw "string update --check exited with $LASTEXITCODE." }
+      - name: Update to this release from the version /stable names
+        if: runner.os == 'Windows' && env.STABLE != '' && env.STABLE != env.VERSION
+        shell: powershell
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'update'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $env:HOME = $root
+          $env:USERPROFILE = $root
+          $env:XDG_CONFIG_HOME = Join-Path $root '.config'
+          $env:STRING_DOWNLOAD_URL = $env:HOST
+          $env:STRING_VERSION = $env:STABLE
+          $env:STRING_NO_INIT = '1'
+          Get-Content -Raw install.ps1 | Invoke-Expression
+          $string = Join-Path $root '.local\bin\string.exe'
+          & $string update --version $env:VERSION
+          if ($LASTEXITCODE -ne 0) { throw "string update --version exited with $LASTEXITCODE." }
+          $got = & $string --version
+          if ($got -ne "string $env:VERSION") { throw "string $env:STABLE did not update to $env:VERSION. It says $got." }
+
+  # Points /stable at the release, after the installers that came with it. By
+  # itself, on a tag push, it only moves /stable forward, and never to a
+  # pre-release; release promote decides.
+  promote:
+    needs: [check, smoke]
+    if: ${{ !cancelled() && needs.smoke.result == 'success' && ((github.event_name == 'push' && needs.check.outputs.prerelease == 'false') || (github.event_name == 'workflow_dispatch' && inputs.promote)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: stable
+    # One at a time, and never cancelled once it runs. docs/releasing.md says
+    # what becomes of one still waiting when another release comes.
+    concurrency:
+      group: release-promote
+      cancel-in-progress: false
+    outputs:
+      previous: ${{ steps.move.outputs.previous }}
+      moved: ${{ steps.move.outputs.moved }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Check the R2 keys
+        run: tools/release/host.sh check
+      - name: Move /stable
+        id: move
+        run: |
+          tools/release/host.sh stable "$RUNNER_TEMP/previous"
+          previous=$(cat "$RUNNER_TEMP/previous")
+          if ! moved=$(go run ./tools/release promote "$GITHUB_EVENT_NAME" "$VERSION" "$previous" 2>"$RUNNER_TEMP/error"); then
+            echo "::error::$(cat "$RUNNER_TEMP/error")"
+            exit 1
+          fi
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          echo "moved=$moved" >> "$GITHUB_OUTPUT"
+          # Whatever /stable names is then installed by the installers that
+          # came with it.
+          tools/release/host.sh put install.sh install.sh
+          tools/release/host.sh put install.ps1 install.ps1
+          printf '%s\n' "$VERSION" > "$RUNNER_TEMP/stable"
+          tools/release/host.sh put stable "$RUNNER_TEMP/stable"
+
+  # A copy of the version /stable named before, installed with the hosted
+  # installer as people install it, must update itself to the release.
+  live:
+    needs: [check, promote]
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.promote.outputs.moved == 'forward' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-26-intel, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 20 || 15 }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      PREVIOUS: ${{ needs.promote.outputs.previous }}
+    steps:
+      # The host's first answers can lag the move by a few minutes, and string
+      # update reads /stable through it, so each is tried for six.
+      - name: Update from the version before
+        if: runner.os != 'Windows'
+        run: |
+          root="$RUNNER_TEMP/live"
+          mkdir -p "$root"
+          export HOME="$root" XDG_CONFIG_HOME="$root/.config" STRING_DOWNLOAD_URL="$HOST"
+          curl -fsSL --retry 24 --retry-delay 15 --retry-all-errors "$HOST/install.sh" | STRING_VERSION="$PREVIOUS" sh -s -- --no-init
+          for _ in $(seq 24); do
+            "$root/.local/bin/string" update || true
+            got=$("$root/.local/bin/string" --version)
+            if [ "$got" = "string $VERSION" ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::string $PREVIOUS did not update to $VERSION. It says $got."
+          exit 1
+      - name: Update from the version before
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'live'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $env:HOME = $root
+          $env:USERPROFILE = $root
+          $env:XDG_CONFIG_HOME = Join-Path $root '.config'
+          $env:STRING_DOWNLOAD_URL = $env:HOST
+          $env:STRING_VERSION = $env:PREVIOUS
+          $env:STRING_NO_INIT = '1'
+          for ($try = 1; ; $try++) {
+            try { $installer = Invoke-RestMethod "$env:HOST/install.ps1"; break }
+            catch { if ($try -ge 24) { throw }; Start-Sleep -Seconds 15 }
+          }
+          Invoke-Expression $installer
+          $string = Join-Path $root '.local\bin\string.exe'
+          for ($try = 0; $try -lt 24; $try++) {
+            & $string update
+            $got = & $string --version
+            if ($got -eq "string $env:VERSION") { exit 0 }
+            Start-Sleep -Seconds 15
+          }
+          throw "string $env:PREVIOUS did not update to $env:VERSION. It says $got."

@@ -42,6 +42,10 @@ release:
   github:
     owner: usestring
     name: cli
+  # A tag with a pre-release suffix, as v0.3.0-rc.1, makes a pre-release,
+  # which releases/latest passes over, and with it the installers when they
+  # turn to GitHub.
+  prerelease: auto
 
 nfpms:
   - package_name: string
@@ -55,7 +59,8 @@ nfpms:
 
 dockers_v2:
   - images: [ghcr.io/usestring/cli]
-    tags: ["{{ .Version }}", latest]
+    # latest for a release alone; the empty tag a pre-release gets is dropped.
+    tags: ["{{ .Version }}", "{{ if not .Prerelease }}latest{{ end }}"]
     platforms: [linux/amd64, linux/arm64]
     labels:
       org.opencontainers.image.source: https://github.com/usestring/cli
