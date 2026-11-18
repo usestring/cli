@@ -330,7 +330,7 @@ func deviceToken(rt runtime, deviceCode string, interval, lifetime time.Duration
 		case "slow_down":
 			interval += 5 * time.Second
 		case "access_denied":
-			return "", &failure{exit: exitAuth, code: "login_denied", message: "Sign-in was denied"}
+			return "", errLoginDenied
 		case "expired_token":
 			return "", errLoginExpired
 		default:
@@ -340,7 +340,10 @@ func deviceToken(rt runtime, deviceCode string, interval, lifetime time.Duration
 	return "", errLoginExpired
 }
 
-var errLoginExpired = &failure{exit: exitAuth, code: "login_expired", message: "The code expired; run string login again"}
+var (
+	errLoginExpired = &failure{exit: exitAuth, code: "login_expired", message: "The code expired; run string login again"}
+	errLoginDenied  = &failure{exit: exitAuth, code: "login_denied", message: "Sign-in was denied"}
+)
 
 func loginCommand(list []string, rt runtime) error {
 	modes := []string{"--with-token", "--no-wait", "--poll"}
@@ -352,14 +355,14 @@ func loginCommand(list []string, rt runtime) error {
 		}
 		return false
 	})
-	parsed, err := parseArgs(list, "env-file")
+	parsed, err := parse(list, spec{options: []string{"env-file"}, switches: []string{"browser"}})
 	if err != nil {
 		return usage(err)
 	}
 	if parsed.help {
 		return write(rt.stdout, []byte(help))
 	}
-	if err := expectPositionals(parsed.positionals, 0, "string login [--with-token | --no-wait | --poll] [--env-file PATH]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 0, "string login [--with-token | --no-wait | --poll] [--browser] [--env-file PATH]"); err != nil {
 		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
@@ -367,6 +370,10 @@ func loginCommand(list []string, rt runtime) error {
 	}
 	if len(chosen) > 1 {
 		return usage(errors.New("Use only one of --with-token, --no-wait and --poll"))
+	}
+	browser := parsed.switches["browser"]
+	if browser && slices.Contains(chosen, "--with-token") {
+		return usage(errors.New("--browser does not apply to --with-token"))
 	}
 	envFile, err := envFileOption(parsed)
 	if err != nil {
@@ -378,10 +385,10 @@ func loginCommand(list []string, rt runtime) error {
 	case slices.Contains(chosen, "--poll"):
 		return finishPending(rt, envFile)
 	case slices.Contains(chosen, "--no-wait") || rt.json || !rt.terminal:
-		_, err := startSignIn(rt, false, envFile)
+		_, err := startSignIn(rt, browser, false, envFile)
 		return err
 	}
-	return signIn(rt, envFile)
+	return signIn(rt, browser, envFile)
 }
 
 // saveToken saves a key read from stdin, so it never appears in argv or the
@@ -440,12 +447,15 @@ func saveToken(rt runtime, envFile string) error {
 	return write(rt.stdout, []byte(report.String()))
 }
 
-// pendingLogin is a device code waiting for approval. string login saves it so
-// string login --poll can finish a sign-in that an earlier command started.
+// pendingLogin is a sign-in waiting for approval: a device code, or a browser
+// sign-in's session id and verifier. string login saves it so string login
+// --poll can finish a sign-in that an earlier command started.
 type pendingLogin struct {
-	DeviceCode string    `json:"deviceCode"`
-	Interval   int       `json:"interval"`
-	ExpiresAt  time.Time `json:"expiresAt"`
+	DeviceCode   string    `json:"deviceCode,omitempty"`
+	SessionID    string    `json:"sessionId,omitempty"`
+	CodeVerifier string    `json:"codeVerifier,omitempty"`
+	Interval     int       `json:"interval"`
+	ExpiresAt    time.Time `json:"expiresAt"`
 	// EnvFile is where --env-file asked for the key when the sign-in started.
 	EnvFile string `json:"envFile,omitempty"`
 }
@@ -455,18 +465,23 @@ func pendingPath(env func(string) (string, bool)) (string, bool) {
 	return filepath.Join(filepath.Dir(path), "pending.json"), ok
 }
 
-// signIn waits in the foreground for the person to approve.
-func signIn(rt runtime, envFile string) error {
-	pending, err := startSignIn(rt, true, envFile)
+// signIn waits in the foreground for the person to approve. browser picks
+// the sign-in of string login --browser over a device code.
+func signIn(rt runtime, browser bool, envFile string) error {
+	pending, err := startSignIn(rt, browser, true, envFile)
 	if err != nil {
 		return err
 	}
 	return finishSignIn(rt, pending)
 }
 
-// startSignIn asks for a device code, saves it as pending and shows the person
-// where to approve it. wait says whether this command goes on to wait.
-func startSignIn(rt runtime, wait bool, envFile string) (pendingLogin, error) {
+// startSignIn asks for a device code, or with browser makes a browser
+// sign-in, saves it as pending and shows the person where to approve it. wait
+// says whether this command goes on to wait.
+func startSignIn(rt runtime, browser, wait bool, envFile string) (pendingLogin, error) {
+	if browser {
+		return startBrowserSignIn(rt, wait, envFile)
+	}
 	if oauthClientID == "" {
 		return pendingLogin{}, &failure{exit: exitAuth, code: "login_unavailable", message: "This build of string cannot sign in through the browser. Set STRING_API_KEY, or pipe a key to string login --with-token. Keys are at https://portal.usestring.ai/api-keys."}
 	}
@@ -557,7 +572,7 @@ func finishPending(rt runtime, envFile string) error {
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, &pending); err != nil || pending.DeviceCode == "" {
+	if err := json.Unmarshal(data, &pending); err != nil || (pending.DeviceCode == "" && pending.SessionID == "") {
 		os.Remove(path)
 		return usage(errors.New("The waiting sign-in could not be read. Run string login --no-wait again."))
 	}
@@ -567,9 +582,12 @@ func finishPending(rt runtime, envFile string) error {
 	return finishSignIn(rt, pending)
 }
 
-// finishSignIn waits for approval of a pending device code, then fetches and
-// saves the key. The pending code is dropped once it can no longer succeed.
+// finishSignIn waits for approval of a pending sign-in, then fetches and saves
+// the key. A device code is dropped once it can no longer succeed.
 func finishSignIn(rt runtime, pending pendingLogin) error {
+	if pending.SessionID != "" {
+		return finishBrowserSignIn(rt, pending)
+	}
 	pendingFile, _ := pendingPath(rt.env)
 	path, ok := credentialsPath(rt.env)
 	if !ok {
@@ -599,7 +617,17 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 	if status, _, err := getWithToken(rt, authURL+"/oauth/userinfo", token, &profile); err == nil && status == http.StatusOK {
 		saved.Email = profile.Email
 	}
-	if err := keepKey(path, saved, pending.EnvFile); err != nil {
+	who := ""
+	if saved.Email != "" {
+		who = " as " + saved.Email
+	}
+	return loggedIn(rt, path, saved, pending.EnvFile, who, map[string]string{"email": saved.Email})
+}
+
+// loggedIn saves the key a sign-in returned and says so. who names the account
+// in the message, as in " as dev@localhost", and fields name it in the JSON.
+func loggedIn(rt runtime, path string, saved credentials, envFile, who string, fields map[string]string) error {
+	if err := keepKey(path, saved, envFile); err != nil {
 		return err
 	}
 	// STRING_API_KEY wins over the key just saved. Someone who signed in to
@@ -613,18 +641,14 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 		if inUse != "" {
 			fmt.Fprint(rt.stderr, inUse)
 		}
-		fields := map[string]string{"status": "logged_in", "email": saved.Email, "credentials": path}
-		if pending.EnvFile != "" {
-			fields["env_file"] = pending.EnvFile
+		fields["status"], fields["credentials"] = "logged_in", path
+		if envFile != "" {
+			fields["env_file"] = envFile
 		}
 		shown, _ := json.Marshal(fields)
 		return write(rt.stdout, append(shown, '\n'))
 	}
-	who := ""
-	if saved.Email != "" {
-		who = " as " + saved.Email
-	}
-	return write(rt.stdout, []byte(fmt.Sprintf("Logged in%s. The key is saved in %s.\n%s%s", who, path, envFileNote(pending.EnvFile), inUse)))
+	return write(rt.stdout, []byte(fmt.Sprintf("Logged in%s. The key is saved in %s.\n%s%s", who, path, envFileNote(envFile), inUse)))
 }
 
 // keyPauses are the waits before the second, third and fourth tries of the key

@@ -128,14 +128,14 @@ func targets(names string, home string, env func(string) (string, bool)) ([]agen
 }
 
 func initCommand(list []string, rt runtime) error {
-	parsed, err := parse(list, spec{options: []string{"agent"}, switches: []string{"no-mcp", "no-login"}})
+	parsed, err := parse(list, spec{options: []string{"agent"}, switches: []string{"no-mcp", "no-login", "browser"}})
 	if err != nil {
 		return usage(err)
 	}
 	if parsed.help {
 		return write(rt.stdout, []byte(help))
 	}
-	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login] [--browser]"); err != nil {
 		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
@@ -170,6 +170,7 @@ func initCommand(list []string, rt runtime) error {
 	// A person who pipes install.sh into sh reads stderr at a terminal, and starts keyless.
 	captured := !rt.progress && !inCI(rt.env)
 	if oauthClientID != "" && !parsed.switches["no-login"] && (rt.terminal || captured) {
+		browser := parsed.switches["browser"]
 		var err error
 		if rt.terminal {
 			report.WriteString("\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\n")
@@ -177,7 +178,7 @@ func initCommand(list []string, rt runtime) error {
 				return err
 			}
 			report.Reset()
-			err = signIn(rt, "")
+			err = signIn(rt, browser, "")
 		} else {
 			// Nobody approves while init waits under an agent, so init hands
 			// back the link and code, as string login does there, and
@@ -185,7 +186,7 @@ func initCommand(list []string, rt runtime) error {
 			var started bytes.Buffer
 			text := rt
 			text.json, text.stdout = false, &started
-			if _, err = startSignIn(text, false, ""); err == nil {
+			if _, err = startSignIn(text, browser, false, ""); err == nil {
 				fmt.Fprintf(&report, "\nSigning in. string fetch and string search already work without a key, within a daily allowance. For more:\n%s", started.Bytes())
 				return write(rt.stdout, []byte(report.String()))
 			}
@@ -201,6 +202,9 @@ func initCommand(list []string, rt runtime) error {
 		switch refused.code {
 		case "login_expired":
 			why = "the code expired"
+			if browser {
+				why = "the link expired"
+			}
 		case "login_denied":
 			why = "it was denied"
 		}
