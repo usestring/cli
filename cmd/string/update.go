@@ -185,7 +185,7 @@ func switchedOff(env func(string) (string, bool)) string {
 	if value, _ := env("STRING_AUTO_UPDATE"); slices.Contains([]string{"0", "false", "off", "no"}, strings.ToLower(strings.TrimSpace(value))) {
 		return "STRING_AUTO_UPDATE is " + value
 	}
-	if value, _ := env("CI"); value != "" {
+	if inCI(env) {
 		return "CI is set"
 	}
 	return ""

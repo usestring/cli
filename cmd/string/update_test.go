@@ -688,8 +688,14 @@ func TestUpdateCheckReportsHowThisCopyIsUpdated(t *testing.T) {
 	}
 	c.run("update", "--register")
 	c.env["CI"] = "true"
-	if report := check(c); report["updates"] != "off" {
+	if report := check(c); report["updates"] != "off" || report["reason"] != "CI is set" {
 		t.Errorf("in CI: %v", report)
+	}
+	for _, value := range []string{"false", "0"} {
+		c.env["CI"] = value
+		if report := check(c); report["updates"] != "automatic" {
+			t.Errorf("with CI=%s: %v", value, report)
+		}
 	}
 	brew := newTestCopy(t, host, []ed25519.PublicKey{public}, "Cellar/string/0.3.0/bin")
 	if report := check(brew); report["install"] != "homebrew" || report["updates"] != "notify" || report["command"] != "brew upgrade usestring/cli/string" {

@@ -159,7 +159,7 @@ From 0.3.0, `string update` puts the latest release in place of the binary that 
 
 A copy that the install script installed checks for a new release once a day and installs it in the background after a command has finished, without changing that command's output or exit code. The next command run at a terminal says it did. Any other copy only says, at a terminal, that a release is out and how to update. The daily check asks `https://cli.usestring.ai/stable` which release is the latest, and fetches a release's manifest, signature and archive from the same host only to install it. Each request carries the version of `string`, the system and the CPU type in its `User-Agent`, as in `string/0.3.0 (linux; amd64)`, and nothing else: no key, no account and nothing about the machine.
 
-`STRING_AUTO_UPDATE=0` (or `false`, `off`, `no`) turns off everything `string` does by itself: the daily check, the background install, the notices and the [skill refresh](#agent-skills). `string update` still works when you run it, and `string init` refreshes the skill by hand. A `CI` variable turns them off too, and the Docker image sets `STRING_AUTO_UPDATE=0`, since every run in a fresh container would otherwise look like the first of the day.
+`STRING_AUTO_UPDATE=0` (or `false`, `off`, `no`) turns off everything `string` does by itself: the daily check, the background install, the notices and the [skill refresh](#agent-skills). `string update` still works when you run it, and `string init` refreshes the skill by hand. A `CI` variable turns them off too, unless it is `false` or `0`. The Docker image sets `STRING_AUTO_UPDATE=0`, since every run in a fresh container would otherwise look like the first of the day.
 
 ## Agent skills
 
