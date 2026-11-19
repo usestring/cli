@@ -148,8 +148,8 @@ it. --env-file PATH also writes the key to that file as its STRING_API_KEY
 line and keeps the file's other lines; a new file is readable only by you.
 STRING_API_KEY wins over a saved key; whoami says which one is in use.
 trial registers an agent for a trial key with no account: after a few seconds'
-proof of work, it saves a key with a small balance that works for 24 hours,
-and a claim token a person can use to adopt the agent onto their account.
+proof of work, it saves a key with a small balance that doesn't expire, and a
+claim token a person can use to adopt the agent onto their account.
 trial claim --email ADDRESS shows a link and a code for that person. Once they
 sign in to String with that email and enter the code, a key on their account
 replaces the trial key. Without a terminal, or with --no-wait, it exits after
