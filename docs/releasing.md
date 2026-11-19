@@ -12,7 +12,7 @@ A release is a signed `v*` tag on `main`. Pushing it runs `.github/workflows/rel
 4. **publish**, in the `release` environment, puts the release on the download host, `https://cli.usestring.ai`. It downloads the GitHub release and builds `manifest.json`, which lists each platform's archive with its size and SHA-256. It signs the manifest into `manifest.json.sig` and checks both as an installed copy would, then attaches them to the GitHub release. Last, it uploads every asset and the two manifest files to `/vX.Y.Z/`, with a cache header that keeps them for a year, and reads each one back through the host.
 5. **smoke**, on Linux, macOS and Windows, each on Intel and on Arm, installs the release from the host with the tag's own installer and runs `string update --check`. When `/stable` names another version, it also installs that one and runs `string update --version X.Y.Z`.
 6. **promote**, in the `stable` environment, runs for a version without a pre-release suffix. It first decides whether `/stable` may move to the version: on a tag push, only forward. Then it commits `Formula/string.rb` and `bucket/string.json` for the version to `main`, through GitHub's API, which signs the commit. Last, it uploads the tag's `install.sh` and `install.ps1` to the host and points `/stable` at the version.
-7. **homebrew** and **scoop** run after promote. homebrew installs the release with Homebrew on macOS, and runs the formula's test. scoop installs it with Scoop on Windows, on Intel and on Arm. Each takes the tap or bucket at the commit promote made and checks `string --version`.
+7. **homebrew** and **scoop** run after promote. homebrew installs the release with Homebrew on macOS, checks that Homebrew lists it as the version, and runs the formula's test. scoop installs it with Scoop on Windows, on Intel and on Arm. Each runs its script in `tools/release`, which the packages workflow also runs on pull requests, on the tap or bucket at the commit promote made, and checks `string --version`.
 8. **live** runs when promote moved `/stable` forward. On each of the six machines it installs the version `/stable` named before, with the hosted installer as people do. Then it runs a plain `string update` and requires the new version.
 
 Copies of string installed by the installers check `/stable` once a day and update themselves to it, so promote is what ships a release to them. Copies installed with Homebrew or Scoop check it too, and then print the command that updates them, which is why promote commits the formula and the Scoop manifest before it moves `/stable`. The scripts and `/stable` are served with a five-minute cache header.
@@ -93,7 +93,7 @@ That publishes the tag's release again (skipping what the host has), installs it
 gh workflow run release.yml --ref v0.3.0 -f promote=true
 ```
 
-A run by hand builds nothing: after check, it starts at publish, on the tag's existing release. With `promote=true` it points the formula, the Scoop manifest and `/stable` at that version, even when that moves them back. New installs, and copies that have not updated yet, then get 0.3.0. Copies already on the newer version stay there: a copy never moves back by itself, and neither Homebrew nor Scoop moves back a copy it installed. The real fix for a bad release is a new, higher version.
+A run by hand builds nothing: after check, it starts at publish, on the tag's existing release. With `promote=true` it points the formula, the Scoop manifest and `/stable` at that version, even when that moves them back. It commits the two files as that tag's `tools/release` writes them, so if `tools/release` has changed since the tag, main's tests fail on them until a pull request rewrites them with `go test ./tools/release -run 'Formula|Scoop' -update`. New installs, and copies that have not updated yet, then get 0.3.0. Copies already on the newer version stay there: a copy never moves back by itself, and neither Homebrew nor Scoop moves back a copy it installed. The real fix for a bad release is a new, higher version.
 
 ## When a job fails
 
@@ -113,7 +113,7 @@ Each job is safe to re-run, and **Re-run failed jobs** runs the failed ones agai
 
 - **promote**, at its commit to `main`: when `main` moves on between reading it and committing, promote reads it again and retries, up to five tries. Any other refusal fails at once with GitHub's answer in the log. `/stable` has not moved; fix the cause and re-run.
 - **promote**, otherwise: re-run. A re-run finds the commit already on `main` and makes none, then uploads the installers and `/stable` again. A re-run after it had already moved `/stable` finds `/stable` at the version and skips live; check a copy of the version before by hand if live did not run.
-- **homebrew** or **scoop**: re-run. Each installs from the commit promote made, so a re-run tests the same files even after a later release has changed them. If it fails again, people who install with that manager meet the same failure. Homebrew and Scoop read `main`, so a fix in `tools/release` reaches them, without a new version, once a pull request merges it with the two files rewritten as [Homebrew and Scoop](#homebrew-and-scoop) says.
+- **homebrew** or **scoop**: re-run. Each installs from the commit promote made, so a re-run tests the same files even after a later release has changed them. If it fails again, people who install with that manager meet the same failure. Homebrew and Scoop read `main`, so a fix in `tools/release` reaches them, without a new version, once a pull request merges it with the two files rewritten as [Homebrew and Scoop](#homebrew-and-scoop) says. The packages workflow installs the rewritten files on that pull request.
 - When several releases come close together, the promote of one can still be waiting when the next one's arrives, and GitHub then cancels the waiting one. Nothing needs doing: promote only moves `/stable` forward, and the newest release wins. Re-run a cancelled promote only when it belongs to the newest version.
 
 ## Signing keys
@@ -177,6 +177,8 @@ Keep the old seed files in the secret store until then.
 ```bash
 go test ./tools/release -run 'Formula|Scoop' -update
 ```
+
+The packages workflow, `.github/workflows/packages.yml`, installs both files as people do, on each pull request that changes them, `tools/release` or the workflow, and on each such push to `main`: the formula on macOS and Ubuntu, the manifest on Windows on Intel and on Arm. It runs the scripts the release's homebrew and scoop jobs run, `tools/release/homebrew.sh` and `tools/release/scoop.ps1`, on its own checkout, then `brew audit` and `brew style` on the formula. The files in the repository name a release that is out, so it installs that release's archives. promote's commit to `main` goes through the workflow's own token, and GitHub starts no workflow for a push made that way, so neither this workflow nor the tests run on it; the next pull request's runs are the first to see it.
 
 To check the formula by hand, in a clean Homebrew:
 

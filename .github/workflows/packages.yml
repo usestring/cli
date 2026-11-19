@@ -1,0 +1,87 @@
+# Installs the Homebrew formula and the Scoop manifest in this repository as
+# people install them, before a release depends on them. The release workflow
+# installs them only after promote has committed them for a release and moved
+# /stable, and never for a pre-release, so a rehearsal never gets that far.
+# Both workflows run tools/release/homebrew.sh and tools/release/scoop.ps1;
+# here they install from the checkout, whose files name a release that is out.
+name: packages
+
+on:
+  pull_request:
+    paths:
+      - Formula/**
+      - bucket/**
+      - tools/release/**
+      - .github/workflows/packages.yml
+  push:
+    branches: [main]
+    paths:
+      - Formula/**
+      - bucket/**
+      - tools/release/**
+      - .github/workflows/packages.yml
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels the run of the push before it. A push to
+# main is in a group of its own, so no run on main is cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  homebrew:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      # Nothing here pushes, so the checkout keeps no token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Ubuntu runners have Homebrew, but not on their PATH.
+      - if: runner.os == 'Linux'
+        uses: Homebrew/actions/setup-homebrew@ceec4e8419bb3c97ce96e9dda7738499ed5f869d # main, 2026-11-13
+      - name: Install with Homebrew
+        run: |
+          version=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/string.rb)
+          if [ -z "$version" ]; then
+            echo "::error::Formula/string.rb has no version line."
+            exit 1
+          fi
+          tools/release/homebrew.sh "$GITHUB_WORKSPACE" "$(git rev-parse HEAD)" "$version"
+      # Homebrew 6.0.14 and later read the version from the release's URL too
+      # and call the formula's version line redundant, which audit reports
+      # under audit_version. The line is there for earlier ones, which read 64
+      # from arm64 or amd64 in the archive's name.
+      - name: Check the formula as Homebrew does
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+        run: |
+          brew audit --strict --online --os=all --arch=all --except=version usestring/cli/string
+          brew style usestring/cli/string
+
+  scoop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      # Scoop's installer, unpinned, runs in this job, so the checkout keeps no
+      # token for it to read.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install with Scoop
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw bucket/string.json | ConvertFrom-Json).version
+          $repository = ([System.Uri]$env:GITHUB_WORKSPACE).AbsoluteUri
+          ./tools/release/scoop.ps1 $repository (git rev-parse HEAD) $version

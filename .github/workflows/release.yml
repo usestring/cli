@@ -449,32 +449,27 @@ jobs:
 
   # Installs the release with Homebrew, as people do, from the formula at the
   # commit promote made or found, so a later release cannot change what this
-  # tests.
+  # tests. The packages workflow runs the same script on each pull request
+  # that changes the formula.
   homebrew:
     needs: [check, promote]
     if: ${{ !cancelled() && needs.promote.result == 'success' && needs.check.outputs.prerelease == 'false' }}
     runs-on: macos-latest
     timeout-minutes: 20
-    env:
-      VERSION: ${{ needs.check.outputs.version }}
-      COMMIT: ${{ needs.promote.outputs.commit }}
-      HOMEBREW_NO_AUTO_UPDATE: "1"
-      HOMEBREW_NO_ENV_HINTS: "1"
     steps:
+      # Nothing here pushes, so the checkout keeps no token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install with Homebrew
-        run: |
-          brew tap usestring/cli "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
-          git -C "$(brew --repository usestring/cli)" checkout --quiet "$COMMIT"
-          brew install usestring/cli/string
-          got=$("$(brew --prefix)/bin/string" --version)
-          if [ "$got" != "string $VERSION" ]; then
-            echo "::error::Homebrew installed a copy that says $got."
-            exit 1
-          fi
-          brew test usestring/cli/string
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          COMMIT: ${{ needs.promote.outputs.commit }}
+        run: tools/release/homebrew.sh "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$COMMIT" "$VERSION"
 
   # Installs the release with Scoop, as people do, from the manifest at the
-  # commit promote made or found, on Intel and on Arm.
+  # commit promote made or found, on Intel and on Arm. The packages workflow
+  # runs the same script on each pull request that changes the manifest.
   scoop:
     needs: [check, promote]
     if: ${{ !cancelled() && needs.promote.result == 'success' && needs.check.outputs.prerelease == 'false' }}
@@ -484,30 +479,18 @@ jobs:
         os: [windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    env:
-      VERSION: ${{ needs.check.outputs.version }}
-      COMMIT: ${{ needs.promote.outputs.commit }}
     steps:
+      # Scoop's installer, unpinned, runs in this job, so the checkout keeps no
+      # token for it to read.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install with Scoop
         shell: pwsh
-        run: |
-          # Scoop runs as scripts, which the installer checks are allowed.
-          Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force
-          $env:SCOOP = Join-Path $env:RUNNER_TEMP 'scoop'
-          $installer = Join-Path $env:RUNNER_TEMP 'install-scoop.ps1'
-          Invoke-RestMethod https://get.scoop.sh -OutFile $installer
-          # The runner's account is an administrator, which Scoop's installer
-          # refuses unless told to go on.
-          & $installer -RunAsAdmin
-          scoop bucket add usestring "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY"
-          if ($LASTEXITCODE -ne 0) { throw "scoop bucket add exited with $LASTEXITCODE." }
-          git -C (Join-Path $env:SCOOP 'buckets\usestring') checkout --quiet $env:COMMIT
-          if ($LASTEXITCODE -ne 0) { throw "git checkout exited with $LASTEXITCODE." }
-          # Without updating the buckets first, so the commit above is what installs.
-          scoop install string --no-update-scoop
-          if ($LASTEXITCODE -ne 0) { throw "scoop install exited with $LASTEXITCODE." }
-          $got = & (Join-Path $env:SCOOP 'shims\string.exe') --version
-          if ($got -ne "string $env:VERSION") { throw "Scoop installed a copy that says $got." }
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          COMMIT: ${{ needs.promote.outputs.commit }}
+        run: ./tools/release/scoop.ps1 "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY" $env:COMMIT $env:VERSION
 
   # A copy of the version /stable named before, installed with the hosted
   # installer as people install it, must update itself to the release.
