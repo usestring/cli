@@ -61,6 +61,8 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 
   Add `--env-file .env` to `string login`, to `--poll` or to `--with-token` to also write the key to that file as its `STRING_API_KEY=` line, without printing it. Every other line stays as it was, and a new file is created readable only by you.
 
+  When it asks for the key, `string login` sends String a name for the machine it runs on: its system and the first part of its hostname, as in `Mac · work-laptop`. String puts it in the name of the key it creates, `String CLI · Mac · work-laptop`, so your organization's [API keys page](https://portal.usestring.ai/api-keys) shows which machine holds which key. To send another name, add `--device-name NAME`, of up to 51 characters, to `string login`, to `--no-wait` or `--poll`, or to `string init`. `string login --browser` and `--with-token` send no name.
+
   `string login --browser` needs no code. It prints a link to a String page, and opens it when it can; there you sign in or create an account and click Authorize. The link works for 15 minutes. `--no-wait`, `--poll`, `--json` and `--env-file` work with it as above, and `string init --browser` signs in the same way.
 - `string login --with-token` reads a key from [String's API keys page](https://portal.usestring.ai/api-keys) on stdin, checks it with one free API call, and saves it in the same file. The key stays out of your shell history: `string login --with-token < key.txt`.
 - `STRING_API_KEY` in the environment. It wins over a saved key, and the CLI never writes it to a file:

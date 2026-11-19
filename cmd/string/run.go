@@ -53,6 +53,9 @@ type runtime struct {
 	// keys are the release signing keys an update must be signed with: the
 	// ones the build was made with, unless a test gives its own.
 	keys func() ([]ed25519.PublicKey, error)
+	// osHostname gives this machine's hostname, which string login puts in
+	// the name of the key it gets: os.Hostname, unless a test gives its own.
+	osHostname func() (string, error)
 }
 
 func (rt runtime) binary() (string, error) {
@@ -97,7 +100,9 @@ Usage:
   string integrations [list [SITE]]
   string integrations run SITE ACTION [--FIELD VALUE ...]
   string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login] [--browser]
+              [--device-name NAME]
   string login [--with-token | --no-wait | --poll] [--browser] [--env-file PATH]
+               [--device-name NAME]
   string logout
   string whoami
   string trial
@@ -146,6 +151,11 @@ String page the link opens, you sign in or create an account and click
 Authorize. login --with-token reads an API key from stdin, checks it and saves
 it. --env-file PATH also writes the key to that file as its STRING_API_KEY
 line and keeps the file's other lines; a new file is readable only by you.
+With the key request, login sends String a name for this machine: its system
+and the first part of its hostname, as in Mac · work-laptop. String puts it in
+the new key's name, which your organization sees on its API keys page.
+--device-name NAME sends NAME instead, and init takes it too. --browser and
+--with-token send no name.
 STRING_API_KEY wins over a saved key; whoami says which one is in use.
 trial registers an agent for a trial key with no account: after a few seconds'
 proof of work, it saves a key with a small balance that works for 24 hours,

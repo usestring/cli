@@ -128,18 +128,25 @@ func targets(names string, home string, env func(string) (string, bool)) ([]agen
 }
 
 func initCommand(list []string, rt runtime) error {
-	parsed, err := parse(list, spec{options: []string{"agent"}, switches: []string{"no-mcp", "no-login", "browser"}})
+	parsed, err := parse(list, spec{options: []string{"agent", "device-name"}, switches: []string{"no-mcp", "no-login", "browser"}})
 	if err != nil {
 		return usage(err)
 	}
 	if parsed.help {
 		return write(rt.stdout, []byte(help))
 	}
-	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login] [--browser]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login] [--browser] [--device-name NAME]"); err != nil {
 		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
 		return usage(errors.New("--input does not apply to init"))
+	}
+	deviceName, err := deviceNameOption(parsed)
+	if err != nil {
+		return usage(err)
+	}
+	if deviceName != "" && parsed.switches["browser"] {
+		return usage(errors.New("--device-name does not apply to --browser"))
 	}
 	home, err := homeDir(rt.env)
 	if err != nil {
@@ -178,7 +185,7 @@ func initCommand(list []string, rt runtime) error {
 				return err
 			}
 			report.Reset()
-			err = signIn(rt, browser, "")
+			err = signIn(rt, browser, "", deviceName)
 		} else {
 			// Nobody approves while init waits under an agent, so init hands
 			// back the link and code, as string login does there, and
@@ -186,7 +193,7 @@ func initCommand(list []string, rt runtime) error {
 			var started bytes.Buffer
 			text := rt
 			text.json, text.stdout = false, &started
-			if _, err = startSignIn(text, browser, false, ""); err == nil {
+			if _, err = startSignIn(text, browser, false, "", deviceName); err == nil {
 				fmt.Fprintf(&report, "\nSigning in. string fetch and string search already work without a key, within a daily allowance. For more:\n%s", started.Bytes())
 				return write(rt.stdout, []byte(report.String()))
 			}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -355,14 +356,14 @@ func loginCommand(list []string, rt runtime) error {
 		}
 		return false
 	})
-	parsed, err := parse(list, spec{options: []string{"env-file"}, switches: []string{"browser"}})
+	parsed, err := parse(list, spec{options: []string{"env-file", "device-name"}, switches: []string{"browser"}})
 	if err != nil {
 		return usage(err)
 	}
 	if parsed.help {
 		return write(rt.stdout, []byte(help))
 	}
-	if err := expectPositionals(parsed.positionals, 0, "string login [--with-token | --no-wait | --poll] [--browser] [--env-file PATH]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 0, "string login [--with-token | --no-wait | --poll] [--browser] [--env-file PATH] [--device-name NAME]"); err != nil {
 		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {
@@ -379,16 +380,23 @@ func loginCommand(list []string, rt runtime) error {
 	if err != nil {
 		return usage(err)
 	}
+	deviceName, err := deviceNameOption(parsed)
+	if err != nil {
+		return usage(err)
+	}
+	if browser && deviceName != "" {
+		return usage(errors.New("--device-name does not apply to --browser"))
+	}
 	switch {
 	case slices.Contains(chosen, "--with-token"):
 		return saveToken(rt, envFile)
 	case slices.Contains(chosen, "--poll"):
-		return finishPending(rt, envFile)
+		return finishPending(rt, envFile, deviceName)
 	case slices.Contains(chosen, "--no-wait") || rt.json || !rt.terminal:
-		_, err := startSignIn(rt, browser, false, envFile)
+		_, err := startSignIn(rt, browser, false, envFile, deviceName)
 		return err
 	}
-	return signIn(rt, browser, envFile)
+	return signIn(rt, browser, envFile, deviceName)
 }
 
 // saveToken saves a key read from stdin, so it never appears in argv or the
@@ -458,6 +466,9 @@ type pendingLogin struct {
 	ExpiresAt    time.Time `json:"expiresAt"`
 	// EnvFile is where --env-file asked for the key when the sign-in started.
 	EnvFile string `json:"envFile,omitempty"`
+	// DeviceName is what the key request calls this machine, kept so that
+	// string login --poll sends the name the sign-in started with.
+	DeviceName string `json:"deviceName,omitempty"`
 }
 
 func pendingPath(env func(string) (string, bool)) (string, bool) {
@@ -466,9 +477,10 @@ func pendingPath(env func(string) (string, bool)) (string, bool) {
 }
 
 // signIn waits in the foreground for the person to approve. browser picks
-// the sign-in of string login --browser over a device code.
-func signIn(rt runtime, browser bool, envFile string) error {
-	pending, err := startSignIn(rt, browser, true, envFile)
+// the sign-in of string login --browser over a device code. deviceName is
+// --device-name, or "" for this machine's default name.
+func signIn(rt runtime, browser bool, envFile, deviceName string) error {
+	pending, err := startSignIn(rt, browser, true, envFile, deviceName)
 	if err != nil {
 		return err
 	}
@@ -478,7 +490,7 @@ func signIn(rt runtime, browser bool, envFile string) error {
 // startSignIn asks for a device code, or with browser makes a browser
 // sign-in, saves it as pending and shows the person where to approve it. wait
 // says whether this command goes on to wait.
-func startSignIn(rt runtime, browser, wait bool, envFile string) (pendingLogin, error) {
+func startSignIn(rt runtime, browser, wait bool, envFile, deviceName string) (pendingLogin, error) {
 	// The browser sign-in needs no OAuth client, but a build that clears it
 	// signs nobody in, and its tests rely on that.
 	if oauthClientID == "" {
@@ -526,6 +538,7 @@ func startSignIn(rt runtime, browser, wait bool, envFile string) (pendingLogin, 
 		Interval:   device.Interval,
 		ExpiresAt:  rt.clock().Add(time.Duration(device.ExpiresIn) * time.Second),
 		EnvFile:    envFile,
+		DeviceName: cmp.Or(deviceName, rt.deviceName()),
 	}
 	if err := writePrivate(path, pending); err != nil {
 		return pendingLogin{}, err
@@ -569,9 +582,10 @@ func approvalLink(sent, userCode string) string {
 	return portalURL + "/device?user_code=" + url.QueryEscape(userCode)
 }
 
-// finishPending finishes the sign-in an earlier command started. envFile, from
-// --env-file now, wins over the one given when it started.
-func finishPending(rt runtime, envFile string) error {
+// finishPending finishes the sign-in an earlier command started. envFile and
+// deviceName, from --env-file and --device-name now, win over the ones given
+// when it started.
+func finishPending(rt runtime, envFile, deviceName string) error {
 	path, ok := pendingPath(rt.env)
 	if !ok {
 		return errors.New("Cannot find your home directory; set HOME")
@@ -590,6 +604,9 @@ func finishPending(rt runtime, envFile string) error {
 	}
 	if envFile != "" {
 		pending.EnvFile = envFile
+	}
+	if deviceName != "" {
+		pending.DeviceName = deviceName
 	}
 	return finishSignIn(rt, pending)
 }
@@ -617,7 +634,8 @@ func finishSignIn(rt runtime, pending pendingLogin) error {
 	if err != nil {
 		return err
 	}
-	key, err := releasedKey(rt, token)
+	// A sign-in that a release from before the name started has none saved.
+	key, err := releasedKey(rt, token, cmp.Or(pending.DeviceName, rt.deviceName()))
 	if err != nil {
 		return err
 	}
@@ -684,14 +702,21 @@ const keyByHand = "set STRING_API_KEY to an API key from https://portal.usestrin
 // after an answer that cannot have created one: a 429, which turns the request
 // away before it is handled, and the portal's own 503 for a token it could not
 // check. Any other failure may follow a key that was created, and is final.
-func releasedKey(rt runtime, token string) (string, error) {
+// deviceName goes with the request, and the portal names the key after it.
+func releasedKey(rt runtime, token, deviceName string) (string, error) {
 	var waited time.Duration
 	for try := 0; ; try++ {
 		var released struct {
 			APIKey string `json:"apiKey"`
 			Error  string `json:"error"`
 		}
-		status, header, err := getWithToken(rt, portalURL+"/api/oauth/api-key", token, &released)
+		request, err := http.NewRequest("GET", portalURL+"/api/oauth/api-key", nil)
+		if err != nil {
+			return "", err
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set(deviceNameHeader, encodeDeviceName(deviceName))
+		status, header, err := oauthCallHeader(rt, request, &released)
 		busy := status == http.StatusTooManyRequests || status >= 500
 		switch {
 		case status == http.StatusOK && err == nil:
