@@ -481,6 +481,10 @@ type packaged struct {
 	sums    map[string]string
 }
 
+func (p packaged) Version() string {
+	return p.version
+}
+
 func (p packaged) URL(goos, goarch string) string {
 	return "https://github.com/usestring/cli/releases/download/v" + p.version + "/" + archiveName(goos, goarch)
 }
@@ -517,11 +521,16 @@ func readPackaged(dir, versionText string) (packaged, error) {
 	return packaged{version: v.String(), sums: sums}, nil
 }
 
+// formulaTemplate names the version itself: Homebrew before 6.0.14 reads one
+// from the archive's name, which gives 64, from arm64 or amd64. Later ones
+// read it from the release's URL and call the line redundant, so brew audit
+// runs with --except=version.
 var formulaTemplate = template.Must(template.New("formula").Parse(`# The release workflow writes this file with tools/release for each release
 # and commits it to main, so a change to it belongs in tools/release.
 class String < Formula
   desc "Command-line access to String Web Access"
   homepage "https://github.com/usestring/cli"
+  version "{{.Version}}"
   license "MIT"
 
   livecheck do

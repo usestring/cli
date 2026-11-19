@@ -592,6 +592,31 @@ func TestFormulaInstallsTheArchiveForEachSystemAndCPU(t *testing.T) {
 	}
 }
 
+// Homebrew before 6.0.14 reads a version from the archive's name, which gives
+// 64, so the formula names its version on a line of its own, and that is the
+// version of each archive it installs.
+func TestFormulaNamesTheVersionOfTheArchivesItInstalls(t *testing.T) {
+	for _, version := range []string{"0.3.0", "12.4.17"} {
+		got := runTool(t, nil, nil, "formula", releaseDir(t), version)
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("formula %s: %+v", version, got)
+		}
+		named := regexp.MustCompile(`(?m)^  version "(.*)"$`).FindAllStringSubmatch(got.stdout, -1)
+		if len(named) != 1 || named[0][1] != version {
+			t.Errorf("the formula for %s names the versions %q", version, named)
+		}
+		urls := regexp.MustCompile(`(?m)^ *url "(.*)"$`).FindAllStringSubmatch(got.stdout, -1)
+		if len(urls) != 4 {
+			t.Errorf("the formula for %s has the urls %q, want one for each of its 4 archives", version, urls)
+		}
+		for _, url := range urls {
+			if !strings.HasPrefix(url[1], "https://github.com/usestring/cli/releases/download/v"+version+"/") {
+				t.Errorf("the formula for %s installs %s", version, url[1])
+			}
+		}
+	}
+}
+
 func TestScoopManifestInstallsTheWindowsArchiveForEachCPU(t *testing.T) {
 	got := runTool(t, nil, nil, "scoop", releaseDir(t), "0.3.0")
 	if got.code != 0 || got.stderr != "" {

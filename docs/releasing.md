@@ -170,7 +170,7 @@ Keep the old seed files in the secret store until then.
 
 ## Homebrew and Scoop
 
-[usestring/cli](https://github.com/usestring/cli) is its own Homebrew tap and Scoop bucket. `Formula/string.rb` installs the release's binary for the machine's system and CPU, from the GitHub release's archives, so Homebrew needs no Go. `bucket/string.json` does the same on Windows, for Intel and for Arm, and has Scoop's `checkver` and `autoupdate`. Both name the version and the SHA-256 of each archive.
+[usestring/cli](https://github.com/usestring/cli) is its own Homebrew tap and Scoop bucket. `Formula/string.rb` installs the release's binary for the machine's system and CPU, from the GitHub release's archives, so Homebrew needs no Go. `bucket/string.json` does the same on Windows, for Intel and for Arm, and has Scoop's `checkver` and `autoupdate`. Both name the version and the SHA-256 of each archive. The formula names its version on a line of its own: Homebrew before 6.0.14 reads a version from the archive's name, which gives 64, from arm64 or amd64. Later versions read it from the release's URL as well, and their audit calls the line redundant.
 
 `tools/release` writes both files from the release's `checksums.txt`, and promote commits them, so neither is edited by hand: a change belongs in `tools/release`. Its tests compare what it writes with the files in `tools/release/testdata`, and check that the two files in the repository are what it writes for the version they name. After changing what it writes, rewrite all four and read the diff:
 
@@ -182,15 +182,15 @@ To check the formula by hand, in a clean Homebrew:
 
 ```bash
 brew tap usestring/cli https://github.com/usestring/cli
-brew trust usestring/cli
-brew style usestring/cli/string
-brew audit --strict --online usestring/cli/string
 brew install usestring/cli/string
+brew list --versions string
 brew test usestring/cli/string
+brew audit --strict --online --except=version usestring/cli/string
+brew style usestring/cli/string
 brew livecheck usestring/cli/string
 ```
 
-Homebrew 7 audits a tap only once it is trusted; installing and testing need no trust. Homebrew does not quarantine what it downloads, so the binary runs on macOS though it is not signed. If `string` is already installed through npm, use `--skip-link` during local validation and run the binary directly from the new keg. The formula test checks missing-credential behavior without sending a paid API request.
+`--except=version` skips the audit that calls the version line redundant. From 5.1.15, Homebrew loads a formula from another tap only once it is trusted, and `brew install usestring/cli/string` trusts the formula it names; the audit before an install would refuse it. Homebrew does not quarantine what it downloads, so the binary runs on macOS though it is not signed. If `string` is already installed through npm, use `--skip-link` during local validation and run the binary directly from the new keg. The formula test checks missing-credential behavior without sending a paid API request.
 
 The first-party tap is an interim route. Official `homebrew/core` acceptance additionally needs current source/release eligibility and public-interest evidence for this repository.
 

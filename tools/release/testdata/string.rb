@@ -3,6 +3,7 @@
 class String < Formula
   desc "Command-line access to String Web Access"
   homepage "https://github.com/usestring/cli"
+  version "0.3.0"
   license "MIT"
 
   livecheck do
