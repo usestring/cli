@@ -18,9 +18,9 @@ import (
 	"time"
 )
 
-// string trial gets an agent a short-lived key with a small balance, with no
-// account and nobody present. The portal asks for a proof of work first, so
-// each key costs a few seconds of CPU.
+// string trial gets an agent a key with a small balance, with no account and
+// nobody present. The portal asks for a proof of work first, so each key costs
+// a few seconds of CPU.
 
 // maxTrialDifficulty bounds the work a challenge can ask for, so a misbehaving
 // server can't keep the CLI hashing for hours. The portal asks for 22 bits.
@@ -31,10 +31,11 @@ const maxTrialDifficulty = 28
 const claimGrantType = "urn:workos:agent-auth:grant-type:claim"
 
 // trialRegistration is what string trial keeps beside the key: the claim token
-// a person needs to adopt the agent once the key runs out.
+// a person needs to adopt the agent onto their account.
 type trialRegistration struct {
-	RegistrationID    string    `json:"registrationId"`
-	KeyExpiresAt      time.Time `json:"keyExpiresAt"`
+	RegistrationID string `json:"registrationId"`
+	// Zero, and left out, when the key doesn't expire.
+	KeyExpiresAt      time.Time `json:"keyExpiresAt,omitzero"`
 	ClaimURL          string    `json:"claimUrl"`
 	ClaimToken        string    `json:"claimToken"`
 	ClaimTokenExpires time.Time `json:"claimTokenExpires"`
@@ -126,9 +127,10 @@ func trialCommand(list []string, rt runtime) error {
 		return errors.New("The portal did not return a usable trial key")
 	}
 
+	expires := trialKeyExpiry(answer.AccessTokenExpires, rt.clock())
 	registration := trialRegistration{
 		RegistrationID:    answer.RegistrationID,
-		KeyExpiresAt:      answer.AccessTokenExpires,
+		KeyExpiresAt:      expires,
 		ClaimURL:          answer.ClaimURL,
 		ClaimToken:        answer.ClaimToken,
 		ClaimTokenExpires: answer.ClaimTokenExpires,
@@ -140,19 +142,38 @@ func trialCommand(list []string, rt runtime) error {
 		return err
 	}
 	if rt.json {
+		var expiresAt *time.Time // null: the key doesn't expire
+		if !expires.IsZero() {
+			expiresAt = &expires
+		}
 		shown, _ := json.Marshal(map[string]any{
 			"status":              "registered",
 			"balance_usd":         answer.BalanceUSD,
-			"expires_at":          answer.AccessTokenExpires,
+			"expires_at":          expiresAt,
 			"credentials":         path,
 			"claim_token_expires": answer.ClaimTokenExpires,
 			"trial":               registrationFile,
 		})
 		return write(rt.stdout, append(shown, '\n'))
 	}
+	lifetime := "It doesn't expire"
+	if !expires.IsZero() {
+		lifetime = "It works until " + expires.UTC().Format(time.RFC1123)
+	}
 	return write(rt.stdout, []byte(fmt.Sprintf(
-		"Registered a trial key with $%s of credit. It works until %s and is saved in %s.\nA person can claim this agent onto their String account until %s. The claim token is saved in %s.\n",
-		answer.BalanceUSD, answer.AccessTokenExpires.UTC().Format(time.RFC1123), path, answer.ClaimTokenExpires.UTC().Format(time.RFC1123), registrationFile)))
+		"Registered a trial key with $%s of credit. %s and is saved in %s.\nA person can claim this agent onto their String account until %s. The claim token is saved in %s.\n",
+		answer.BalanceUSD, lifetime, path, answer.ClaimTokenExpires.UTC().Format(time.RFC1123), registrationFile)))
+}
+
+// trialKeyExpiry is when a trial key stops working, or the zero time when it
+// doesn't expire. The portal marks a key that doesn't expire with a time in
+// year 9999 rather than none, because builds before this one print a missing
+// time as year 1, which reads as already expired.
+func trialKeyExpiry(expires, now time.Time) time.Time {
+	if expires.After(now.AddDate(100, 0, 0)) {
+		return time.Time{}
+	}
+	return expires
 }
 
 // notOffered reports an answer from a portal that doesn't serve the agent

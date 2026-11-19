@@ -108,6 +108,48 @@ func TestTrialSolvesTheProofOfWorkAndSavesTheKeyAndClaimToken(t *testing.T) {
 	}
 }
 
+// An agent reads expires_at to decide when to get a new key, so a key that
+// doesn't expire must say null rather than a date in year 9999 or year 1.
+func TestTrialJSONSaysWhetherTheKeyExpires(t *testing.T) {
+	for _, c := range []struct {
+		name, field string
+		want        any
+	}{
+		{"year 9999", `"access_token_expires":"9999-12-31T23:59:59.000Z",`, nil},
+		{"no time sent", ``, nil},
+		{"a time that comes", `"access_token_expires":"2026-11-06T12:00:00.000Z",`, "2026-11-06T12:00:00Z"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, `{"registration_id":"reg_7","access_token":"trial-key","token_type":"Bearer",`+c.field+`"balance_usd":"0.50","claim_url":"https://portal.example/api/agent-signup/identity/claim","claim_token":"clm_7_secret","claim_token_expires":"2026-11-12T12:00:00.000Z"}`)
+			}))
+			t.Cleanup(server.Close)
+			defer func(p string) { portalURL = p }(portalURL)
+			portalURL = server.URL
+
+			env := map[string]string{"HOME": t.TempDir()}
+			var stdout, stderr bytes.Buffer
+			rt := runtime{
+				env:    func(name string) (string, bool) { value, ok := env[name]; return value, ok },
+				client: http.DefaultClient,
+				stdout: &stdout,
+				stderr: &stderr,
+				now:    func() time.Time { return time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC) },
+			}
+			if status := run([]string{"trial", "--json"}, rt); status != 0 {
+				t.Fatalf("trial status %d: %s", status, stderr.String())
+			}
+			var shown map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &shown); err != nil {
+				t.Fatalf("%v: %s", err, stdout.String())
+			}
+			if got, ok := shown["expires_at"]; !ok || got != c.want {
+				t.Errorf("expires_at = %#v, want %#v", got, c.want)
+			}
+		})
+	}
+}
+
 const claimAttemptAnswer = `{"registration_id":"reg_7","status":"initiated","claim_attempt":{"user_code":"123456","expires_in":600,"verification_uri":"https://portal.example/agent/claim?attempt=cla_7_page","interval":5}}`
 
 // claimHome is a home directory holding what string trial saved: a trial key
