@@ -593,7 +593,7 @@ func TestUpdateLeavesACopyAPackageManagerInstalledToThatManager(t *testing.T) {
 	for dir, command := range map[string]string{
 		"Cellar/string/0.3.0/bin":             "brew upgrade usestring/cli/string",
 		"lib/node_modules/@usestring/cli/bin": "npm install -g @usestring/cli@latest",
-		"scoop/apps/string/current":           "scoop update string",
+		"scoop/apps/string/current":           "scoop update scoop string",
 	} {
 		host := newUpdateHost(t)
 		host.point("0.3.1")
