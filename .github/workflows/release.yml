@@ -383,10 +383,14 @@ jobs:
           echo "moved=$moved" >> "$GITHUB_OUTPUT"
       # A copy installed with Homebrew or Scoop is told to upgrade as soon as
       # /stable names a newer release, so main names the release before
-      # /stable does. A pre-release is never named there. The commit goes
-      # through GitHub's API, which signs it, and says which commit main must
-      # be on; if main moved since it was fetched, the commit is made again on
-      # the new one.
+      # /stable does. A pre-release is never named there. Each file on main
+      # stays when release installs prints the same for it as for the tag's:
+      # the version, and each archive's URL and SHA-256. So a re-run keeps a
+      # fix made on main to the rest of either file. A file release installs
+      # cannot read counts as different, and the tag's takes its place. The
+      # commit goes through GitHub's API, which signs it, and says which
+      # commit main must be on; if main moved since it was fetched, the
+      # commit is made again on the new one.
       - name: Commit the formula and the Scoop manifest
         id: commit
         if: needs.check.outputs.prerelease == 'false'
@@ -394,8 +398,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "$GITHUB_REF_NAME" --pattern checksums.txt --dir "$RUNNER_TEMP/checksums"
-          made="$RUNNER_TEMP/made"
-          mkdir -p "$made/Formula" "$made/bucket"
+          made="$RUNNER_TEMP/made" on_main="$RUNNER_TEMP/main"
+          mkdir -p "$made/Formula" "$made/bucket" "$on_main/Formula" "$on_main/bucket"
           go run ./tools/release formula "$RUNNER_TEMP/checksums" "$VERSION" > "$made/Formula/string.rb"
           go run ./tools/release scoop "$RUNNER_TEMP/checksums" "$VERSION" > "$made/bucket/string.json"
           for _ in 1 2 3 4 5; do
@@ -403,12 +407,19 @@ jobs:
             head=$(git rev-parse FETCH_HEAD)
             changes='[]'
             for path in Formula/string.rb bucket/string.json; do
-              if ! git show "$head:$path" 2>/dev/null | cmp -s - "$made/$path"; then
-                changes=$(jq -c --arg path "$path" --arg contents "$(base64 -w0 "$made/$path")" '. + [{path: $path, contents: $contents}]' <<< "$changes")
+              # Inside if, a failure counts as different rather than ending the step.
+              if git show "$head:$path" > "$on_main/$path" 2>/dev/null &&
+                want=$(go run ./tools/release installs "$made/$path") &&
+                have=$(go run ./tools/release installs "$on_main/$path") &&
+                [ "$have" = "$want" ]; then
+                echo "main's $path installs what the tag's does, so it stays."
+                continue
               fi
+              echo "main's $path is missing, unreadable or installs something else, so the commit carries the tag's."
+              changes=$(jq -c --arg path "$path" --arg contents "$(base64 -w0 "$made/$path")" '. + [{path: $path, contents: $contents}]' <<< "$changes")
             done
             if [ "$changes" = '[]' ]; then
-              echo "main names $VERSION in both files already."
+              echo "main's formula and Scoop manifest install $VERSION's archives with the release's checksums already."
               echo "commit=$head" >> "$GITHUB_OUTPUT"
               exit 0
             fi

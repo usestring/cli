@@ -111,8 +111,16 @@ Each job is safe to re-run, and **Re-run failed jobs** runs the failed ones agai
   npm dist-tag add @usestring/cli@0.4.0 latest
   ```
 
-- **promote**, at its commit to `main`: when `main` moves on between reading it and committing, promote reads it again and retries, up to five tries. Any other refusal fails at once with GitHub's answer in the log. `/stable` has not moved; fix the cause and re-run.
-- **promote**, otherwise: re-run. A re-run finds the commit already on `main` and makes none, then uploads the installers and `/stable` again. A re-run after it had already moved `/stable` finds `/stable` at the version and skips live; check a copy of the version before by hand if live did not run.
+- **promote**, at its commit to `main`: when `main` moves on between reading it and committing, promote reads it again and retries, up to five tries. Any other refusal fails at once with GitHub's answer in the log, before `/stable` moves. Fix the cause and re-run. If the workflow cannot commit to `main` at all, commit the two files by pull request instead, written from the release's own `checksums.txt`, then re-run promote. It finds them on `main` and goes on to move `/stable`:
+
+  ```bash
+  dir=$(mktemp -d)
+  gh release download v0.3.0 --repo usestring/cli --pattern checksums.txt --dir "$dir"
+  go run ./tools/release formula "$dir" 0.3.0 > Formula/string.rb
+  go run ./tools/release scoop "$dir" 0.3.0 > bucket/string.json
+  ```
+
+- **promote**, otherwise: re-run. A re-run keeps each file on `main` that installs the version's archives with the release's checksums, so a fix made on `main` to the rest of either file stays. Otherwise it commits the tag's file in its place, and when both files stay it makes no commit. A file installs the same when `go run ./tools/release installs` prints the same for it as for the tag's: the version, then each archive's URL with its SHA-256. A file it cannot read counts as different. Then promote uploads the installers and `/stable` again. A re-run after it had already moved `/stable` finds `/stable` at the version and skips live; check a copy of the version before by hand if live did not run.
 - **homebrew** or **scoop**: re-run. Each installs from the commit promote made, so a re-run tests the same files even after a later release has changed them. If it fails again, people who install with that manager meet the same failure. Homebrew and Scoop read `main`, so a fix in `tools/release` reaches them, without a new version, once a pull request merges it with the two files rewritten as [Homebrew and Scoop](#homebrew-and-scoop) says. The packages workflow installs the rewritten files on that pull request.
 - When several releases come close together, the promote of one can still be waiting when the next one's arrives, and GitHub then cancels the waiting one. Nothing needs doing: promote only moves `/stable` forward, and the newest release wins. Re-run a cancelled promote only when it belongs to the newest version.
 
@@ -192,7 +200,7 @@ brew style usestring/cli/string
 brew livecheck usestring/cli/string
 ```
 
-`--except=version` skips the audit that calls the version line redundant. From 5.1.15, Homebrew loads a formula from another tap only once it is trusted, and `brew install usestring/cli/string` trusts the formula it names; the audit before an install would refuse it. Homebrew does not quarantine what it downloads, so the binary runs on macOS though it is not signed. If `string` is already installed through npm, use `--skip-link` during local validation and run the binary directly from the new keg. The formula test checks missing-credential behavior without sending a paid API request.
+`--except=version` skips the audit that calls the version line redundant. From 6.0.0, Homebrew loads a formula from another tap only once it is trusted, and `brew install usestring/cli/string` trusts the formula it names; the audit before an install would refuse it. Homebrew does not quarantine what it downloads, so the binary runs on macOS though it is not signed. If `string` is already installed through npm, use `--skip-link` during local validation and run the binary directly from the new keg. The formula test checks missing-credential behavior without sending a paid API request.
 
 The first-party tap is an interim route. Official `homebrew/core` acceptance additionally needs current source/release eligibility and public-interest evidence for this repository.
 

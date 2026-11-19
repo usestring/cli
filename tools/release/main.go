@@ -4,8 +4,9 @@
 // signatures an installed copy of string checks it with. It also makes the
 // signing keys, checks the ones a release run holds before it builds
 // anything, answers the workflow's questions about a tag and about moving
-// /stable, so that the workflow orders versions exactly as string does, and
-// writes the Homebrew formula and the Scoop manifest for a release.
+// /stable, so that the workflow orders versions exactly as string does,
+// writes the Homebrew formula and the Scoop manifest for a release, and reads
+// back what either one installs.
 //
 //	go run ./tools/release keygen FILE
 //	go run ./tools/release keys
@@ -16,6 +17,7 @@
 //	go run ./tools/release promote EVENT VERSION CURRENT
 //	go run ./tools/release formula DIR VERSION > Formula/string.rb
 //	go run ./tools/release scoop DIR VERSION > bucket/string.json
+//	go run ./tools/release installs Formula/string.rb
 //
 // Versions are written without a v, as in 0.3.0. Run from the commit being
 // released, sign and verify check against the keys that commit's binaries
@@ -55,6 +57,7 @@ const usage = `Usage:
   release promote EVENT VERSION CURRENT   print how /stable moves from CURRENT to VERSION, or refuse
   release formula DIR VERSION             print Formula/string.rb for the archives checksums.txt in DIR lists
   release scoop DIR VERSION               print bucket/string.json for the archives checksums.txt in DIR lists
+  release installs FILE                   print what a formula (.rb) or Scoop manifest (.json) installs: its version, then each url and sha256
 `
 
 // The environment variables keys and sign read each key from, as the base64
@@ -89,7 +92,7 @@ func main() {
 // run is the command with what it takes from outside passed in. trusted gives
 // the keys that copies built from this commit accept, which tests replace.
 func run(args []string, stdout, stderr io.Writer, getenv func(string) string, trusted func() ([]ed25519.PublicKey, error)) int {
-	arity := map[string]int{"keygen": 1, "keys": 0, "manifest": 3, "sign": 1, "verify": 2, "tag": 1, "promote": 3, "formula": 2, "scoop": 2}
+	arity := map[string]int{"keygen": 1, "keys": 0, "manifest": 3, "sign": 1, "verify": 2, "tag": 1, "promote": 3, "formula": 2, "scoop": 2, "installs": 1}
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -119,6 +122,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string, tr
 		err = formula(args[0], args[1], stdout)
 	case "scoop":
 		err = scoop(args[0], args[1], stdout)
+	case "installs":
+		err = installs(args[0], stdout)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "release %s: %v\n", command, err)
@@ -650,4 +655,112 @@ func scoop(dir, versionText string, stdout io.Writer) error {
 	}
 	_, err = stdout.Write(append(data, '\n'))
 	return err
+}
+
+// installs prints what a formula (.rb) or a Scoop manifest (.json) installs:
+// the version it names, then each archive's URL and the SHA-256 checked
+// against it, one pair to a line, sorted. promote keeps main's copy of either
+// file when this prints the same for it as for the file the tag's
+// tools/release writes, so a change made on main to the rest of the file
+// stays. It refuses a file it cannot read, which promote counts as different.
+func installs(path string, stdout io.Writer) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var version string
+	var archives []string
+	switch filepath.Ext(path) {
+	case ".rb":
+		version, archives, err = formulaInstalls(string(data))
+	case ".json":
+		version, archives, err = scoopInstalls(data)
+	default:
+		return fmt.Errorf("%s is neither a formula (.rb) nor a Scoop manifest (.json)", path)
+	}
+	switch {
+	case err != nil:
+		return fmt.Errorf("%s: %w", path, err)
+	case version == "":
+		return fmt.Errorf("%s names no version", path)
+	case len(archives) == 0:
+		return fmt.Errorf("%s installs no archive", path)
+	}
+	slices.Sort(archives)
+	_, err = fmt.Fprintf(stdout, "%s\n%s\n", version, strings.Join(archives, "\n"))
+	return err
+}
+
+// formulaInstalls reads a formula as formulaTemplate writes one: the version
+// on a line of the class's own, and each url on a line with its sha256 on the
+// next. A line that starts as one of these does but is not in that form is an
+// error, so that no url goes unread.
+func formulaInstalls(text string) (string, []string, error) {
+	lines := strings.Split(text, "\n")
+	var versions, archives []string
+	for i := 0; i < len(lines); i++ {
+		code := strings.TrimLeft(lines[i], " \t")
+		switch {
+		case strings.HasPrefix(code, `version "`):
+			version, ok := quoted(code, "version")
+			if !ok || lines[i] != "  "+code {
+				return "", nil, fmt.Errorf("line %d is not a version line of the class's own: %s", i+1, lines[i])
+			}
+			versions = append(versions, version)
+		case strings.HasPrefix(code, `url "`):
+			url, ok := quoted(code, "url")
+			if !ok {
+				return "", nil, fmt.Errorf("line %d is not a url line: %s", i+1, lines[i])
+			}
+			if i+1 == len(lines) {
+				return "", nil, fmt.Errorf("line %d gives a url with no sha256 line after it", i+1)
+			}
+			sum, ok := quoted(strings.TrimLeft(lines[i+1], " \t"), "sha256")
+			if !ok {
+				return "", nil, fmt.Errorf("line %d gives a url with no sha256 line after it", i+1)
+			}
+			archives = append(archives, url+" "+sum)
+			i++
+		case strings.HasPrefix(code, `sha256 "`):
+			return "", nil, fmt.Errorf("line %d gives a sha256 with no url line before it", i+1)
+		}
+	}
+	if len(versions) != 1 {
+		return "", nil, fmt.Errorf("names %d versions on lines of the class's own, not 1", len(versions))
+	}
+	return versions[0], archives, nil
+}
+
+// quoted is the string in code when code is the name, a space and a single
+// double-quoted string, as in url "https://...". Ruby could read a string
+// holding a quote, a backslash or a # as something other than its text, so
+// such a string counts as none.
+func quoted(code, name string) (string, bool) {
+	s, ok := strings.CutPrefix(code, name+` "`)
+	if !ok {
+		return "", false
+	}
+	s, ok = strings.CutSuffix(s, `"`)
+	if !ok || strings.ContainsAny(s, `"\#`) {
+		return "", false
+	}
+	return s, true
+}
+
+// scoopInstalls reads a Scoop manifest's version and the url and hash of each
+// architecture. autoupdate's urls are where Scoop's own tools look for a
+// later release, not what this one installs, so they are left out.
+func scoopInstalls(data []byte) (string, []string, error) {
+	var m struct {
+		Version      string
+		Architecture map[string]struct{ URL, Hash string }
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return "", nil, err
+	}
+	var archives []string
+	for _, a := range m.Architecture {
+		archives = append(archives, a.URL+" "+a.Hash)
+	}
+	return m.Version, archives, nil
 }
