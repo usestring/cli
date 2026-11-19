@@ -1,6 +1,7 @@
 # Releases the CLI. Pushing a v* tag builds the release, publishes it to the
 # download host and installs it from there on every system it has a build for,
-# then, for a version without a pre-release suffix, points /stable at it.
+# then, for a version without a pre-release suffix, commits the Homebrew
+# formula and the Scoop manifest for it to main and points /stable at it.
 # Running the workflow by hand on a release's tag publishes and installs that
 # release again and, with promote, points /stable at it, which can move
 # /stable back:
@@ -335,8 +336,9 @@ jobs:
           $got = & $string --version
           if ($got -ne "string $env:VERSION") { throw "string $env:STABLE did not update to $env:VERSION. It says $got." }
 
-  # Points /stable at the release, after the installers that came with it. By
-  # itself, on a tag push, it only moves /stable forward, and never to a
+  # Points /stable at the release, after the installers that came with it.
+  # For a release, the Homebrew formula and the Scoop manifest on main name it
+  # first. On a tag push, promote only moves /stable forward, and never to a
   # pre-release; release promote decides.
   promote:
     needs: [check, smoke]
@@ -349,9 +351,12 @@ jobs:
     concurrency:
       group: release-promote
       cancel-in-progress: false
+    permissions:
+      contents: write # the commit to main
     outputs:
-      previous: ${{ steps.move.outputs.previous }}
-      moved: ${{ steps.move.outputs.moved }}
+      previous: ${{ steps.decide.outputs.previous }}
+      moved: ${{ steps.decide.outputs.moved }}
+      commit: ${{ steps.commit.outputs.commit }}
     env:
       VERSION: ${{ needs.check.outputs.version }}
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
@@ -365,8 +370,8 @@ jobs:
           go-version-file: go.mod
       - name: Check the R2 keys
         run: tools/release/host.sh check
-      - name: Move /stable
-        id: move
+      - name: Decide how /stable moves
+        id: decide
         run: |
           tools/release/host.sh stable "$RUNNER_TEMP/previous"
           previous=$(cat "$RUNNER_TEMP/previous")
@@ -376,12 +381,133 @@ jobs:
           fi
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "moved=$moved" >> "$GITHUB_OUTPUT"
-          # Whatever /stable names is then installed by the installers that
-          # came with it.
+      # A copy installed with Homebrew or Scoop is told to upgrade as soon as
+      # /stable names a newer release, so main names the release before
+      # /stable does. A pre-release is never named there. The commit goes
+      # through GitHub's API, which signs it, and says which commit main must
+      # be on; if main moved since it was fetched, the commit is made again on
+      # the new one.
+      - name: Commit the formula and the Scoop manifest
+        id: commit
+        if: needs.check.outputs.prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --pattern checksums.txt --dir "$RUNNER_TEMP/checksums"
+          made="$RUNNER_TEMP/made"
+          mkdir -p "$made/Formula" "$made/bucket"
+          go run ./tools/release formula "$RUNNER_TEMP/checksums" "$VERSION" > "$made/Formula/string.rb"
+          go run ./tools/release scoop "$RUNNER_TEMP/checksums" "$VERSION" > "$made/bucket/string.json"
+          for _ in 1 2 3 4 5; do
+            git fetch --quiet --depth 1 origin main
+            head=$(git rev-parse FETCH_HEAD)
+            changes='[]'
+            for path in Formula/string.rb bucket/string.json; do
+              if ! git show "$head:$path" 2>/dev/null | cmp -s - "$made/$path"; then
+                changes=$(jq -c --arg path "$path" --arg contents "$(base64 -w0 "$made/$path")" '. + [{path: $path, contents: $contents}]' <<< "$changes")
+              fi
+            done
+            if [ "$changes" = '[]' ]; then
+              echo "main names $VERSION in both files already."
+              echo "commit=$head" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            jq -n --arg repository "$GITHUB_REPOSITORY" --arg head "$head" --argjson changes "$changes" \
+              --arg headline "Point the Homebrew formula and the Scoop manifest at v$VERSION" \
+              --arg body "The release workflow made this commit: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+                variables: {input: {branch: {repositoryNameWithOwner: $repository, branchName: "main"}, expectedHeadOid: $head,
+                  message: {headline: $headline, body: $body}, fileChanges: {additions: $changes}}}}' > "$RUNNER_TEMP/commit.json"
+            if gh api graphql --input "$RUNNER_TEMP/commit.json" > "$RUNNER_TEMP/answer.json"; then
+              commit=$(jq -r '.data.createCommitOnBranch.commit.oid // empty' "$RUNNER_TEMP/answer.json")
+              if [ -z "$commit" ]; then
+                echo "::error::GitHub answered the commit without one: $(cat "$RUNNER_TEMP/answer.json")"
+                exit 1
+              fi
+              echo "Committed $commit to main."
+              echo "commit=$commit" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # gh prints GitHub's answer, errors and all, before it fails.
+            if ! jq -e 'any(.errors[]?; .type == "STALE_DATA" or (.message // "" | contains("Expected branch to point to")))' "$RUNNER_TEMP/answer.json" >/dev/null 2>&1; then
+              echo "::error::GitHub refused the commit to main: $(cat "$RUNNER_TEMP/answer.json")"
+              exit 1
+            fi
+            echo "main moved on from $head; trying again."
+            sleep 5
+          done
+          echo "::error::main moved on before each of 5 tries to commit to it. Re-run promote."
+          exit 1
+      # Whatever /stable names is then installed by the installers that came
+      # with it.
+      - name: Move /stable
+        run: |
           tools/release/host.sh put install.sh install.sh
           tools/release/host.sh put install.ps1 install.ps1
           printf '%s\n' "$VERSION" > "$RUNNER_TEMP/stable"
           tools/release/host.sh put stable "$RUNNER_TEMP/stable"
+
+  # Installs the release with Homebrew, as people do, from the formula at the
+  # commit promote made or found, so a later release cannot change what this
+  # tests.
+  homebrew:
+    needs: [check, promote]
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.check.outputs.prerelease == 'false' }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      COMMIT: ${{ needs.promote.outputs.commit }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+    steps:
+      - name: Install with Homebrew
+        run: |
+          brew tap usestring/cli "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -C "$(brew --repository usestring/cli)" checkout --quiet "$COMMIT"
+          brew install usestring/cli/string
+          got=$("$(brew --prefix)/bin/string" --version)
+          if [ "$got" != "string $VERSION" ]; then
+            echo "::error::Homebrew installed a copy that says $got."
+            exit 1
+          fi
+          brew test usestring/cli/string
+
+  # Installs the release with Scoop, as people do, from the manifest at the
+  # commit promote made or found, on Intel and on Arm.
+  scoop:
+    needs: [check, promote]
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.check.outputs.prerelease == 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      COMMIT: ${{ needs.promote.outputs.commit }}
+    steps:
+      - name: Install with Scoop
+        shell: pwsh
+        run: |
+          # Scoop runs as scripts, which the installer checks are allowed.
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force
+          $env:SCOOP = Join-Path $env:RUNNER_TEMP 'scoop'
+          $installer = Join-Path $env:RUNNER_TEMP 'install-scoop.ps1'
+          Invoke-RestMethod https://get.scoop.sh -OutFile $installer
+          # The runner's account is an administrator, which Scoop's installer
+          # refuses unless told to go on.
+          & $installer -RunAsAdmin
+          scoop bucket add usestring "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "scoop bucket add exited with $LASTEXITCODE." }
+          git -C (Join-Path $env:SCOOP 'buckets\usestring') checkout --quiet $env:COMMIT
+          if ($LASTEXITCODE -ne 0) { throw "git checkout exited with $LASTEXITCODE." }
+          # Without updating the buckets first, so the commit above is what installs.
+          scoop install string --no-update-scoop
+          if ($LASTEXITCODE -ne 0) { throw "scoop install exited with $LASTEXITCODE." }
+          $got = & (Join-Path $env:SCOOP 'shims\string.exe') --version
+          if ($got -ne "string $env:VERSION") { throw "Scoop installed a copy that says $got." }
 
   # A copy of the version /stable named before, installed with the hosted
   # installer as people install it, must update itself to the release.
