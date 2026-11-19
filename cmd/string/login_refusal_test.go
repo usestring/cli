@@ -66,6 +66,9 @@ type signInService struct {
 	calls  map[string]int
 	polled []string
 	asked  []browserCheck
+	// named has a line for each key request, and for any other request that
+	// carried a device name: its path, a space, and the name as it was sent.
+	named []string
 }
 
 // start serves the stand-in and points the CLI's sign-in at it for this test.
@@ -93,6 +96,9 @@ func (s *signInService) start(t *testing.T) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.calls[r.URL.Path]++
+		if name, sent := r.Header[deviceNameHeader]; sent || r.URL.Path == "/api/oauth/api-key" {
+			s.named = append(s.named, r.URL.Path+" "+strings.Join(name, ","))
+		}
 		switch r.URL.Path {
 		case "/oauth/device_authorization":
 			io.WriteString(w, `{"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri":"https://example.test/device","verification_uri_complete":"https://example.test/device?code=ABCD-EFGH","expires_in":600,"interval":5}`)
@@ -138,6 +144,13 @@ func (s *signInService) requests(path string) int {
 	return total
 }
 
+// deviceNames is a copy of named.
+func (s *signInService) deviceNames() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.named)
+}
+
 // codes is the device code that each request to the token endpoint carried.
 func (s *signInService) codes() []string {
 	s.mu.Lock()
@@ -179,6 +192,8 @@ func (s *signInSession) run(list ...string) result {
 		now:      func() time.Time { return s.now },
 		terminal: s.terminal,
 		progress: s.progress,
+		// A fixed hostname, so no test sends the name of the machine it runs on.
+		osHostname: func() (string, error) { return "build-7.corp.example.test", nil },
 	})
 	return result{status, stdout.String(), stderr.String()}
 }
