@@ -56,7 +56,10 @@ var managers = map[installKind]manager{
 	installHomebrew: {"Homebrew", "brew upgrade usestring/cli/string"},
 	installNPM:      {"npm", "npm install -g @usestring/cli@latest"},
 	installNPX:      {"npx", "npx -y @usestring/cli@latest"},
-	installScoop:    {"Scoop", "scoop update string"},
+	// Naming scoop makes Scoop sync its buckets first. Without it, Scoop
+	// syncs them only once they are 3 hours old, so the update can miss a
+	// release that has just come out.
+	installScoop: {"Scoop", "scoop update scoop string"},
 }
 
 // classifyInstall names how the copy at path was installed. path has its

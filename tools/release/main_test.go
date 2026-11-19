@@ -7,10 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -519,9 +523,398 @@ func TestPromoteMovesStableOnlyAsTheReleaseRulesAllow(t *testing.T) {
 }
 
 func TestUsageForACommandLineItDoesNotKnow(t *testing.T) {
-	for _, args := range [][]string{nil, {"help"}, {"publish"}, {"keygen"}, {"keygen", "a", "b"}, {"keys", "RELEASE_SIGNING_KEY"}, {"manifest", "dir", "0.3.0"}, {"promote", "push", "0.3.0"}} {
+	for _, args := range [][]string{nil, {"help"}, {"publish"}, {"keygen"}, {"keygen", "a", "b"}, {"keys", "RELEASE_SIGNING_KEY"}, {"manifest", "dir", "0.3.0"}, {"promote", "push", "0.3.0"}, {"formula", "dir"}, {"scoop", "dir", "0.3.0", "0.3.1"}, {"installs"}, {"installs", "string.rb", "string.json"}} {
 		if got := runTool(t, nil, nil, args...); got.code != 2 || got.stdout != "" || !strings.HasPrefix(got.stderr, "Usage:") {
 			t.Errorf("%q: %+v", args, got)
 		}
 	}
+}
+
+// update rewrites the files the formula and Scoop manifest tests compare
+// with: go test ./tools/release -run 'Formula|Scoop' -update
+var update = flag.Bool("update", false, "rewrite the expected formula and Scoop manifest, in testdata and in the repository")
+
+// expect compares got with the file at path, or with -update writes got there.
+// A checkout on Windows may have turned the file's line endings into CRLF.
+func expect(t *testing.T, path, got string) {
+	t.Helper()
+	if *update {
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != strings.ReplaceAll(string(want), "\r\n", "\n") {
+		t.Errorf("%s is not what the release tool writes, which is:\n%s\nIf the change is meant, run go test ./tools/release -run 'Formula|Scoop' -update and read the diff.", path, got)
+	}
+}
+
+// sum is the SHA-256 releaseDir lists for an archive.
+func sum(name string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte("the contents of "+name)))
+}
+
+func TestFormulaInstallsTheArchiveForEachSystemAndCPU(t *testing.T) {
+	got := runTool(t, nil, nil, "formula", releaseDir(t), "0.3.0")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("formula: %+v", got)
+	}
+	expect(t, filepath.Join("testdata", "string.rb"), got.stdout)
+
+	// Homebrew takes the url and sha256 in the on_macos or on_linux block
+	// for the machine's system, and in it the on_arm or on_intel block for
+	// its CPU.
+	systems := regexp.MustCompile(`(?ms)^  on_(macos|linux) do\n(.*?)^  end$`)
+	cpus := regexp.MustCompile(`(?m)^    on_(arm|intel) do\n      url "([^"]*)"\n      sha256 "([^"]*)"\n    end$`)
+	found := map[string]string{}
+	for _, system := range systems.FindAllStringSubmatch(got.stdout, -1) {
+		for _, cpu := range cpus.FindAllStringSubmatch(system[2], -1) {
+			platform := map[string]string{"macos": "darwin", "linux": "linux"}[system[1]] + "_" + map[string]string{"arm": "arm64", "intel": "amd64"}[cpu[1]]
+			found[platform] = cpu[2] + " " + cpu[3]
+		}
+	}
+	want := map[string]string{}
+	for _, p := range platforms {
+		if p.goos != "windows" {
+			name := "string_" + p.goos + "_" + p.goarch + p.ext
+			want[p.goos+"_"+p.goarch] = "https://github.com/usestring/cli/releases/download/v0.3.0/" + name + " " + sum(name)
+		}
+	}
+	if !maps.Equal(found, want) {
+		t.Errorf("the formula gives these archives:\n%v\nwant:\n%v", found, want)
+	}
+	if strings.Contains(got.stdout, "depends_on") || strings.Contains(got.stdout, "system ") {
+		t.Error("the formula builds string rather than installing the release's binary")
+	}
+}
+
+// Homebrew before 6.0.14 reads a version from the archive's name, which gives
+// 64, so the formula names its version on a line of its own, and that is the
+// version of each archive it installs.
+func TestFormulaNamesTheVersionOfTheArchivesItInstalls(t *testing.T) {
+	for _, version := range []string{"0.3.0", "12.4.17"} {
+		got := runTool(t, nil, nil, "formula", releaseDir(t), version)
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("formula %s: %+v", version, got)
+		}
+		named := regexp.MustCompile(`(?m)^  version "(.*)"$`).FindAllStringSubmatch(got.stdout, -1)
+		if len(named) != 1 || named[0][1] != version {
+			t.Errorf("the formula for %s names the versions %q", version, named)
+		}
+		urls := regexp.MustCompile(`(?m)^ *url "(.*)"$`).FindAllStringSubmatch(got.stdout, -1)
+		if len(urls) != 4 {
+			t.Errorf("the formula for %s has the urls %q, want one for each of its 4 archives", version, urls)
+		}
+		for _, url := range urls {
+			if !strings.HasPrefix(url[1], "https://github.com/usestring/cli/releases/download/v"+version+"/") {
+				t.Errorf("the formula for %s installs %s", version, url[1])
+			}
+		}
+	}
+}
+
+func TestScoopManifestInstallsTheWindowsArchiveForEachCPU(t *testing.T) {
+	got := runTool(t, nil, nil, "scoop", releaseDir(t), "0.3.0")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("scoop: %+v", got)
+	}
+	expect(t, filepath.Join("testdata", "string.json"), got.stdout)
+
+	var m struct {
+		Version      string
+		Bin          string
+		Checkver     string
+		Architecture map[string]struct{ URL, Hash string }
+		Autoupdate   struct {
+			Architecture map[string]map[string]string
+			Hash         struct{ URL string }
+		}
+	}
+	if err := json.Unmarshal([]byte(got.stdout), &m); err != nil {
+		t.Fatal(err)
+	}
+	base := "https://github.com/usestring/cli/releases/download/"
+	for arch, name := range map[string]string{"64bit": "string_windows_amd64.zip", "arm64": "string_windows_arm64.zip"} {
+		if a := m.Architecture[arch]; a.URL != base+"v0.3.0/"+name || a.Hash != sum(name) {
+			t.Errorf("%s installs %+v, want %s with its SHA-256", arch, a, name)
+		}
+		// Scoop's own tools fill a later release in from these, with the
+		// hash from that release's checksums.txt.
+		if a := m.Autoupdate.Architecture[arch]; !maps.Equal(a, map[string]string{"url": base + "v$version/" + name}) {
+			t.Errorf("%s updates from %v", arch, a)
+		}
+	}
+	if len(m.Architecture) != 2 || len(m.Autoupdate.Architecture) != 2 || m.Version != "0.3.0" || m.Bin != "string.exe" || m.Checkver != "github" || m.Autoupdate.Hash.URL != "$baseurl/checksums.txt" {
+		t.Errorf("the manifest reads as %+v", m)
+	}
+}
+
+func TestFormulaAndScoopManifestRefuseWhatTheyCannotName(t *testing.T) {
+	// missing is the last archive in platforms, so a check that stops short
+	// of it fails.
+	missing, listed := "string_windows_arm64.zip", "string_darwin_amd64.tar.gz"
+	hash := func(change func(string) string) func(t *testing.T, dir string) {
+		return func(t *testing.T, dir string) {
+			rewrite(t, filepath.Join(dir, "checksums.txt"), func(s string) string {
+				return strings.Replace(s, sum(listed), change(sum(listed)), 1)
+			})
+		}
+	}
+	for name, check := range map[string]struct {
+		change  func(t *testing.T, dir string)
+		version string
+		reason  string
+	}{
+		// Homebrew and Scoop install what main names as soon as it is there.
+		"a pre-release":         {version: "0.3.0-rc.1", reason: "0.3.0-rc.1 is a pre-release"},
+		"a version with a v":    {version: "v0.3.0", reason: "v0.3.0"},
+		"a development version": {version: "dev", reason: "dev"},
+		// The error names the file, as in "open DIR/checksums.txt: ...".
+		"no checksums.txt": {change: func(t *testing.T, dir string) { remove(t, filepath.Join(dir, "checksums.txt")) }, reason: "checksums.txt: "},
+		"an archive checksums.txt does not list": {change: func(t *testing.T, dir string) {
+			rewrite(t, filepath.Join(dir, "checksums.txt"), func(s string) string { return dropLine(s, missing) })
+		}, reason: "lists no " + missing},
+		"a line that is not a checksum and a name": {change: func(t *testing.T, dir string) {
+			rewrite(t, filepath.Join(dir, "checksums.txt"), func(s string) string { return s + "abc def ghi\n" })
+		}, reason: "line 9"},
+		// Each is refused by one of the three checks alone.
+		"a SHA-256 in capitals":          {change: hash(strings.ToUpper), reason: "not 64 lowercase hex digits"},
+		"a SHA-256 that is short":        {change: hash(func(s string) string { return s[:62] }), reason: "not 64 lowercase hex digits"},
+		"a SHA-256 that is long":         {change: hash(func(s string) string { return s + "00" }), reason: "not 64 lowercase hex digits"},
+		"a SHA-256 with one digit extra": {change: hash(func(s string) string { return s + "0" }), reason: "not 64 lowercase hex digits"},
+		"a SHA-256 that is not hex":      {change: hash(func(s string) string { return s[:63] + "g" }), reason: "not 64 lowercase hex digits"},
+	} {
+		for _, command := range []string{"formula", "scoop"} {
+			t.Run(command+" with "+name, func(t *testing.T) {
+				dir := releaseDir(t)
+				if check.change != nil {
+					check.change(t, dir)
+				}
+				version := "0.3.0"
+				if check.version != "" {
+					version = check.version
+				}
+				got := runTool(t, nil, nil, command, dir, version)
+				if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, "release "+command+": ") || !strings.Contains(got.stderr, check.reason) {
+					t.Errorf("%+v, want a refusal that mentions %q", got, check.reason)
+				}
+			})
+		}
+	}
+}
+
+// The formula and the Scoop manifest in the repository are what the release
+// tool writes for the version and checksums they name, so the release
+// workflow's commit changes nothing else in them, and a change made to either
+// file by hand fails here.
+func TestTheRepositorysFormulaAndScoopManifestAreTheReleaseToolsOwn(t *testing.T) {
+	formulaPath, scoopPath := filepath.Join("..", "..", "Formula", "string.rb"), filepath.Join("..", "..", "bucket", "string.json")
+	formulaText, err := os.ReadFile(formulaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoopText, err := os.ReadFile(scoopPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Version      string
+		Architecture map[string]struct{ URL, Hash string }
+	}
+	if err := json.Unmarshal(scoopText, &m); err != nil {
+		t.Fatal(err)
+	}
+	var sums strings.Builder
+	for _, a := range m.Architecture {
+		fmt.Fprintf(&sums, "%s  %s\n", a.Hash, a.URL[strings.LastIndex(a.URL, "/")+1:])
+	}
+	for _, a := range regexp.MustCompile(`url "[^"]*/([^/"]*)"\s+sha256 "([^"]*)"`).FindAllStringSubmatch(string(formulaText), -1) {
+		fmt.Fprintf(&sums, "%s  %s\n", a[2], a[1])
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "checksums.txt"), []byte(sums.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for command, path := range map[string]string{"formula": formulaPath, "scoop": scoopPath} {
+		got := runTool(t, nil, nil, command, dir, m.Version)
+		if got.code != 0 {
+			t.Fatalf("%s for the version and checksums in the repository: %+v", command, got)
+		}
+		expect(t, path, got.stdout)
+	}
+}
+
+// written is the formula and the Scoop manifest the release tool writes for
+// 0.3.0, each under the name that tells installs which one it is.
+func written(t *testing.T) map[string]string {
+	t.Helper()
+	dir := releaseDir(t)
+	files := map[string]string{}
+	for command, name := range map[string]string{"formula": "string.rb", "scoop": "string.json"} {
+		got := runTool(t, nil, nil, command, dir, "0.3.0")
+		if got.code != 0 {
+			t.Fatalf("%s: %+v", command, got)
+		}
+		files[name] = got.stdout
+	}
+	return files
+}
+
+// installsOf runs installs on text, in a file called name.
+func installsOf(t *testing.T, name, text string) outcome {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return runTool(t, nil, nil, "installs", path)
+}
+
+// scoopWith is the Scoop manifest text with change made to it as JSON.
+func scoopWith(t *testing.T, text string, change func(m map[string]any)) string {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(text), &m); err != nil {
+		t.Fatal(err)
+	}
+	change(m)
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// architecture is an architecture's entry in a Scoop manifest read as JSON.
+func architecture(m map[string]any, name string) map[string]any {
+	return m["architecture"].(map[string]any)[name].(map[string]any)
+}
+
+func TestInstallsGivesTheVersionThenEachArchiveWithItsChecksum(t *testing.T) {
+	files := written(t)
+	line := func(name string) string {
+		return "https://github.com/usestring/cli/releases/download/v0.3.0/" + name + " " + sum(name) + "\n"
+	}
+	// In the order of their URLs, which is not the order the formula has.
+	for name, want := range map[string]string{
+		"string.rb":   "0.3.0\n" + line("string_darwin_amd64.tar.gz") + line("string_darwin_arm64.tar.gz") + line("string_linux_amd64.tar.gz") + line("string_linux_arm64.tar.gz"),
+		"string.json": "0.3.0\n" + line("string_windows_amd64.zip") + line("string_windows_arm64.zip"),
+	} {
+		if got := installsOf(t, name, files[name]); got.code != 0 || got.stderr != "" || got.stdout != want {
+			t.Errorf("installs of %s: %+v, want:\n%s", name, got, want)
+		}
+	}
+}
+
+// promote keeps main's copy of either file when installs prints the same for
+// it as for the file the tag's release tool writes, and commits the tag's
+// otherwise.
+func TestInstallsChangesWithWhatAFileInstallsAndWithNothingElse(t *testing.T) {
+	files := written(t)
+	formula, manifest := files["string.rb"], files["string.json"]
+	replace := func(text string, oldnew ...string) string { return strings.NewReplacer(oldnew...).Replace(text) }
+	base := "https://github.com/usestring/cli/releases/download/"
+	darwinArm, darwinIntel := sum("string_darwin_arm64.tar.gz"), sum("string_darwin_amd64.tar.gz")
+	macos, linux, install := strings.Index(formula, "  on_macos do\n"), strings.Index(formula, "  on_linux do\n"), strings.Index(formula, "  def install\n")
+	if macos < 0 || macos > linux || linux > install {
+		t.Fatalf("the formula has no on_macos block followed by an on_linux block:\n%s", formula)
+	}
+	resource := "  resource \"source\" do\n    url \"" + base + "v0.3.0/string-0.3.0.tar.gz\"\n    sha256 \"" + sum("string-0.3.0.tar.gz") + "\"\n  end\n\n"
+	for name, check := range map[string]struct {
+		file, text string
+		same       bool
+	}{
+		"a formula with another desc and test":                 {"string.rb", replace(formula, `desc "Command-line access to String Web Access"`, `desc "Another description"`, `"needs a key"`, `"a key"`), true},
+		"a formula with its system blocks the other way round": {"string.rb", formula[:macos] + formula[linux:install] + formula[macos:linux] + formula[install:], true},
+		"a formula with one checksum another":                  {"string.rb", replace(formula, darwinArm, strings.Repeat("0", 64)), false},
+		"a formula with two checksums swapped":                 {"string.rb", replace(formula, darwinArm, darwinIntel, darwinIntel, darwinArm), false},
+		"a formula with an archive left out":                   {"string.rb", dropLine(dropLine(formula, "string_linux_arm64.tar.gz"), sum("string_linux_arm64.tar.gz")), false},
+		"a formula with an archive more":                       {"string.rb", formula[:install] + resource + formula[install:], false},
+		"a formula with a url on another host":                 {"string.rb", replace(formula, base+"v0.3.0/string_linux_amd64", "https://cli.usestring.ai/v0.3.0/string_linux_amd64"), false},
+		"a formula with a url of another version":              {"string.rb", replace(formula, base+"v0.3.0/string_linux_amd64", base+"v0.2.1/string_linux_amd64"), false},
+		"a formula naming another version":                     {"string.rb", replace(formula, `version "0.3.0"`, `version "0.3.1"`), false},
+		"a manifest written another way, with another description, bin and autoupdate": {"string.json", scoopWith(t, manifest, func(m map[string]any) {
+			m["description"], m["bin"] = "Another description", "s.exe"
+			m["autoupdate"] = map[string]any{"url": base + "v$version/string.zip"}
+		}), true},
+		"a manifest with one checksum another": {"string.json", scoopWith(t, manifest, func(m map[string]any) { architecture(m, "arm64")["hash"] = strings.Repeat("0", 64) }), false},
+		"a manifest with two checksums swapped": {"string.json", scoopWith(t, manifest, func(m map[string]any) {
+			intel, arm := architecture(m, "64bit"), architecture(m, "arm64")
+			intel["hash"], arm["hash"] = arm["hash"], intel["hash"]
+		}), false},
+		"a manifest with an architecture left out": {"string.json", scoopWith(t, manifest, func(m map[string]any) { delete(m["architecture"].(map[string]any), "arm64") }), false},
+		"a manifest with an architecture more": {"string.json", scoopWith(t, manifest, func(m map[string]any) {
+			m["architecture"].(map[string]any)["32bit"] = map[string]any{"url": base + "v0.3.0/string_windows_386.zip", "hash": strings.Repeat("1", 64)}
+		}), false},
+		"a manifest with a url on another host": {"string.json", scoopWith(t, manifest, func(m map[string]any) {
+			architecture(m, "64bit")["url"] = "https://cli.usestring.ai/v0.3.0/string_windows_amd64.zip"
+		}), false},
+		"a manifest with a url of another version": {"string.json", scoopWith(t, manifest, func(m map[string]any) {
+			architecture(m, "64bit")["url"] = base + "v0.2.1/string_windows_amd64.zip"
+		}), false},
+		"a manifest naming another version": {"string.json", scoopWith(t, manifest, func(m map[string]any) { m["version"] = "0.3.1" }), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if check.text == files[check.file] {
+				t.Fatal("the change leaves the file as it was")
+			}
+			was, got := installsOf(t, check.file, files[check.file]), installsOf(t, check.file, check.text)
+			if got.code != 0 || got.stderr != "" {
+				t.Fatalf("installs: %+v", got)
+			}
+			if same := got.stdout == was.stdout; same != check.same {
+				t.Errorf("installs prints:\n%s\nand for the file as written:\n%s", got.stdout, was.stdout)
+			}
+		})
+	}
+}
+
+// promote counts a file installs refuses as different from the tag's, and
+// commits the tag's in its place.
+func TestInstallsRefusesWhatItCannotRead(t *testing.T) {
+	files := written(t)
+	formula, manifest := files["string.rb"], files["string.json"]
+	url := `      url "https://github.com/usestring/cli/releases/download/v0.3.0/string_linux_amd64.tar.gz"` + "\n"
+	sha := `      sha256 "` + sum("string_linux_amd64.tar.gz") + `"` + "\n"
+	if !strings.Contains(formula, url+sha) {
+		t.Fatalf("the formula has no\n%s", url+sha)
+	}
+	with := func(old, new string) string { return strings.Replace(formula, old, new, 1) }
+	for name, check := range map[string]struct {
+		file, text, reason string
+	}{
+		"a formula naming no version":                  {"string.rb", dropLine(formula, `version "0.3.0"`), "names 0 versions"},
+		"a formula naming two versions":                {"string.rb", with(`  version "0.3.0"`+"\n", `  version "0.3.0"`+"\n"+`  version "0.3.1"`+"\n"), "names 2 versions"},
+		"a formula naming a version in a block":        {"string.rb", with(url, `      version "0.3.0"`+"\n"+url), "is not a version line of the class's own"},
+		"a formula with a url and no sha256":           {"string.rb", with(sha, ""), "no sha256 line after it"},
+		"a formula with a sha256 before its url":       {"string.rb", with(url+sha, sha+url), "no url line before it"},
+		"a formula with more after a url's string":     {"string.rb", with(url, strings.TrimSuffix(url, "\n")+", using: :nounzip\n"), "is not a url line"},
+		"a formula with a url whose string never ends": {"string.rb", with(url, strings.TrimSuffix(url, "\"\n")+"\n"), "is not a url line"},
+		"a formula with a url made of two strings":     {"string.rb", with(url, strings.Replace(url, "/string_linux", `/" + "string_linux`, 1)), "is not a url line"},
+		"a formula with a url that Ruby fills in":      {"string.rb", with(url, strings.Replace(url, "v0.3.0", "v#{version}", 1)), "is not a url line"},
+		"a formula with no url":                        {"string.rb", "class String < Formula\n  version \"0.3.0\"\nend\n", "installs no archive"},
+		"an empty formula":                             {"string.rb", "", "names 0 versions"},
+		"a manifest that is not JSON":                  {"string.json", manifest[:len(manifest)/2], "unexpected end of JSON input"},
+		"a manifest giving a list of urls":             {"string.json", scoopWith(t, manifest, func(m map[string]any) { architecture(m, "64bit")["url"] = []any{"a", "b"} }), "cannot unmarshal array"},
+		"a manifest naming no version":                 {"string.json", scoopWith(t, manifest, func(m map[string]any) { delete(m, "version") }), "names no version"},
+		"a manifest with no architecture":              {"string.json", scoopWith(t, manifest, func(m map[string]any) { delete(m, "architecture") }), "installs no archive"},
+		"a file that is neither formula nor manifest":  {"string.txt", formula, "neither a formula (.rb) nor a Scoop manifest (.json)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := installsOf(t, check.file, check.text)
+			if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, "release installs: ") || !strings.Contains(got.stderr, check.reason) {
+				t.Errorf("%+v, want a refusal that mentions %q", got, check.reason)
+			}
+		})
+	}
+	t.Run("a file that is not there", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "string.rb")
+		if got := runTool(t, nil, nil, "installs", path); got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, path) {
+			t.Errorf("%+v, want a refusal that names %s", got, path)
+		}
+	})
 }

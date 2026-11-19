@@ -26,7 +26,7 @@ archives:
         formats: [zip]
     files: [README.md, LICENSE]
 
-# Formula/string.rb builds from this archive of the tagged source.
+# An archive of the tagged source, for building string from it.
 source:
   enabled: true
   name_template: "string-{{ .Version }}"

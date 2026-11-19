@@ -4,17 +4,18 @@ A release is a signed `v*` tag on `main`. Pushing it runs `.github/workflows/rel
 
 1. **check**, in the `release` environment, before anything is built. It refuses a tag that is not `v` and a version (`v0.3.0`, or `v0.3.0-rc.1` for a pre-release), a tag whose commit is not on `main`, and a commit without `install.sh` and `install.ps1`. It runs `go run ./tools/release keys`, which fails unless `RELEASE_SIGNING_KEY` is one of the keys in that commit's `internal/release/keys.go` and `RELEASE_SIGNING_KEY_PREVIOUS`, when set, is a key. It also fails unless the R2 keys can read the bucket. Each failure names what to fix.
 2. **release** tests, then builds with GoReleaser:
-   - the GitHub release: archives for every platform, `checksums.txt`, `.deb`, `.rpm` and `.apk` packages, and the source archive `string-X.Y.Z.tar.gz` that the Homebrew formula builds from;
+   - the GitHub release: archives for every platform, `checksums.txt`, `.deb`, `.rpm` and `.apk` packages, and the source archive `string-X.Y.Z.tar.gz`;
    - `ghcr.io/usestring/cli`, tagged with the version and `latest`, for linux/amd64 and linux/arm64.
 
    A pre-release becomes a GitHub pre-release, which `releases/latest` passes over, and leaves the image's `latest` tag where it was.
 3. **npm** (`NPM_TOKEN`) publishes a package for each platform, then `@usestring/cli`, which installs the one that fits. It skips a pre-release.
 4. **publish**, in the `release` environment, puts the release on the download host, `https://cli.usestring.ai`. It downloads the GitHub release and builds `manifest.json`, which lists each platform's archive with its size and SHA-256. It signs the manifest into `manifest.json.sig` and checks both as an installed copy would, then attaches them to the GitHub release. Last, it uploads every asset and the two manifest files to `/vX.Y.Z/`, with a cache header that keeps them for a year, and reads each one back through the host.
 5. **smoke**, on Linux, macOS and Windows, each on Intel and on Arm, installs the release from the host with the tag's own installer and runs `string update --check`. When `/stable` names another version, it also installs that one and runs `string update --version X.Y.Z`.
-6. **promote**, in the `stable` environment, runs for a version without a pre-release suffix. It uploads the tag's `install.sh` and `install.ps1` to the host, then points `/stable` at the version. On a tag push it only moves `/stable` forward.
-7. **live** runs when promote moved `/stable` forward. On each of the six machines it installs the version `/stable` named before, with the hosted installer as people do. Then it runs a plain `string update` and requires the new version.
+6. **promote**, in the `stable` environment, runs for a version without a pre-release suffix. It first decides whether `/stable` may move to the version: on a tag push, only forward. Then it commits `Formula/string.rb` and `bucket/string.json` for the version to `main`, through GitHub's API, which signs the commit. Last, it uploads the tag's `install.sh` and `install.ps1` to the host and points `/stable` at the version.
+7. **homebrew** and **scoop** run after promote. homebrew installs the release with Homebrew on macOS, checks that Homebrew lists it as the version, and runs the formula's test. scoop installs it with Scoop on Windows, on Intel and on Arm. Each runs its script in `tools/release`, which the packages workflow also runs on pull requests, on the tap or bucket at the commit promote made, and checks `string --version`.
+8. **live** runs when promote moved `/stable` forward. On each of the six machines it installs the version `/stable` named before, with the hosted installer as people do. Then it runs a plain `string update` and requires the new version.
 
-Copies of string installed by the installers check `/stable` once a day and update themselves to it, so promote is what ships a release to them. The scripts and `/stable` are served with a five-minute cache header.
+Copies of string installed by the installers check `/stable` once a day and update themselves to it, so promote is what ships a release to them. Copies installed with Homebrew or Scoop check it too, and then print the command that updates them, which is why promote commits the formula and the Scoop manifest before it moves `/stable`. The scripts and `/stable` are served with a five-minute cache header.
 
 Each file under `/vX.Y.Z/` is published once and never changes. publish skips a file the host already has with the same bytes, as on a re-run, and stops on one with other bytes. The bucket's lock on the prefix `v` refuses to replace one in any case. If a release needs a correction, publish a new version.
 
@@ -23,6 +24,7 @@ Each file under `/vX.Y.Z/` is published once and never changes. publish skips a 
 - The repository has two environments, `release` and `stable`, each limited to tags matching `v*` (in Settings > Environments, selected branches and tags, with the one tag rule `v*`). Each holds four secrets for the bucket behind the host: `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`, the key pair of an R2 API token that can read and write objects in that bucket alone.
 - `release` also holds `RELEASE_SIGNING_KEY`, and `internal/release/keys.go` on `main` holds the two public keys, as [Signing keys](#signing-keys) says. Until it does, every release stops at check.
 - npm needs `NPM_TOKEN`, as [npm](#npm) says.
+- promote commits to `main` itself, with the workflow's own token. `main` has no branch protection or ruleset today. A rule there that requires pull requests or status checks would refuse that commit, and promote would stop before it moves `/stable`.
 
 GitHub runs the workflow file in the tag's own commit, so this workflow releases a tag only when that commit of `main` has this workflow, both installers and `tools/release`. A tag on an older commit runs the workflow that commit has, which releases to GitHub and npm with none of check's tests, no signed manifest and nothing on the host, so never tag one. GitHub refuses a run by hand on such a tag, since its workflow has no `workflow_dispatch`. Releases made before this workflow stay on GitHub, where the installers find them.
 
@@ -91,7 +93,7 @@ That publishes the tag's release again (skipping what the host has), installs it
 gh workflow run release.yml --ref v0.3.0 -f promote=true
 ```
 
-A run by hand builds nothing: after check, it starts at publish, on the tag's existing release. With `promote=true` it points `/stable` at that version, even when that moves it back. New installs, and copies that have not updated yet, then get 0.3.0. Copies already on the newer version stay there, because a copy never moves back by itself. The real fix for a bad release is a new, higher version.
+A run by hand builds nothing: after check, it starts at publish, on the tag's existing release. With `promote=true` it points the formula, the Scoop manifest and `/stable` at that version, even when that moves them back. It commits the two files as that tag's `tools/release` writes them, so if `tools/release` has changed since the tag, main's tests fail on them until a pull request rewrites them with `go test ./tools/release -run 'Formula|Scoop' -update`. New installs, and copies that have not updated yet, then get 0.3.0. Copies already on the newer version stay there: a copy never moves back by itself, and neither Homebrew nor Scoop moves back a copy it installed. The real fix for a bad release is a new, higher version.
 
 ## When a job fails
 
@@ -109,7 +111,17 @@ Each job is safe to re-run, and **Re-run failed jobs** runs the failed ones agai
   npm dist-tag add @usestring/cli@0.4.0 latest
   ```
 
-- **promote**, otherwise: re-run; it uploads the installers and `/stable` again. A re-run after it had already moved `/stable` finds `/stable` at the version and skips live; check a copy of the version before by hand if live did not run.
+- **promote**, at its commit to `main`: when `main` moves on between reading it and committing, promote reads it again and retries, up to five tries. Any other refusal fails at once with GitHub's answer in the log, before `/stable` moves. Fix the cause and re-run. If the workflow cannot commit to `main` at all, commit the two files by pull request instead, written from the release's own `checksums.txt`, then re-run promote. It finds them on `main` and goes on to move `/stable`:
+
+  ```bash
+  dir=$(mktemp -d)
+  gh release download v0.3.0 --repo usestring/cli --pattern checksums.txt --dir "$dir"
+  go run ./tools/release formula "$dir" 0.3.0 > Formula/string.rb
+  go run ./tools/release scoop "$dir" 0.3.0 > bucket/string.json
+  ```
+
+- **promote**, otherwise: re-run. A re-run keeps each file on `main` that installs the version's archives with the release's checksums, so a fix made on `main` to the rest of either file stays. Otherwise it commits the tag's file in its place, and when both files stay it makes no commit. A file installs the same when `go run ./tools/release installs` prints the same for it as for the tag's: the version, then each archive's URL with its SHA-256. A file it cannot read counts as different. Then promote uploads the installers and `/stable` again. A re-run after it had already moved `/stable` finds `/stable` at the version and skips live; check a copy of the version before by hand if live did not run.
+- **homebrew** or **scoop**: re-run. Each installs from the commit promote made, so a re-run tests the same files even after a later release has changed them. If it fails again, people who install with that manager meet the same failure. Homebrew and Scoop read `main`, so a fix in `tools/release` reaches them, without a new version, once a pull request merges it with the two files rewritten as [Homebrew and Scoop](#homebrew-and-scoop) says. The packages workflow installs the rewritten files on that pull request.
 - When several releases come close together, the promote of one can still be waiting when the next one's arrives, and GitHub then cancels the waiting one. Nothing needs doing: promote only moves `/stable` forward, and the newest release wins. Re-run a cancelled promote only when it belongs to the newest version.
 
 ## Signing keys
@@ -164,24 +176,46 @@ Keep the old seed files in the secret store until then.
 
 `manifest.json` says `"schema": 1`, and copies of string refuse any other schema and ignore fields they do not know. A field added later never changes the schema. A format that old copies could not read would be a new file beside `manifest.json`, which would go on being published for them.
 
-## Homebrew
+## Homebrew and Scoop
 
-[usestring/cli](https://github.com/usestring/cli) is its own Homebrew tap: `Formula/string.rb` builds the CLI from the release's source archive. After a release, update the formula's `url` and `sha256` from the published `string-X.Y.Z.tar.gz` (its checksum is in `checksums.txt`) and check it before merging:
+[usestring/cli](https://github.com/usestring/cli) is its own Homebrew tap and Scoop bucket. `Formula/string.rb` installs the release's binary for the machine's system and CPU, from the GitHub release's archives, so Homebrew needs no Go. `bucket/string.json` does the same on Windows, for Intel and for Arm, and has Scoop's `checkver` and `autoupdate`. Both name the version and the SHA-256 of each archive. The formula names its version on a line of its own: Homebrew before 6.0.14 reads a version from the archive's name, which gives 64, from arm64 or amd64. Later versions read it from the release's URL as well, and their audit calls the line redundant.
+
+`tools/release` writes both files from the release's `checksums.txt`, and promote commits them, so neither is edited by hand: a change belongs in `tools/release`. Its tests compare what it writes with the files in `tools/release/testdata`, and check that the two files in the repository are what it writes for the version they name. After changing what it writes, rewrite all four and read the diff:
 
 ```bash
-brew style Formula/string.rb
-brew install --build-from-source usestring/cli/string
-brew test usestring/cli/string
-brew livecheck --formula usestring/cli/string
-brew audit --strict --formula usestring/cli/string
+go test ./tools/release -run 'Formula|Scoop' -update
 ```
 
-Use a clean Homebrew environment to test linking and upgrades. If `string` is already installed through npm, use `--skip-link` during local formula validation and run the binary directly from the new keg. The formula test checks missing-credential behavior without sending a paid API request.
+The packages workflow, `.github/workflows/packages.yml`, installs both files as people do, on each pull request that changes them, `tools/release` or the workflow, and on each such push to `main`: the formula on macOS and Ubuntu, the manifest on Windows on Intel and on Arm. It runs the scripts the release's homebrew and scoop jobs run, `tools/release/homebrew.sh` and `tools/release/scoop.ps1`, on its own checkout, then `brew audit` and `brew style` on the formula. The files in the repository name a release that is out, so it installs that release's archives. promote's commit to `main` goes through the workflow's own token, and GitHub starts no workflow for a push made that way, so neither this workflow nor the tests run on it; the next pull request's runs are the first to see it.
+
+To check the formula by hand, in a clean Homebrew:
+
+```bash
+brew tap usestring/cli https://github.com/usestring/cli
+brew install usestring/cli/string
+brew list --versions string
+brew test usestring/cli/string
+brew audit --strict --online --except=version usestring/cli/string
+brew style usestring/cli/string
+brew livecheck usestring/cli/string
+```
+
+`--except=version` skips the audit that calls the version line redundant. From 6.0.0, Homebrew loads a formula from another tap only once it is trusted, and `brew install usestring/cli/string` trusts the formula it names; the audit before an install would refuse it. Homebrew does not quarantine what it downloads, so the binary runs on macOS though it is not signed. If `string` is already installed through npm, use `--skip-link` during local validation and run the binary directly from the new keg. The formula test checks missing-credential behavior without sending a paid API request.
 
 The first-party tap is an interim route. Official `homebrew/core` acceptance additionally needs current source/release eligibility and public-interest evidence for this repository.
+
+### winget
+
+There is no winget package yet. Submitting one opens a pull request on `microsoft/winget-pkgs`, a repository we do not own, so it needs a maintainer's decision, a package identifier and a GitHub token, and nothing has been submitted. A release's Windows archives fit winget's portable zip package, a set of three manifests under `manifests/<first letter>/<publisher>/<name>/<version>/`:
+
+- the version manifest: `PackageIdentifier`, `PackageVersion` and `DefaultLocale` (`en-US`);
+- the installer manifest: `InstallerType: zip`, `NestedInstallerType: portable`, and `NestedInstallerFiles` with `RelativeFilePath: string.exe` and `PortableCommandAlias: string`, so winget puts `string` on the PATH. Under `Installers`, one entry for `x64` with `string_windows_amd64.zip` and one for `arm64` with `string_windows_arm64.zip`, each with its release URL and the SHA-256 from `checksums.txt` as `InstallerSha256`;
+- the default locale manifest: `Publisher`, `PackageName`, `License: MIT`, `ShortDescription` and `PackageUrl`.
+
+`wingetcreate`, winget's manifest tool, writes all three in the current schema. `wingetcreate new` makes the first submission from the two archive URLs. For each release after it, a step after promote would run `wingetcreate update <identifier> --version X.Y.Z --urls <x64 zip URL> <arm64 zip URL> --submit --token <token>`, which opens the pull request from a fork owned by the token's account. winget's own checks and its moderators then decide when the release appears. Before the first submission, `string update` must learn to leave a copy that winget installed to winget, as it does for Homebrew and Scoop.
 
 ## After a release
 
 The first push to `ghcr.io/usestring/cli` creates the package, and GitHub may create it private. If `docker pull` asks for credentials, an organization owner opens the package's settings and sets its visibility to public.
 
-Check the GitHub release, `curl -fsSL https://cli.usestring.ai/stable`, `docker run --rm ghcr.io/usestring/cli --version`, `brew install usestring/cli/string` (after the formula update), `npm view @usestring/cli version` and `npx -y @usestring/cli --version`.
+Check the GitHub release, `curl -fsSL https://cli.usestring.ai/stable`, `docker run --rm ghcr.io/usestring/cli --version`, `npm view @usestring/cli version` and `npx -y @usestring/cli --version`. The homebrew and scoop jobs have installed the release with Homebrew and Scoop.

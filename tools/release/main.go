@@ -3,8 +3,10 @@
 // platform's archive with its size and SHA-256, and manifest.json.sig, the
 // signatures an installed copy of string checks it with. It also makes the
 // signing keys, checks the ones a release run holds before it builds
-// anything, and answers the workflow's questions about a tag and about moving
-// /stable, so that the workflow orders versions exactly as string does.
+// anything, answers the workflow's questions about a tag and about moving
+// /stable, so that the workflow orders versions exactly as string does,
+// writes the Homebrew formula and the Scoop manifest for a release, and reads
+// back what either one installs.
 //
 //	go run ./tools/release keygen FILE
 //	go run ./tools/release keys
@@ -13,6 +15,9 @@
 //	go run ./tools/release verify manifest.json manifest.json.sig
 //	go run ./tools/release tag TAG
 //	go run ./tools/release promote EVENT VERSION CURRENT
+//	go run ./tools/release formula DIR VERSION > Formula/string.rb
+//	go run ./tools/release scoop DIR VERSION > bucket/string.json
+//	go run ./tools/release installs Formula/string.rb
 //
 // Versions are written without a v, as in 0.3.0. Run from the commit being
 // released, sign and verify check against the keys that commit's binaries
@@ -36,6 +41,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/usestring/cli/internal/release"
@@ -49,6 +55,9 @@ const usage = `Usage:
   release verify MANIFEST SIGNATURES      check both as a copy of string built from this commit would
   release tag TAG                         print a release tag's version and whether it is a pre-release
   release promote EVENT VERSION CURRENT   print how /stable moves from CURRENT to VERSION, or refuse
+  release formula DIR VERSION             print Formula/string.rb for the archives checksums.txt in DIR lists
+  release scoop DIR VERSION               print bucket/string.json for the archives checksums.txt in DIR lists
+  release installs FILE                   print what a formula (.rb) or Scoop manifest (.json) installs: its version, then each url and sha256
 `
 
 // The environment variables keys and sign read each key from, as the base64
@@ -58,9 +67,16 @@ const (
 	previousSigningKey = "RELEASE_SIGNING_KEY_PREVIOUS"
 )
 
-// platforms are the archives a manifest lists, named as .goreleaser.yaml
-// names them.
-var platforms = []struct{ goos, goarch, ext string }{
+// platform is a system and CPU that a release has an archive for.
+type platform struct{ goos, goarch, ext string }
+
+// archive is the platform's archive, named as .goreleaser.yaml names it.
+func (p platform) archive() string {
+	return "string_" + p.goos + "_" + p.goarch + p.ext
+}
+
+// platforms are the archives a manifest lists.
+var platforms = []platform{
 	{"darwin", "amd64", ".tar.gz"},
 	{"darwin", "arm64", ".tar.gz"},
 	{"linux", "amd64", ".tar.gz"},
@@ -76,7 +92,7 @@ func main() {
 // run is the command with what it takes from outside passed in. trusted gives
 // the keys that copies built from this commit accept, which tests replace.
 func run(args []string, stdout, stderr io.Writer, getenv func(string) string, trusted func() ([]ed25519.PublicKey, error)) int {
-	arity := map[string]int{"keygen": 1, "keys": 0, "manifest": 3, "sign": 1, "verify": 2, "tag": 1, "promote": 3}
+	arity := map[string]int{"keygen": 1, "keys": 0, "manifest": 3, "sign": 1, "verify": 2, "tag": 1, "promote": 3, "formula": 2, "scoop": 2, "installs": 1}
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -102,6 +118,12 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string, tr
 		err = tag(args[0], stdout)
 	case "promote":
 		err = promote(args[0], args[1], args[2], stdout)
+	case "formula":
+		err = formula(args[0], args[1], stdout)
+	case "scoop":
+		err = scoop(args[0], args[1], stdout)
+	case "installs":
+		err = installs(args[0], stdout)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "release %s: %v\n", command, err)
@@ -218,7 +240,7 @@ func manifest(dir, versionText, publishedText string, stdout io.Writer) error {
 	}
 	m := release.Manifest{Schema: 1, Version: v.String(), Published: published.UTC(), Assets: map[string]release.Asset{}}
 	for _, p := range platforms {
-		name := "string_" + p.goos + "_" + p.goarch + p.ext
+		name := p.archive()
 		listed, ok := sums[name]
 		if !ok {
 			return fmt.Errorf("checksums.txt lists no %s", name)
@@ -443,4 +465,302 @@ func promote(event, versionText, currentText string, stdout io.Writer) error {
 	}
 	_, err = fmt.Fprintln(stdout, direction)
 	return err
+}
+
+// archiveName is the archive platforms has for a system and CPU.
+func archiveName(goos, goarch string) string {
+	for _, p := range platforms {
+		if p.goos == goos && p.goarch == goarch {
+			return p.archive()
+		}
+	}
+	panic("no archive for " + goos + "/" + goarch)
+}
+
+// packaged is a release as the formula and the Scoop manifest name it: its
+// version, and the SHA-256 of each archive. Both point at the GitHub
+// release's archives, from which Homebrew's livecheck and Scoop's checkver
+// and autoupdate find a later release.
+type packaged struct {
+	version string
+	sums    map[string]string
+}
+
+func (p packaged) Version() string {
+	return p.version
+}
+
+func (p packaged) URL(goos, goarch string) string {
+	return "https://github.com/usestring/cli/releases/download/v" + p.version + "/" + archiveName(goos, goarch)
+}
+
+func (p packaged) SHA256(goos, goarch string) string {
+	return p.sums[archiveName(goos, goarch)]
+}
+
+// readPackaged reads the release whose checksums.txt is in dir. Homebrew and
+// Scoop install what main names as soon as it names it, so neither file ever
+// names a pre-release.
+func readPackaged(dir, versionText string) (packaged, error) {
+	v, err := release.ParseVersion(versionText)
+	if err != nil {
+		return packaged{}, err
+	}
+	if v.Prerelease() {
+		return packaged{}, fmt.Errorf("%s is a pre-release, which the formula and the Scoop manifest never name", v)
+	}
+	sums, err := readChecksums(filepath.Join(dir, "checksums.txt"))
+	if err != nil {
+		return packaged{}, err
+	}
+	for _, p := range platforms {
+		name := p.archive()
+		sum, ok := sums[name]
+		if !ok {
+			return packaged{}, fmt.Errorf("checksums.txt lists no %s", name)
+		}
+		if decoded, err := hex.DecodeString(sum); err != nil || len(decoded) != sha256.Size || sum != strings.ToLower(sum) {
+			return packaged{}, fmt.Errorf("checksums.txt gives %s the SHA-256 %q, which is not 64 lowercase hex digits", name, sum)
+		}
+	}
+	return packaged{version: v.String(), sums: sums}, nil
+}
+
+// formulaTemplate names the version itself: Homebrew before 6.0.14 reads one
+// from the archive's name, which gives 64, from arm64 or amd64. Later ones
+// read it from the release's URL and call the line redundant, so brew audit
+// runs with --except=version.
+var formulaTemplate = template.Must(template.New("formula").Parse(`# The release workflow writes this file with tools/release for each release
+# and commits it to main, so a change to it belongs in tools/release.
+class String < Formula
+  desc "Command-line access to String Web Access"
+  homepage "https://github.com/usestring/cli"
+  version "{{.Version}}"
+  license "MIT"
+
+  livecheck do
+    url :stable
+    regex(/^v?(\d+(?:\.\d+)+)$/i)
+  end
+
+  on_macos do
+    on_arm do
+      url "{{.URL "darwin" "arm64"}}"
+      sha256 "{{.SHA256 "darwin" "arm64"}}"
+    end
+    on_intel do
+      url "{{.URL "darwin" "amd64"}}"
+      sha256 "{{.SHA256 "darwin" "amd64"}}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "{{.URL "linux" "arm64"}}"
+      sha256 "{{.SHA256 "linux" "arm64"}}"
+    end
+    on_intel do
+      url "{{.URL "linux" "amd64"}}"
+      sha256 "{{.SHA256 "linux" "amd64"}}"
+    end
+  end
+
+  def install
+    bin.install "string"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/string --version")
+
+    # Without a key, fetch and search go out over the network; a key-only command is refused
+    # before any request, so it checks the missing-key path offline.
+    ENV.delete("STRING_API_KEY")
+    ENV.delete("XDG_CONFIG_HOME")
+    assert_match "needs a key", shell_output("#{bin}/string sitemap list 2>&1", 3)
+  end
+end
+`))
+
+// formula prints Formula/string.rb, which installs the release's binary for
+// the machine's system and CPU, so that Homebrew needs no Go to install it.
+func formula(dir, versionText string, stdout io.Writer) error {
+	p, err := readPackaged(dir, versionText)
+	if err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	if err := formulaTemplate.Execute(&out, p); err != nil {
+		return err
+	}
+	_, err = stdout.Write(out.Bytes())
+	return err
+}
+
+// scoopURL is a download in the Scoop manifest, with its SHA-256 where the
+// manifest names one release.
+type scoopURL struct {
+	URL  string `json:"url"`
+	Hash string `json:"hash,omitempty"`
+}
+
+// scoopManifest is bucket/string.json. Scoop's checkver and autoupdate let
+// its own tools fill in a later release, as they do for other buckets, and
+// Scoop ignores the "##" key, which holds a comment.
+type scoopManifest struct {
+	Comment      string              `json:"##"`
+	Version      string              `json:"version"`
+	Description  string              `json:"description"`
+	Homepage     string              `json:"homepage"`
+	License      string              `json:"license"`
+	Architecture map[string]scoopURL `json:"architecture"`
+	Bin          string              `json:"bin"`
+	Checkver     string              `json:"checkver"`
+	Autoupdate   struct {
+		Architecture map[string]scoopURL `json:"architecture"`
+		Hash         scoopURL            `json:"hash"`
+	} `json:"autoupdate"`
+}
+
+// scoop prints bucket/string.json, the Scoop manifest for the release's
+// Windows archives.
+func scoop(dir, versionText string, stdout io.Writer) error {
+	p, err := readPackaged(dir, versionText)
+	if err != nil {
+		return err
+	}
+	// Scoop's autoupdate puts each later version in place of $version.
+	later := packaged{version: "$version"}
+	m := scoopManifest{
+		Comment:     "The release workflow writes this file with tools/release for each release and commits it to main, so a change to it belongs in tools/release.",
+		Version:     p.version,
+		Description: "Command-line access to String Web Access",
+		Homepage:    "https://github.com/usestring/cli",
+		License:     "MIT",
+		Architecture: map[string]scoopURL{
+			"64bit": {URL: p.URL("windows", "amd64"), Hash: p.SHA256("windows", "amd64")},
+			"arm64": {URL: p.URL("windows", "arm64"), Hash: p.SHA256("windows", "arm64")},
+		},
+		Bin:      "string.exe",
+		Checkver: "github",
+	}
+	m.Autoupdate.Architecture = map[string]scoopURL{
+		"64bit": {URL: later.URL("windows", "amd64")},
+		"arm64": {URL: later.URL("windows", "arm64")},
+	}
+	m.Autoupdate.Hash = scoopURL{URL: "$baseurl/checksums.txt"}
+	// Scoop's own tools indent manifests with four spaces.
+	data, err := json.MarshalIndent(m, "", "    ")
+	if err != nil {
+		return err
+	}
+	_, err = stdout.Write(append(data, '\n'))
+	return err
+}
+
+// installs prints what a formula (.rb) or a Scoop manifest (.json) installs:
+// the version it names, then each archive's URL and the SHA-256 checked
+// against it, one pair to a line, sorted. promote keeps main's copy of either
+// file when this prints the same for it as for the file the tag's
+// tools/release writes, so a change made on main to the rest of the file
+// stays. It refuses a file it cannot read, which promote counts as different.
+func installs(path string, stdout io.Writer) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var version string
+	var archives []string
+	switch filepath.Ext(path) {
+	case ".rb":
+		version, archives, err = formulaInstalls(string(data))
+	case ".json":
+		version, archives, err = scoopInstalls(data)
+	default:
+		return fmt.Errorf("%s is neither a formula (.rb) nor a Scoop manifest (.json)", path)
+	}
+	switch {
+	case err != nil:
+		return fmt.Errorf("%s: %w", path, err)
+	case version == "":
+		return fmt.Errorf("%s names no version", path)
+	case len(archives) == 0:
+		return fmt.Errorf("%s installs no archive", path)
+	}
+	slices.Sort(archives)
+	_, err = fmt.Fprintf(stdout, "%s\n%s\n", version, strings.Join(archives, "\n"))
+	return err
+}
+
+// formulaInstalls reads a formula as formulaTemplate writes one: the version
+// on a line of the class's own, and each url on a line with its sha256 on the
+// next. A line that starts as one of these does but is not in that form is an
+// error, so that no url goes unread.
+func formulaInstalls(text string) (string, []string, error) {
+	lines := strings.Split(text, "\n")
+	var versions, archives []string
+	for i := 0; i < len(lines); i++ {
+		code := strings.TrimLeft(lines[i], " \t")
+		switch {
+		case strings.HasPrefix(code, `version "`):
+			version, ok := quoted(code, "version")
+			if !ok || lines[i] != "  "+code {
+				return "", nil, fmt.Errorf("line %d is not a version line of the class's own: %s", i+1, lines[i])
+			}
+			versions = append(versions, version)
+		case strings.HasPrefix(code, `url "`):
+			url, ok := quoted(code, "url")
+			if !ok {
+				return "", nil, fmt.Errorf("line %d is not a url line: %s", i+1, lines[i])
+			}
+			if i+1 == len(lines) {
+				return "", nil, fmt.Errorf("line %d gives a url with no sha256 line after it", i+1)
+			}
+			sum, ok := quoted(strings.TrimLeft(lines[i+1], " \t"), "sha256")
+			if !ok {
+				return "", nil, fmt.Errorf("line %d gives a url with no sha256 line after it", i+1)
+			}
+			archives = append(archives, url+" "+sum)
+			i++
+		case strings.HasPrefix(code, `sha256 "`):
+			return "", nil, fmt.Errorf("line %d gives a sha256 with no url line before it", i+1)
+		}
+	}
+	if len(versions) != 1 {
+		return "", nil, fmt.Errorf("names %d versions on lines of the class's own, not 1", len(versions))
+	}
+	return versions[0], archives, nil
+}
+
+// quoted is the string in code when code is the name, a space and a single
+// double-quoted string, as in url "https://...". Ruby could read a string
+// holding a quote, a backslash or a # as something other than its text, so
+// such a string counts as none.
+func quoted(code, name string) (string, bool) {
+	s, ok := strings.CutPrefix(code, name+` "`)
+	if !ok {
+		return "", false
+	}
+	s, ok = strings.CutSuffix(s, `"`)
+	if !ok || strings.ContainsAny(s, `"\#`) {
+		return "", false
+	}
+	return s, true
+}
+
+// scoopInstalls reads a Scoop manifest's version and the url and hash of each
+// architecture. autoupdate's urls are where Scoop's own tools look for a
+// later release, not what this one installs, so they are left out.
+func scoopInstalls(data []byte) (string, []string, error) {
+	var m struct {
+		Version      string
+		Architecture map[string]struct{ URL, Hash string }
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return "", nil, err
+	}
+	var archives []string
+	for _, a := range m.Architecture {
+		archives = append(archives, a.URL+" "+a.Hash)
+	}
+	return m.Version, archives, nil
 }

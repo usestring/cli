@@ -30,11 +30,12 @@ npx -y @usestring/cli init      # or: npm install -g @usestring/cli
 ```powershell
 # Windows, in PowerShell: installs string and adds the skill to your coding agents
 irm https://raw.githubusercontent.com/usestring/cli/main/install.ps1 | iex
+scoop bucket add usestring https://github.com/usestring/cli; scoop install string
 ```
 
 Until `npm view @usestring/cli version` prints 0.2.0 or later, `npx -y @usestring/cli` and `npm install -g @usestring/cli` get 0.1.0, the old Node CLI, which needs `STRING_API_KEY` and has none of the commands here.
 
-Homebrew builds the binary from the release's source archive, so Go is needed only while it builds. If an npm installation already provides `string`, remove it with `npm uninstall -g @usestring/cli` first; both provide the same command. Upgrade with `brew update && brew upgrade usestring/cli/string`.
+Homebrew and Scoop install the release's own binary, so neither needs Go. If an npm installation already provides `string`, remove it with `npm uninstall -g @usestring/cli` first; each provides the same command. Upgrade with `brew update && brew upgrade usestring/cli/string`, or with `scoop update scoop string`.
 
 `install.sh` and `install.ps1` put the binary in `~/.local/bin`, or `%USERPROFILE%\.local\bin` on Windows. `install.ps1` adds that directory to your PATH, and `install.sh` prints the line that adds it in zsh, bash or fish. Each checks the binary against the release checksums, then runs `string init` so your coding agents get the skill below. They download from `https://cli.usestring.ai`, and from the GitHub release whenever that host cannot serve the release. `STRING_VERSION`, such as `0.3.0`, installs that release instead of the latest and keeps the copy at it, and `STRING_INSTALL_DIR` puts the binary somewhere else. Pass `init` options after `sh -s --`, or `--no-init` to skip it. `irm | iex` takes no options, so in PowerShell set `$env:STRING_NO_INIT = 1` or `$env:STRING_INIT_AGENT` first, or run a saved `install.ps1` with `-NoInit`, `-Agent`, `-Version` and `-InstallDir`.
 
@@ -193,4 +194,4 @@ npx skills add usestring/cli           # the same skill through the skills insta
 
 ## Project and releases
 
-[usestring/cli](https://github.com/usestring/cli) is the canonical upstream for the native CLI, npm client, source releases, issues, and Homebrew formula. CLI maintainers own release publication and the matching formula update; see [releasing the CLI](docs/releasing.md).
+[usestring/cli](https://github.com/usestring/cli) is the canonical upstream for the native CLI, npm client, source releases, issues, the Homebrew formula and the Scoop manifest. CLI maintainers own release publication, and the release workflow updates the formula and the manifest; see [releasing the CLI](docs/releasing.md).

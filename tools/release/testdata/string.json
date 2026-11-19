@@ -1,0 +1,32 @@
+{
+    "##": "The release workflow writes this file with tools/release for each release and commits it to main, so a change to it belongs in tools/release.",
+    "version": "0.3.0",
+    "description": "Command-line access to String Web Access",
+    "homepage": "https://github.com/usestring/cli",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/usestring/cli/releases/download/v0.3.0/string_windows_amd64.zip",
+            "hash": "cf8df9c30c8ec52e632a22cff21cd538c541eeae5bd680afebf4baa57ec4fdad"
+        },
+        "arm64": {
+            "url": "https://github.com/usestring/cli/releases/download/v0.3.0/string_windows_arm64.zip",
+            "hash": "e3c7cb0f4f4b26f52fcd12ecb89fcd80d1302f9d2e8f25967c9d0392fe3d96dc"
+        }
+    },
+    "bin": "string.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/usestring/cli/releases/download/v$version/string_windows_amd64.zip"
+            },
+            "arm64": {
+                "url": "https://github.com/usestring/cli/releases/download/v$version/string_windows_arm64.zip"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/checksums.txt"
+        }
+    }
+}
