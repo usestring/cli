@@ -130,6 +130,7 @@ Usage:
   string version [--json]
   string --version, string -v
   string help COMMAND                     the same as string COMMAND --help
+  string help TOPIC                       exit-codes, environment, formatting or agents
 
 Each API request field is a flag spelled exactly as the field, so the API
 reference reads straight onto the command line:
