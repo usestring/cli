@@ -95,7 +95,7 @@ var globalFlagDocs = []flagDoc{
 	{name: "json", about: "JSON where the command has it, and errors as one JSON object on stderr"},
 	{name: "errors", value: "json|text", about: "errors as JSON, as --json gives them, with stdout as it is"},
 	{name: "quiet", short: "q", about: "no status lines on stderr; errors and the keyless allowance stay"},
-	{name: "timeout", value: "DURATION", about: "how long a wait or a request may take; 0 for no limit"},
+	{name: "timeout", value: "DURATION", about: "how long each request may take (120s, 300s for integrations run, 90s under an agent), and a whole --wait or --poll (90s under an agent); 0 for no limit"},
 	{name: "no-input", about: "wait for no person, as under an agent"},
 	{name: "no-open", about: "never open a browser"},
 	{name: "yes", short: "y", about: "confirm what a command would ask first"},
