@@ -262,6 +262,8 @@ type operation struct {
 	// changes is set for a call that does something beyond reading, which a
 	// Ctrl-C while it is sent may leave done.
 	changes bool
+	// note goes to stderr before the call, as when https:// was added to a URL.
+	note string
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -681,6 +683,20 @@ func parseURL(value string) (*url.URL, error) {
 	return u, nil
 }
 
+// targetOf is the URL a command sends: value as given, or with https:// in
+// front when it names no scheme, as example.com doesn't, and then a note that
+// says so.
+func targetOf(value string) (target, note string, err error) {
+	if given := strings.TrimSpace(value); given != "" && !strings.Contains(given, "://") {
+		if target, err = targetURL("https://" + given); err == nil {
+			note = given + " names no scheme, so string uses " + target
+		}
+		return target, note, err
+	}
+	target, err = targetURL(value)
+	return target, "", err
+}
+
 func targetURL(value string) (string, error) {
 	u, err := parseURL(value)
 	if err != nil {
@@ -783,12 +799,12 @@ func fetchCommand(list []string, stdin io.Reader) (*operation, error) {
 	if err != nil {
 		return nil, err
 	}
-	target, err := targetURL(parsed.positionals[0])
+	target, note, err := targetOf(parsed.positionals[0])
 	if err != nil {
 		return nil, err
 	}
 	body["url"], body["method"], body["format"] = target, "GET", format
-	return &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed)}, nil
+	return &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed), note: note}, nil
 }
 
 func requestCommand(list []string, stdin io.Reader) (*operation, error) {
@@ -823,7 +839,7 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 	if err != nil {
 		return nil, err
 	}
-	target, err := targetURL(parsed.positionals[1])
+	target, note, err := targetOf(parsed.positionals[1])
 	if err != nil {
 		return nil, err
 	}
@@ -831,7 +847,7 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 	if hasText {
 		body["body"] = text
 	}
-	return &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed), changes: true}, nil
+	return &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed), changes: true, note: note}, nil
 }
 
 func searchCommand(list []string, stdin io.Reader) (*operation, error) {
@@ -889,12 +905,12 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 		if err != nil {
 			return nil, err
 		}
-		target, err := targetURL(parsed.positionals[0])
+		target, note, err := targetOf(parsed.positionals[0])
 		if err != nil {
 			return nil, err
 		}
 		body["url"] = target
-		return &operation{method: "POST", path: "/sitemap", body: body, output: output, approve: approve, wait: wait, changes: true}, nil
+		return &operation{method: "POST", path: "/sitemap", body: body, output: output, approve: approve, wait: wait, changes: true, note: note}, nil
 	}
 	if _, ok := parsed.value("input"); ok {
 		return nil, errors.New("--input applies only to sitemap submit")
@@ -1082,7 +1098,9 @@ func execute(list []string, rt runtime) error {
 		}
 		return execute(append(slices.Clone(list[1:]), "--help"), rt)
 	}
-	if strings.HasPrefix(list[0], "https://") || strings.HasPrefix(list[0], "http://") {
+	// A URL, or a word with a dot such as example.com, which no command
+	// has, is fetched.
+	if !strings.HasPrefix(list[0], "-") && (strings.Contains(list[0], "://") || strings.Contains(list[0], ".")) {
 		list = append([]string{"fetch"}, list...)
 	}
 	switch list[0] {
@@ -1117,6 +1135,9 @@ func execute(list []string, rt runtime) error {
 		return write(rt.stdout, []byte(helpFor(list[0])))
 	}
 	op.command = list[0]
+	if op.note != "" {
+		fmt.Fprintln(rt.stderr, op.note)
+	}
 	key, err := apiKey(rt.env)
 	if err != nil {
 		return &failure{exit: exitAuth, code: "invalid_key", message: err.Error()}
