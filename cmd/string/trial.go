@@ -224,7 +224,7 @@ func trialClaimCommand(list []string, rt runtime) error {
 		return usage(err)
 	}
 	if parsed.help {
-		return write(rt.stdout, []byte(help))
+		return write(rt.stdout, []byte(helpFor("trial")))
 	}
 	email, _ := parsed.value("email")
 	_, input := parsed.value("input")
