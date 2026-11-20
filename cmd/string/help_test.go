@@ -74,7 +74,7 @@ func TestEveryCommandHasItsOwnHelp(t *testing.T) {
 		}
 	}
 	// A command string doesn't have is an error, as it is without help.
-	if got := runOffline(t, "help", "bogus"); got.status != exitUsage || got.output != "" || got.errors != "Unknown command: bogus\n" {
+	if got := runOffline(t, "help", "bogus"); got.status != exitUsage || got.output != "" || got.errors != "Unknown command: bogus\nNext: run `string --help` for the commands\n" {
 		t.Errorf("string help bogus: %+v", got)
 	}
 }

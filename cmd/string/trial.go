@@ -213,8 +213,8 @@ func trialClaimCommand(list []string, rt runtime) error {
 	modes := []string{"--no-wait", "--poll"}
 	var chosen []string
 	list = slices.DeleteFunc(slices.Clone(list), func(arg string) bool {
-		if slices.Contains(modes, arg) {
-			chosen = append(chosen, arg)
+		if mode, ok := flagNamed(arg, modes); ok {
+			chosen = append(chosen, mode)
 			return true
 		}
 		return false
