@@ -55,7 +55,7 @@ func TestLoginPollUnderAnAgentStopsAfter90sAndKeepsTheCode(t *testing.T) {
 
 	got := session.startThenPoll(t)
 
-	want := signInWaiting + heartbeats("not approved yet") + "Stopped waiting after 90s; the code expires in 8m30s.\nNext: " + signInPoll + "\n"
+	want := signInWaiting + heartbeats("not approved yet") + "error: Stopped waiting after 90s; the code expires in 8m30s.\n\nnext: " + signInPoll + "\n"
 	if got.status != exitTimeout || got.output != "" || got.errors != want {
 		t.Errorf("exit %d, stdout %q, stderr:\n%s\nwant exit 7 and:\n%s", got.status, got.output, got.errors, want)
 	}
@@ -97,7 +97,7 @@ func TestLoginPollUnderAnAgentStopsAfter90sAndKeepsTheCode(t *testing.T) {
 		t.Fatalf("login --no-wait: %+v", got)
 	}
 	session.now = session.now.Add(11 * time.Minute)
-	if got := session.run("login", "--poll"); got.status != exitAuth || got.errors != "The code expired; run string login again\n" {
+	if got := session.run("login", "--poll"); got.status != exitAuth || got.errors != "error: The code expired; run string login again\n" {
 		t.Errorf("login --poll after the code expired: %+v", got)
 	}
 
@@ -111,7 +111,7 @@ func TestLoginPollUnderAnAgentStopsAfter90sAndKeepsTheCode(t *testing.T) {
 		t.Fatalf("login --no-wait: %+v", got)
 	}
 	session.now = session.now.Add(8*time.Minute + 30*time.Second)
-	if got := session.run("login", "--poll"); got.status != exitAuth || !strings.HasSuffix(got.errors, "\nThe code expired; run string login again\n") {
+	if got := session.run("login", "--poll"); got.status != exitAuth || !strings.HasSuffix(got.errors, "\nerror: The code expired; run string login again\n") {
 		t.Errorf("login --poll with 90s left on the code: %+v", got)
 	}
 	if _, err := os.Stat(session.file("pending.json")); !os.IsNotExist(err) {
@@ -155,7 +155,7 @@ func TestSignInWaitLastsAsLongAsItsLimit(t *testing.T) {
 		}
 		ended := ""
 		if c.stopped != "" {
-			ended = c.stopped + "\nNext: " + signInPoll + "\n"
+			ended = "error: " + c.stopped + "\n\nnext: " + signInPoll + "\n"
 		}
 		polls := len(service.codes())
 		switch {
@@ -184,7 +184,7 @@ func TestLoginPollOnABrowserSignInStopsAt90sAndKeepsIt(t *testing.T) {
 
 	got := session.run("login", "--poll")
 
-	want := browserWaiting + heartbeats("not authorized yet") + "Stopped waiting after 90s; the link expires in 13m30s.\nNext: run `string login --poll`\n"
+	want := browserWaiting + heartbeats("not authorized yet") + "error: Stopped waiting after 90s; the link expires in 13m30s.\n\nnext: run `string login --poll`\n"
 	if got.status != exitTimeout || got.output != "" || got.errors != want {
 		t.Errorf("exit %d, stdout %q, stderr:\n%s\nwant exit 7 and:\n%s", got.status, got.output, got.errors, want)
 	}
@@ -275,7 +275,7 @@ func TestTrialClaimPollUnderAnAgentStopsAfter90sAndKeepsTheClaim(t *testing.T) {
 
 	got := poll()
 
-	want := "claim · waiting for dev@localhost to enter the code · the code expires in 10m · resume: string trial claim --poll\n" + heartbeats("code not entered yet") + "Stopped waiting after 90s; the code expires in 8m30s.\nNext: run `string trial claim --poll`\n"
+	want := "claim · waiting for dev@localhost to enter the code · the code expires in 10m · resume: string trial claim --poll\n" + heartbeats("code not entered yet") + "error: Stopped waiting after 90s; the code expires in 8m30s.\n\nnext: run `string trial claim --poll`\n"
 	mu.Lock()
 	asked := polls
 	claimed = true
@@ -306,7 +306,7 @@ func TestASignInPollThatRunsIntoTheLimitStopsTheWait(t *testing.T) {
 
 	got := session.startThenPoll(t, "--timeout", "300ms")
 
-	if got.status != exitTimeout || !strings.Contains(got.errors, "\nStopped waiting after 300ms; the code expires in ") || !strings.HasSuffix(got.errors, "\nNext: "+signInPoll+"\n") || service.requests("/oauth/token") != 1 {
+	if got.status != exitTimeout || !strings.Contains(got.errors, "\nerror: Stopped waiting after 300ms; the code expires in ") || !strings.HasSuffix(got.errors, "\n\nnext: "+signInPoll+"\n") || service.requests("/oauth/token") != 1 {
 		t.Errorf("a poll that ran into the limit: %+v after %d polls, want exit 7, the wait stopped, and 1 poll", got, service.requests("/oauth/token"))
 	}
 	if done := session.run("login", "--poll"); done.status != 0 {
@@ -340,7 +340,7 @@ func TestASignInPollThatRunsIntoTheLimitStopsTheWait(t *testing.T) {
 		sleep:  func(time.Duration) {},
 		exec:   execCtxFor(env, false, false, false),
 	})
-	if status != exitTimeout || !strings.HasPrefix(stderr.String(), "Stopped waiting after 300ms; the code expires in ") || !strings.HasSuffix(stderr.String(), "\nNext: run `string trial claim --poll`\n") {
+	if status != exitTimeout || !strings.HasPrefix(stderr.String(), "error: Stopped waiting after 300ms; the code expires in ") || !strings.HasSuffix(stderr.String(), "\n\nnext: run `string trial claim --poll`\n") {
 		t.Errorf("a claim poll that ran into the limit: exit %d: %s", status, stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, "trial.json")); err != nil {

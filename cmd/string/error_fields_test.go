@@ -120,7 +120,7 @@ func TestANetworkErrorSaysWhetherASandboxBlocksIt(t *testing.T) {
 			t.Errorf("%s: %v", c.about, envelope)
 		}
 		text, _ := runWith(t, &http.Client{Transport: failingTransport{c.err}}, vars, "search", "coffee")
-		if want := "string couldn't reach api.example.test: the sandbox this command runs in blocks the network.\nNext: " + ask + "\n"; text.errors != want {
+		if want := "error: string couldn't reach api.example.test: the sandbox this command runs in blocks the network.\n\nnext: " + ask + "\n"; text.errors != want {
 			t.Errorf("%s, as text: %q, want %q", c.about, text.errors, want)
 		}
 	}

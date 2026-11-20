@@ -474,15 +474,15 @@ var helpTopics = map[string]string{
                                             read the message; report it
   2    bad input: a flag, a value, a URL, a command string doesn't have, a
        400, 404 or 422 from the API, or a crawl that waits for approval
-                                            fix the command as Next says
+                                            fix the command as next says
   3    a key is needed, or the key was refused, or today's keyless allowance
-       is used up                           follow Next: drop the field, run
+       is used up                           follow next: drop the field, run
                                             string login --json, or ask the user
   4    out of credit; nothing was charged   tell the user
   5    rate limited                         wait for Retry-After, then retry
   6    String failed or didn't answer       retry once
   7    timed out. A wait that stopped leaves its crawl, sign-in or claim
-       going                                run the command in Next
+       going                                run the command in next
   130  interrupted by Ctrl-C                nothing
 
 With --json, an error is one {"error":{...}} object on stderr, with code,
@@ -552,7 +552,7 @@ Learn more: https://github.com/usestring/cli#commands
 Under an agent, string:
   - never opens a browser, and never waits for a person: login, init and
     trial claim print the link and code, and --poll waits for the approval;
-  - stops --wait and --poll after 90s with exit 7, and Next says how to go
+  - stops --wait and --poll after 90s with exit 7, and next says how to go
     on; each request to String may take 90s too. --timeout sets another limit;
   - shows no update notices;
   - names the agent in each request: string help environment.

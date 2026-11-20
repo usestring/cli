@@ -161,12 +161,34 @@ func shellWords(line string) []string {
 	return words
 }
 
+// Error is the text form of f: error: and what failed, the details under it,
+// then next: and the step out, after a blank line. The API's own message
+// stands in for its status and body.
 func (f *failure) Error() string {
-	lines := append([]string{f.message}, f.notes...)
-	if f.nextStep != "" {
-		lines = append(lines, "Next: "+f.nextStep)
+	said := f.message
+	if f.summary != "" {
+		said = fmt.Sprintf("%s (HTTP %d)", f.summary, f.status)
 	}
-	return strings.Join(lines, "\n")
+	lines := strings.Split(said, "\n")
+	var text strings.Builder
+	text.WriteString("error: " + lines[0])
+	for _, line := range append(lines[1:], f.notes...) {
+		text.WriteString("\n  " + line)
+	}
+	if f.nextStep != "" {
+		text.WriteString("\n\nnext: " + f.nextStep)
+	}
+	return text.String()
+}
+
+// bodyText is an answer's body as a sentence a message may carry: short
+// plain text, and nothing for an HTML page, JSON, or anything longer.
+func bodyText(data []byte) string {
+	text := strings.TrimSpace(decodeText(data))
+	if text == "" || len(text) > 200 || strings.ContainsAny(text, "<{\n") {
+		return ""
+	}
+	return text
 }
 
 func usage(err error) error {
@@ -198,18 +220,18 @@ func networkFailure(rt runtime, host string, err error) *failure {
 			next:       []nextCommand{{Type: stepTell, Why: "ask the person to allow " + host + " in the sandbox's network settings, or to run string outside it"}},
 		}
 	}
-	f := &failure{exit: exitFailure, code: "failed", message: err.Error()}
+	f := &failure{exit: exitFailure, code: "failed", message: "string lost the connection to " + host + " before an answer came."}
 	var dns *net.DNSError
 	var dial *net.OpError
 	var record tls.RecordHeaderError
 	var certificate *tls.CertificateVerificationError
 	switch {
 	case errors.As(err, &dns):
-		f.reason = "dns"
+		f.reason, f.message = "dns", "string couldn't find "+host+": the name doesn't resolve."
 	case errors.As(err, &record), errors.As(err, &certificate):
-		f.reason = "tls"
+		f.reason, f.message = "tls", "string couldn't make a secure connection to "+host+"."
 	case errors.As(err, &dial) && dial.Op == "dial":
-		f.reason = "connect"
+		f.reason, f.message = "connect", "string couldn't connect to "+host+"."
 	default:
 		return f
 	}
@@ -290,8 +312,8 @@ type refusal struct {
 // the request went without a key.
 func httpFailure(response *http.Response, data []byte, keyless bool) *failure {
 	status := response.StatusCode
-	f := &failure{status: status, message: fmt.Sprintf("HTTP %d", status)}
-	if detail := truncateUTF16(decodeText(data), 2000); detail != "" {
+	f := &failure{status: status, message: fmt.Sprintf("HTTP %d from %s", status, response.Request.URL.Host)}
+	if detail := bodyText(data); detail != "" {
 		f.message += ": " + detail
 	}
 	var body refusal

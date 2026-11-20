@@ -71,7 +71,7 @@ func TestSitemapWaitUnderAnAgentStopsAfter90s(t *testing.T) {
 	for _, at := range []string{"15s", "30s", "45s", "1m", "1m15s"} {
 		want += "waiting: running · 1,200 pages done, 3,400 queued · " + at + "\n"
 	}
-	want += "Stopped waiting after 90s; the crawl keeps running.\nNext: run `string sitemap status job-1 --wait`\n"
+	want += "error: Stopped waiting after 90s; the crawl keeps running.\n\nnext: run `string sitemap status job-1 --wait`\n"
 	if got.status != exitTimeout || got.errors != want {
 		t.Errorf("exit %d, stderr:\n%s\nwant exit 7 and:\n%s", got.status, got.errors, want)
 	}
@@ -117,7 +117,7 @@ func TestSitemapWaitLastsAsLongAsItsLimit(t *testing.T) {
 		switch {
 		case c.stopped == "" && (got.status != 0 || crawl.polls != 41):
 			t.Errorf("%s: exit %d after %d polls, want 0 after 41: %s", c.about, got.status, crawl.polls, got.errors)
-		case c.stopped != "" && (got.status != exitTimeout || !strings.Contains(got.errors, c.stopped+"\nNext: run `string sitemap status job-1 --wait`\n")):
+		case c.stopped != "" && (got.status != exitTimeout || !strings.Contains(got.errors, c.stopped+"\n\nnext: run `string sitemap status job-1 --wait`\n")):
 			t.Errorf("%s: exit %d: %s", c.about, got.status, got.errors)
 		}
 	}
@@ -149,7 +149,7 @@ func TestSitemapWaitStopsOnAStatusItDoesNotKnow(t *testing.T) {
 	} {
 		crawl := &crawlAPI{statuses: []string{crawlRunning, status}}
 		got := runCrawl(crawl.start(t), execCtx{}, "sitemap", "status", "job-1", "--wait")
-		if want := message + "\nNext: run `string sitemap status job-1 --wait`\n"; got.status != exitTimeout || !strings.HasSuffix(got.errors, want) || crawl.polls != 2 {
+		if want := message + "\n\nnext: run `string sitemap status job-1 --wait`\n"; got.status != exitTimeout || !strings.HasSuffix(got.errors, want) || crawl.polls != 2 {
 			t.Errorf("%s: exit %d after %d polls: %s", status, got.status, crawl.polls, got.errors)
 		}
 	}
@@ -181,7 +181,7 @@ func TestSitemapWaitEndsAPollAtItsLimit(t *testing.T) {
 		stderr: &stderr,
 		sleep:  func(time.Duration) {},
 	})
-	if want := "Stopped waiting after 200ms; the crawl keeps running.\nNext: run `string sitemap status job-1 --wait`\n"; status != exitTimeout || !strings.HasSuffix(stderr.String(), want) {
+	if want := "Stopped waiting after 200ms; the crawl keeps running.\n\nnext: run `string sitemap status job-1 --wait`\n"; status != exitTimeout || !strings.HasSuffix(stderr.String(), want) {
 		t.Errorf("exit %d: %s", status, stderr.String())
 	}
 }
