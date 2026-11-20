@@ -139,9 +139,36 @@ func TestNewExecCtxReadsTheStreamsAndVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer null.Close()
-	got := newExecCtx(envOf(map[string]string{"CI": "1", "CODEX_CI": "1"}), null, null, null)
-	want := execCtx{agent: "codex", agentFrom: "CODEX_CI", ci: true}
+	got := newExecCtx(envOf(map[string]string{"CI": "1", "DO_NOT_TRACK": "1", "CODEX_CI": "1"}), null, null, null)
+	want := execCtx{agent: "codex", agentFrom: "CODEX_CI", ci: true, doNotTrack: true}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
+	}
+	for value, on := range map[string]bool{"": false, "0": false, "false": false, "FALSE": false, "1": true, "true": true, "yes": true} {
+		if got := newExecCtx(envOf(map[string]string{"DO_NOT_TRACK": value}), null, null, null).doNotTrack; got != on {
+			t.Errorf("DO_NOT_TRACK=%q: %t, want %t", value, got, on)
+		}
+	}
+}
+
+// The mode a request names follows the same rule: an agent wins over CI,
+// and CI over a terminal.
+func TestExecCtxMode(t *testing.T) {
+	for _, c := range []struct {
+		ctx  execCtx
+		mode string
+	}{
+		{execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true}, "interactive"},
+		{execCtx{stdinTTY: true, stderrTTY: true}, "non-interactive"},
+		{execCtx{}, "non-interactive"},
+		{execCtx{ci: true}, "ci"},
+		{execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true, ci: true}, "ci"},
+		{execCtx{agent: "claude-code"}, "agent"},
+		{execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true, agent: "codex"}, "agent"},
+		{execCtx{agent: "claude-code", ci: true}, "agent"},
+	} {
+		if got := c.ctx.mode(); got != c.mode {
+			t.Errorf("%+v: mode %q, want %q", c.ctx, got, c.mode)
+		}
 	}
 }
