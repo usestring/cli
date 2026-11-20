@@ -635,7 +635,7 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 		t.Errorf("fetch status %d, authorization %q: %s", status, fetchAuthorization, stderr.String())
 	}
 	stdout.Reset()
-	if status := run([]string{"whoami"}, rt); status != 0 || !strings.Contains(stdout.String(), path) {
+	if status := run([]string{"whoami", "--offline"}, rt); status != 0 || !strings.Contains(stdout.String(), path) {
 		t.Errorf("whoami status %d: %s", status, stdout.String())
 	}
 	if status := run([]string{"logout"}, rt); status != 0 {

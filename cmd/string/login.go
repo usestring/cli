@@ -814,33 +814,77 @@ func logoutCommand(list []string, rt runtime) error {
 }
 
 func whoamiCommand(list []string, rt runtime) error {
-	if done, err := noOptions(list, "whoami", rt); done {
-		return err
+	parsed, err := parse(list, spec{switches: []string{"offline"}})
+	if err != nil {
+		return usage(err)
+	}
+	if parsed.help {
+		return write(rt.stdout, []byte(helpFor("whoami")))
+	}
+	if err := expectPositionals(parsed.positionals, 0, "string whoami [--offline]"); err != nil {
+		return usage(err)
+	}
+	if _, ok := parsed.value("input"); ok {
+		return usage(errors.New("--input does not apply to whoami"))
 	}
 	path, ok := credentialsPath(rt.env)
-	if key, _ := rt.env("STRING_API_KEY"); key != "" {
-		if saved, err := loadCredentials(path); ok && err == nil && saved.APIKey != "" {
-			return write(rt.stdout, []byte(fmt.Sprintf("Using STRING_API_KEY from the environment. It wins over the key saved in %s.\n", path)))
-		}
-		return write(rt.stdout, []byte("Using STRING_API_KEY from the environment.\n"))
-	}
+	var saved credentials
 	if ok {
-		saved, err := loadCredentials(path)
-		if err != nil {
+		if saved, err = loadCredentials(path); err != nil {
 			return err
 		}
-		if saved.APIKey != "" && saved.Email != "" {
-			return write(rt.stdout, []byte(fmt.Sprintf("Logged in as %s, with the key saved in %s.\n", saved.Email, path)))
-		}
-		if saved.APIKey != "" {
-			return write(rt.stdout, []byte(fmt.Sprintf("Using the key saved in %s.\n", path)))
+	}
+	env, _ := rt.env("STRING_API_KEY")
+	key, from := saved.APIKey, "the key saved in "+path
+	said := fmt.Sprintf("Using the key saved in %s", path)
+	switch {
+	case env != "" && saved.APIKey != "":
+		key, from, said = env, "the key in STRING_API_KEY", fmt.Sprintf("Using STRING_API_KEY from the environment. It wins over the key saved in %s", path)
+	case env != "":
+		key, from, said = env, "the key in STRING_API_KEY", "Using STRING_API_KEY from the environment"
+	case saved.APIKey != "" && saved.Email != "":
+		said = fmt.Sprintf("Logged in as %s, with the key saved in %s", saved.Email, path)
+	case saved.APIKey == "":
+		return &failure{
+			exit:     exitAuth,
+			code:     "not_logged_in",
+			message:  "Not logged in. string fetch and string search run keyless, within a daily allowance.",
+			nextStep: needsKey,
+			helpURL:  helpURL,
 		}
 	}
-	return &failure{
-		exit:     exitAuth,
-		code:     "not_logged_in",
-		message:  "Not logged in. string fetch and string search run keyless, within a daily allowance.",
-		nextStep: needsKey,
-		helpURL:  helpURL,
+	if parsed.switches["offline"] {
+		return write(rt.stdout, []byte(said+".\n"))
 	}
+	// One request, which spends no credit, says whether String takes the key.
+	base, err := apiBaseURL(rt.env)
+	if err != nil {
+		return usage(err)
+	}
+	if _, err := (apiClient{rt: rt, base: base, key: key}).call(&operation{method: "GET", path: "/account/balance"}); err != nil {
+		if refused := asFailure(err); refused.exit == exitAuth {
+			next := "run `string login` to save a new key"
+			if from == "the key in STRING_API_KEY" {
+				next = "check STRING_API_KEY, or unset it and run `string login`"
+			}
+			return &failure{exit: exitAuth, code: "key_refused", status: refused.status, requestID: refused.requestID, message: "String refused " + from + " (" + keyPrefix(key) + ").", nextStep: next}
+		}
+		yes := true
+		return &failure{exit: exitUpstream, code: "unverified", retryable: &yes, message: said + " (" + keyPrefix(key) + "), but string couldn't check it with String.", notes: []string{strings.TrimPrefix(asFailure(err).Error(), "error: ")}, nextStep: "run it again, or `string whoami --offline` to see the key without checking it"}
+	}
+	if rt.json {
+		source := "saved"
+		if key == env {
+			source = "STRING_API_KEY"
+		}
+		shown, _ := json.Marshal(map[string]any{"source": source, "credentials": path, "email": saved.Email, "key_prefix": keyPrefix(key), "accepted": true})
+		return write(rt.stdout, append(shown, '\n'))
+	}
+	return write(rt.stdout, []byte(said+" ("+keyPrefix(key)+"). String accepts it.\n"))
+}
+
+// keyPrefix is the start of key, enough to tell keys apart and never more
+// than a third of it.
+func keyPrefix(key string) string {
+	return key[:min(8, len(key)/3)] + "…"
 }
