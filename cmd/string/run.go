@@ -126,14 +126,19 @@ Usage:
   string balance
   string update [--version X.Y.Z]
   string update --check
-  string --version
+  string version [--json]
+  string --version, string -v
+  string help COMMAND                     the same as string COMMAND --help
 
 Each API request field is a flag spelled exactly as the field, so the API
 reference reads straight onto the command line:
   string fetch https://example.com --mainContentOnly --countryCode DE
 A boolean flag alone is true, =false turns it off (--solveCaptcha=false), and
 an object or array field takes JSON, or @ and a file path (--jsonSchema @./schema.json).
-string COMMAND --help lists the command's fields.
+string COMMAND --help, or -h anywhere on the line, shows the command's own page:
+examples, what it prints, its exit codes, what it costs, and its flags and fields.
+version adds the build to the version: the commit, its date, the system and the
+Go version. Help and version send no request.
 
 fetch prints the page as Markdown, unless --format asks for json or raw or a
 field that only JSON carries is set: jsonSchema, screenshot, captureXHR,
@@ -232,98 +237,6 @@ Exit codes: 0 ok, 1 other failure, 2 bad input, 3 needs a key or the key was
 refused, 4 out of credit, 5 rate limited, 6 upstream failure, 7 timeout,
 130 interrupted.
 `
-
-// commandHelp is each API command's --help: its fields, named as in the API
-// reference it links.
-var commandHelp = map[string]string{
-	"fetch": `Usage:
-  string fetch URL [--FIELD VALUE ...] [--input FILE] [--output FILE]
-  string URL [--FIELD VALUE ...]
-
-Fetches URL and prints the page as Markdown. Each flag is the /fetch request
-field of the same name: https://docs.usestring.ai/api-reference/fetch
-
-  --format json|markdown|raw       the response format
-  --markdownMode readable|full     how much of the page the Markdown keeps
-  --mainContentOnly                drop navigation, headers and footers
-  --executeJS                      render the page in a browser
-  --waitUntil STATE                load, domcontentloaded, networkidle0 or networkidle2
-  --countryCode CC                 the proxy country, such as DE
-  --headers JSON                   request headers as a JSON object
-  --jsonSchema JSON|@./FILE        extract into this JSON Schema (JSON output)
-  --screenshot                     capture a screenshot (JSON output)
-  --actions JSON|@./FILE           browser actions to run (JSON output)
-  --captureXHR [JSON]              return the page's XHR and fetch() calls (JSON output)
-  --captureIframes [JSON]          list the page's iframes (JSON output)
-  --includeIframes                 inline each iframe's content
-  --captureCookies                 return the page's cookies (JSON output)
-  --requireWSS                     require a browser WebSocket fetch path
-  --solveCaptcha=false             fail on a challenge instead of solving it
-  --ignoreCertificateErrors        skip TLS certificate checks
-  --maxRedirects N                 follow at most N redirects
-  --followRedirects=false          return the redirect response itself
-
-Example:
-  string https://example.com --mainContentOnly -o example.md
-`,
-	"request": `Usage:
-  string request METHOD URL [--body TEXT|--body-file FILE] [--FIELD VALUE ...] [--input FILE] [--output FILE]
-
-Sends a POST, PUT or PATCH to URL and prints the JSON response. It takes the
-same fields as string fetch (string fetch --help).
-`,
-	"search": `Usage:
-  string search QUERY [--FIELD VALUE ...] [--input FILE] [--output FILE]
-
-Searches the web and prints the results as JSON. Each flag is the /search
-request field of the same name: https://docs.usestring.ai/api-reference/search
-
-  --engine NAME                    google (the default), duckduckgo, brave or google_ai_mode
-  --searchType TYPE                web, images, videos, shopping, books, places or forums
-  --searchCount N                  how many results, 1 to 300 (--count works too)
-  --page N                         the results page to start from
-  --country CC                     the country to localize results for
-  --language CODE                  the result language, such as en or pt-br
-  --location PLACE                 where to search from, such as London
-  --coordinates JSON               {"latitude":…,"longitude":…,"radius":…}
-  --dateRange RANGE                hour, day, week, month, year, or {"from":…,"to":…}
-  --sortBy relevance|date          the result order
-  --safeSearch                     filter out explicit results
-  --verbatim                       match the query's words exactly
-  --autocorrect=false              search the query as typed
-  --includeOmittedResults          include results hidden as similar
-  --restrictCountry CC             only pages from this country
-  --aiOverview                     wait for the AI Overview too (costs 2x)
-  --format structured|raw          results as JSON, or the results page as HTML
-  --solveCaptcha=false             never solve a captcha for this search
-
-Example:
-  string search "coffee grinders" --dateRange week --searchCount 20
-`,
-	"sitemap": `Usage:
-  string sitemap submit URL [--FIELD VALUE ...] [--approve] [--wait]
-  string sitemap approve JOB_ID [--wait]
-  string sitemap status JOB_ID [--wait]
-  string sitemap results JOB_ID [--limit N] [--offset N]
-  string sitemap list [--limit N] [--offset N]
-  string sitemap cancel JOB_ID
-
-Crawls one site. submit quotes the crawl and costs nothing; approving starts it
-at the quoted cost. Each field flag is the sitemap request field of the same
-name: https://docs.usestring.ai/api-reference/sitemap
-
-  --maxPages N                     pages to crawl, 1 to 10,000 (10 by default)
-  --maxDepth N                     link depth from URL, 1 to 100 (2 by default)
-  --pathPrefix PATH                only URLs whose path starts with PATH
-  --budgetUsd USD                  the spend cap (the quote by default)
-  --useSitemap                     also start from the site's /sitemap.xml
-  --approve                        approve the quote at once (submit only)
-  --wait                           wait for the crawl to end, with progress on a terminal
-
-Example:
-  string sitemap submit https://example.com --maxPages 50 --approve --wait
-`,
-}
 
 const defaultBaseURL = "https://request.usestring.ai/v1"
 
@@ -1136,15 +1049,29 @@ func run(list []string, rt runtime) int {
 }
 
 func execute(list []string, rt runtime) error {
-	if len(list) == 0 || slices.Contains([]string{"", "--help", "-h", "help"}, list[0]) {
+	list = helpAnywhere(list)
+	// --help before a command asks for that command's help.
+	if len(list) > 1 && list[0] == "--help" && !strings.HasPrefix(list[1], "-") {
+		list = append(slices.Clone(list[1:]), "--help")
+	}
+	if len(list) == 0 || slices.Contains([]string{"", "--help"}, list[0]) {
 		return write(rt.stdout, []byte(help))
+	}
+	if list[0] == "help" {
+		// string help COMMAND is string COMMAND --help.
+		if len(list) == 1 || strings.HasPrefix(list[1], "-") {
+			return write(rt.stdout, []byte(help))
+		}
+		return execute(append(slices.Clone(list[1:]), "--help"), rt)
 	}
 	if strings.HasPrefix(list[0], "https://") || strings.HasPrefix(list[0], "http://") {
 		list = append([]string{"fetch"}, list...)
 	}
 	switch list[0] {
-	case "--version":
+	case "--version", "-v":
 		return write(rt.stdout, []byte("string "+version+"\n"))
+	case "version":
+		return versionCommand(list[1:], rt)
 	case "init":
 		return initCommand(list[1:], rt)
 	case "login":
@@ -1169,10 +1096,7 @@ func execute(list []string, rt runtime) error {
 		return usage(err)
 	}
 	if op == nil {
-		if text, ok := commandHelp[list[0]]; ok {
-			return write(rt.stdout, []byte(text))
-		}
-		return write(rt.stdout, []byte(help))
+		return write(rt.stdout, []byte(helpFor(list[0])))
 	}
 	op.command = list[0]
 	key, err := apiKey(rt.env)

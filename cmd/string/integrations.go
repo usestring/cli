@@ -9,22 +9,6 @@ import (
 	"strings"
 )
 
-const integrationsHelp = `Usage:
-  string integrations [list]                     every site and its actions
-  string integrations list SITE                  SITE's actions, each with its flags
-  string integrations run SITE ACTION [--FIELD VALUE ...] [--input FILE] [--output FILE]
-
-A site integration is a set of typed actions over one website, such as reddit
-post. Each run flag is a field of the action's input, spelled as the field:
-the post field is --post. A list field takes one item per flag, or a JSON
-array. list needs no key; run needs one. Add --json to list for the JSON
-catalog. https://docs.usestring.ai/sites
-
-Example:
-  string integrations list reddit
-  string integrations run reddit post --post https://www.reddit.com/r/technology/comments/1xapaw7/ --maxPages 2
-`
-
 // integrationSite is one site's entry in the catalog or its manifest. Only
 // the manifest carries each action's input schema and examples.
 type integrationSite struct {
@@ -126,7 +110,7 @@ func integrationsCommand(list []string, rt runtime) error {
 		list = []string{"list"}
 	}
 	if slices.Contains([]string{"--help", "-h", "help"}, list[0]) {
-		return write(rt.stdout, []byte(integrationsHelp))
+		return write(rt.stdout, []byte(helpFor("integrations")))
 	}
 	key, err := apiKey(rt.env)
 	if err != nil {
@@ -152,7 +136,7 @@ func listIntegrations(caller apiClient, list []string) error {
 		return usage(err)
 	}
 	if parsed.help {
-		return write(caller.rt.stdout, []byte(integrationsHelp))
+		return write(caller.rt.stdout, []byte(helpFor("integrations")))
 	}
 	if len(parsed.positionals) > 1 {
 		return usage(fmt.Errorf("Usage: string integrations list [SITE]"))
@@ -209,7 +193,7 @@ func listIntegrations(caller apiClient, list []string) error {
 func runIntegration(caller apiClient, list []string) error {
 	if len(list) < 2 || strings.HasPrefix(list[0], "-") || strings.HasPrefix(list[1], "-") {
 		if slices.Contains(list, "--help") {
-			return write(caller.rt.stdout, []byte(integrationsHelp))
+			return write(caller.rt.stdout, []byte(helpFor("integrations")))
 		}
 		return usage(fmt.Errorf("Usage: string integrations run SITE ACTION [--FIELD VALUE ...]"))
 	}

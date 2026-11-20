@@ -63,7 +63,7 @@ func spawnDetached(path string) error {
 // the updater run --version to look at a binary that may not be installed
 // yet, so nothing may follow it.
 func probeOrUpdate(list []string) bool {
-	if len(list) == 0 || slices.Contains([]string{"", "--help", "-h", "help", "--version", "update"}, list[0]) {
+	if len(list) == 0 || slices.Contains([]string{"", "--help", "-h", "help", "--version", "-v", "version", "update"}, list[0]) {
 		return true
 	}
 	options := list
@@ -71,7 +71,7 @@ func probeOrUpdate(list []string) bool {
 		options = list[:end]
 	}
 	switch {
-	case slices.Contains(options, "--help"):
+	case slices.Contains(options, "--help") || slices.Contains(options, "-h"):
 		return true
 	case list[0] == "sitemap":
 		return len(list) == 1 || list[1] == ""

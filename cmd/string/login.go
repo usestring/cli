@@ -237,7 +237,7 @@ func noOptions(list []string, command string, rt runtime) (done bool, err error)
 		return true, usage(err)
 	}
 	if parsed.help {
-		return true, write(rt.stdout, []byte(help))
+		return true, write(rt.stdout, []byte(helpFor(command)))
 	}
 	if err := expectPositionals(parsed.positionals, 0, "string "+command); err != nil {
 		return true, usage(err)
@@ -375,7 +375,7 @@ func loginCommand(list []string, rt runtime) error {
 		return usage(err)
 	}
 	if parsed.help {
-		return write(rt.stdout, []byte(help))
+		return write(rt.stdout, []byte(helpFor("login")))
 	}
 	if err := expectPositionals(parsed.positionals, 0, "string login [--with-token | --no-wait | --poll] [--browser] [--env-file PATH] [--device-name NAME]"); err != nil {
 		return usage(err)

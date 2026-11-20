@@ -133,7 +133,7 @@ func initCommand(list []string, rt runtime) error {
 		return usage(err)
 	}
 	if parsed.help {
-		return write(rt.stdout, []byte(help))
+		return write(rt.stdout, []byte(helpFor("init")))
 	}
 	if err := expectPositionals(parsed.positionals, 0, "string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login] [--browser] [--device-name NAME]"); err != nil {
 		return usage(err)

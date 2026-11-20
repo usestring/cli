@@ -229,7 +229,7 @@ func updateCommand(list []string, rt runtime) error {
 		return usage(err)
 	}
 	if parsed.help {
-		return write(rt.stdout, []byte(help))
+		return write(rt.stdout, []byte(helpFor("update")))
 	}
 	if err := expectPositionals(parsed.positionals, 0, updateUsage); err != nil {
 		return usage(err)
