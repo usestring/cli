@@ -238,7 +238,9 @@ that runs it stops too.
 Errors go to stderr as error: and one sentence, the API's own message when it
 sends one, then the details under it, such as Retry-After, the keyless
 allowance and x-request-id, then next: and the step out. They never carry an
-HTML page or a raw answer. --json prints them as {"error":{...}} instead.
+HTML page or a raw answer. --json prints them as {"error":{...}} instead, and
+--errors json does the same with stdout left as it is. From 0.4, fetch --json
+prints a JSON object: string help formatting lists what changes.
 
 Exit codes: 0 ok, 1 other failure, 2 bad input, 3 needs a key or the key was
 refused, 4 out of credit, 5 rate limited, 6 upstream failure, 7 timeout,
