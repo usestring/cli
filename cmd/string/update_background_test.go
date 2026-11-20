@@ -50,6 +50,7 @@ func TestUpdateTriggerStartsACheckOnlyWhenOneIsDueAndAllowed(t *testing.T) {
 		{name: "in CI", env: map[string]string{"CI": "true"}},
 		{name: "with CI=false", env: map[string]string{"CI": "false"}, due: true},
 		{name: "with CI=0", env: map[string]string{"CI": "0"}, due: true},
+		{name: "under an agent", agent: "claude-code", due: true},
 		{name: "with STRING_AUTO_UPDATE=0", env: map[string]string{"STRING_AUTO_UPDATE": "0"}},
 		{name: "with STRING_AUTO_UPDATE=OFF", env: map[string]string{"STRING_AUTO_UPDATE": "OFF"}},
 		{name: "with STRING_AUTO_UPDATE=1", env: map[string]string{"STRING_AUTO_UPDATE": "1"}, due: true},
