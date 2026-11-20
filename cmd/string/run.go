@@ -650,10 +650,21 @@ func fetchFormat(value string) (string, error) {
 }
 
 func formatFor(body map[string]any, fallback string) (string, error) {
-	if format := field(body, "format"); format != nil {
-		return fetchFormat(jsString(format))
+	format := field(body, "format")
+	if format == nil {
+		return fallback, nil
 	}
-	return fallback, nil
+	chosen, err := fetchFormat(jsString(format))
+	if err != nil || chosen == "json" {
+		return chosen, err
+	}
+	// A field that only JSON carries would be dropped from any other format.
+	for _, name := range jsonOnlyFields {
+		if jsTruthy(field(body, name)) {
+			return "", fmt.Errorf("--%s comes back only in JSON, so --format %s would lose it; drop --format, or use --format json", name, chosen)
+		}
+	}
+	return chosen, nil
 }
 
 // jsonOnlyFields come back only in a JSON response.
@@ -881,12 +892,28 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 	if hasText && hasFile {
 		return nil, errors.New("Use only one of --body and --body-file")
 	}
+	if input, _ := parsed.value("input"); input == "-" && file == "-" {
+		return nil, errors.New("Only one of --input - and --body-file - can read stdin")
+	}
+	// --body is sent as written, even when it starts with @, but @ and a
+	// file that exists most likely meant --body-file.
+	var warning string
+	if name, ok := strings.CutPrefix(text, "@"); hasText && ok && name != "" {
+		if info, err := os.Stat(name); err == nil && !info.IsDir() {
+			warning = fmt.Sprintf("warning: --body %s sends the text %s; did you mean --body-file %s?", text, text, name)
+		}
+	}
 	body, err := requestFields(parsed, stdin)
 	if err != nil {
 		return nil, err
 	}
 	if hasFile {
-		contents, err := os.ReadFile(file)
+		var contents []byte
+		if file == "-" {
+			contents, err = io.ReadAll(stdin)
+		} else {
+			contents, err = os.ReadFile(file)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -900,6 +927,8 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 	if err != nil {
 		return nil, err
 	}
+	note = strings.TrimPrefix(note+"\n"+warning, "\n")
+	note = strings.TrimSuffix(note, "\n")
 	body["url"], body["method"], body["format"] = target, method, format
 	if hasText {
 		body["body"] = text
