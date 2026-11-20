@@ -139,8 +139,12 @@ captureIframes, captureCookies or actions. request, search and sitemap print JSO
 --input reads more request fields from a JSON object in FILE, or from stdin
 with -; flags win over it.
 sitemap submit only quotes a crawl. --approve starts it at the quoted cost, and
---wait waits for the crawl to end, showing progress on a terminal. Interrupting
-the wait leaves the crawl running; string sitemap status JOB_ID --wait resumes it.
+--wait waits for the crawl to end. The wait first prints the job and the
+command that resumes it, then its progress: redrawn on a person's terminal,
+and elsewhere a plain line every 15s. Under an agent it stops after 90s, and
+--timeout sets another limit; a wait that reaches it, or a status string
+doesn't know, exits 7. The crawl keeps running then, as when the wait is
+interrupted, and string sitemap status JOB_ID --wait resumes it.
 integrations lists the site integrations, typed actions over one website such
 as reddit post. list SITE shows each action's flags, which are its input fields
 by name, and run calls one: string integrations run reddit post --post URL.
@@ -205,10 +209,10 @@ never under an agent, in CI or in a pipe, and --no-open stops it there too.
 for no person, as under an agent, and only --poll waits for an approval. -y
 and --yes confirm what a command would ask first; none asks yet.
 --timeout DURATION, as 90s, 5m or a number of seconds, limits how long each
-request to String may take, and 0 means no limit. Without it a request may
-take 120s, an integrations run 300s, and any request under an agent 90s. A
-request that runs past its limit, or whose answer stops arriving for 60s,
-exits 7.
+request to String may take, or with --wait the whole wait, and 0 means no
+limit. Without it a request may take 120s, an integrations run 300s, and any
+request under an agent 90s. A request that runs past its limit, or whose
+answer stops arriving for 60s, exits 7.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 
@@ -1169,13 +1173,14 @@ func execute(list []string, rt runtime) error {
 		return usage(err)
 	}
 	caller := apiClient{rt: rt, base: base, key: key}
+	started := rt.clock()
 	data, err := caller.call(op)
 	if err != nil {
 		return err
 	}
 	var ended error
 	if op.approve || op.wait {
-		if data, ended = caller.followCrawl(op, data); data == nil {
+		if data, ended = caller.followCrawl(op, data, started); data == nil {
 			return ended
 		}
 	}
@@ -1261,14 +1266,19 @@ const crawlPoll = 3 * time.Second
 
 // followCrawl carries a sitemap job on from the first response: it approves
 // the quoted job for --approve, then for --wait polls the job until the crawl
-// ends, keeping a progress line on a terminal. It returns the last response.
-func (c apiClient) followCrawl(op *operation, data []byte) ([]byte, error) {
+// ends or the wait's limit passes. The limit counts from started, when the
+// command sent its first request, so the whole command stays within it. It
+// returns the last response.
+func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([]byte, error) {
+	var quote struct {
+		JobID string `json:"jobId"`
+		// The API sends the quote's ceiling as a string, as in "1.05".
+		Cost json.RawMessage `json:"estimatedCostUsd"`
+	}
+	_ = json.Unmarshal(data, &quote)
 	job := op.job
 	if job == "" {
-		var quote struct {
-			JobID string `json:"jobId"`
-		}
-		if err := json.Unmarshal(data, &quote); err != nil || quote.JobID == "" {
+		if quote.JobID == "" {
 			return data, errors.New("The sitemap response named no job")
 		}
 		job = quote.JobID
@@ -1284,17 +1294,38 @@ func (c apiClient) followCrawl(op *operation, data []byte) ([]byte, error) {
 	if !op.wait {
 		return data, nil
 	}
-	shown := false
-	defer func() {
-		if shown {
-			fmt.Fprintln(c.rt.stderr)
+	// The job and the command that resumes the wait come first, so an agent
+	// or a person stopped partway can pick the crawl up again.
+	resume := "string sitemap status " + job + " --wait"
+	first := "job " + job
+	var now struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(data, &now) == nil && now.Status != "" {
+		first += " · " + now.Status
+	}
+	if cost := strings.Trim(string(quote.Cost), `"`); op.approve && cost != "" && cost != "null" {
+		first += " · up to $" + cost
+	}
+	fmt.Fprintf(c.rt.stderr, "%s · resume: %s\n", first, resume)
+
+	w := newWaiter(c.rt, started)
+	defer w.end()
+	for last := data; ; {
+		rt, ok := w.next()
+		if !ok {
+			return last, w.stopped("the crawl keeps running", resume)
 		}
-	}()
-	for {
-		status, err := c.call(&operation{method: "GET", path: path})
+		poll := c
+		poll.rt = rt
+		status, err := poll.call(&operation{method: "GET", path: path})
 		if err != nil {
+			if w.over() {
+				return last, w.stopped("the crawl keeps running", resume)
+			}
 			return nil, err
 		}
+		last = status
 		var state struct {
 			Status       string `json:"status"`
 			Pending      int64  `json:"pending"`
@@ -1311,12 +1342,18 @@ func (c apiClient) followCrawl(op *operation, data []byte) ([]byte, error) {
 			return status, &failure{exit: exitFailure, code: "crawl_canceled", message: "The crawl was canceled."}
 		case "awaiting_approval":
 			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `string sitemap approve " + job + " --wait`"}
+		case "running":
+		default:
+			// Waiting on a status string doesn't know could last forever.
+			message := fmt.Sprintf("Stopped waiting: the crawl's status is %q, which string doesn't know.", state.Status)
+			if state.Status == "" {
+				message = "Stopped waiting: the answer gave the crawl no status."
+			}
+			return status, &failure{exit: exitTimeout, code: "wait_timeout", message: message, nextStep: "run `" + resume + "`"}
 		}
-		if c.rt.exec.stderrTTY {
-			fmt.Fprintf(c.rt.stderr, "\r\x1b[KCrawling: %d pages done, %d queued", state.Processed, state.Pending)
-			shown = true
-		}
-		c.rt.pause(crawlPoll)
+		w.progress(fmt.Sprintf("Crawling: %d pages done, %d queued", state.Processed, state.Pending),
+			fmt.Sprintf("running · %s done, %s queued", count(state.Processed, "page"), thousands(state.Pending)))
+		w.pause(crawlPoll)
 	}
 }
 

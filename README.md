@@ -110,7 +110,7 @@ string request POST https://example.com/api --body '{"name":"example"}' --header
 
 `--input FILE` reads more fields from a JSON object, or `--input -` from stdin, and flags win over it. The command's URL, query and method win over both.
 
-A sitemap crawl starts with a quote, which costs nothing. `--approve` starts the crawl at the quoted cost, and `--wait` waits for it to finish, with a progress line on a terminal:
+A sitemap crawl starts with a quote, which costs nothing. `--approve` starts the crawl at the quoted cost, and `--wait` waits for it to finish:
 
 ```bash
 string sitemap submit https://example.com --maxPages 50 --approve --wait
@@ -127,7 +127,16 @@ string sitemap list
 string sitemap cancel JOB_ID
 ```
 
-Interrupting `--wait` leaves the crawl running, and `string sitemap status JOB_ID --wait` picks it back up.
+`--wait` first prints the job and the command that resumes the wait to stderr:
+
+```
+job JOB_ID · running · up to $1.05 · resume: string sitemap status JOB_ID --wait
+waiting: running · 409 pages done, 641 queued · 15s
+```
+
+Then it shows the crawl's progress. A person at a terminal sees one line redrawn in place. Anywhere else, a plain line comes every 15 seconds, which shows progress in CI logs and tells an agent the command is still alive.
+
+Under a coding agent the wait stops after 90 seconds, under the 2 minutes some agents allow a command. `--timeout DURATION` sets another limit for anyone, and `--timeout 0` none; otherwise a person or a script waits until the crawl ends. A wait that reaches its limit exits 7 with code `wait_timeout`, prints the last status on stdout, and names the command that resumes it. So does a status this version of `string` doesn't know. The crawl keeps running either way, as it does when you interrupt the wait, and `string sitemap status JOB_ID --wait` picks it back up.
 
 ## Site integrations
 
@@ -165,7 +174,7 @@ When the API sends `code`, `retryable` or `next_actions`, they are passed throug
 | 7 | Timeout |
 | 130 | Interrupted |
 
-Each request to String has a time limit: 120 seconds, 300 for `integrations run`, and 90 for any request under a coding agent, which stays under the 2 minutes some agents allow a command. `--timeout DURATION` sets another, as `90s`, `5m` or a number of seconds, and `--timeout 0` sets none. A request that runs past its limit, or whose answer stops arriving for 60 seconds, exits 7 with code `timeout`, and the error suggests a longer `--timeout`.
+Each request to String has a time limit: 120 seconds, 300 for `integrations run`, and 90 for any request under a coding agent, which stays under the 2 minutes some agents allow a command. `--timeout DURATION` sets another, as `90s`, `5m` or a number of seconds, and `--timeout 0` sets none. With `--wait`, it limits the whole wait instead (see [sitemap crawls](#commands)). A request that runs past its limit, or whose answer stops arriving for 60 seconds, exits 7 with code `timeout`, and the error suggests a longer `--timeout`.
 
 ## Updating
 
