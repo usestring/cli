@@ -1090,13 +1090,19 @@ func execute(list []string, rt runtime) error {
 		list = append(slices.Clone(list[1:]), "--help")
 	}
 	if len(list) == 0 || slices.Contains([]string{"", "--help"}, list[0]) {
-		return write(rt.stdout, []byte(help))
+		return write(rt.stdout, []byte(rootHelp(rt)))
 	}
 	if list[0] == "help" {
-		// string help COMMAND is string COMMAND --help.
 		if len(list) == 1 || strings.HasPrefix(list[1], "-") {
-			return write(rt.stdout, []byte(help))
+			return write(rt.stdout, []byte(rootHelp(rt)))
 		}
+		if topic, ok := helpTopics[list[1]]; ok {
+			return write(rt.stdout, []byte(topic))
+		}
+		if err := unknownTopic(list[1]); err != nil {
+			return err
+		}
+		// string help COMMAND is string COMMAND --help.
 		return execute(append(slices.Clone(list[1:]), "--help"), rt)
 	}
 	// A URL, or a word with a dot such as example.com, which no command
