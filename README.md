@@ -185,6 +185,17 @@ A copy that the install script installed checks for a new release once a day and
 
 Under an agent, `string` shows no update notices. What it prints on stdout and its exit codes are the same for an agent, a script and a person.
 
+Each request to String's API, portal and sign-in service says how `string` runs:
+
+| Header | What it carries |
+| --- | --- |
+| `User-Agent` | `string-cli/0.3.0 (linux/amd64; agent=claude-code)` under an agent, `string-cli/0.3.0 (linux/amd64)` otherwise |
+| `X-String-CLI-Mode` | `interactive` for a person at a terminal, `agent`, `non-interactive` or `ci` |
+| `X-String-Agent` | the agent's name, such as `claude-code`, only under an agent |
+| `X-String-Agent-Raw` | `AI_AGENT` as the agent set it, such as `claude-code_2-1-322_agent`, when that is how `string` found the agent |
+
+String uses them to tell people, scripts, CI and each agent apart in its own request logs. `string` sends nothing else about where it runs, and no events of its own. With `DO_NOT_TRACK=1`, requests carry only `string-cli/<version>` and none of the `X-String` headers. The download host gets only its own `User-Agent`, as [Updating](#updating) describes.
+
 ## Agent skills
 
 `skills/string-cli` is an [Agent Skills](https://agentskills.io) skill that teaches a coding agent the `string` commands. The native binary carries it, and `string init` installs it into `~/.agents/skills` (read by Codex and others) and into every agent it finds on the machine: Claude Code, Cursor, Gemini CLI, OpenCode, GitHub Copilot, Windsurf, Goose, Droid, Kiro CLI, Qwen Code, Grok Build, OpenClaw and Hermes Agent. Run it again after an upgrade to update the skill.

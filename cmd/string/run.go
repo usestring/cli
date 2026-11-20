@@ -180,7 +180,9 @@ so does CI set to anything but false or 0.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
 string finds a coding agent that runs it from the variables agents set, and
 then shows no update notices. STRING_AGENT=NAME names the agent instead, and
-STRING_AGENT=human says a person runs string.
+STRING_AGENT=human says a person runs string. Requests to String carry
+string's version, the system and the agent's name; DO_NOT_TRACK=1 sends only
+the version.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 
