@@ -9,4 +9,4 @@ package release
 //
 // Tests build the CLI with a key of their own through
 // -ldflags "-X github.com/usestring/cli/internal/release.trustedKeys=KEY".
-var trustedKeys = ""
+var trustedKeys = "HpinDszqZdtimdM3DWhfw7JmvhSkPoyJyIDDOeT+Kic= O00P8bXslzH25MESmHNyXjA87b5JY9UTYibUsqB2ecU="
