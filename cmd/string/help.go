@@ -195,8 +195,8 @@ var commandDocs = map[string]commandDoc{
 		},
 		returns: append([]string{"stdout   the response as JSON"}, exitsOfARequest...),
 		cost:    "Needs a key. Prices: https://docs.usestring.ai/get-started/pricing",
-		flags: `  --body TEXT              the request body, as written
-  --body-file FILE         the request body, read from FILE
+		flags: `  --body TEXT              the request body, as written, @ included
+  --body-file FILE         the request body, read from FILE, or - for stdin
 ` + outputFlags,
 		fields: "  The same as string fetch: string fetch --help.\n",
 		more:   "https://docs.usestring.ai/api-reference/fetch",
