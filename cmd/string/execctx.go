@@ -23,14 +23,17 @@ type execCtx struct {
 	agentRaw string
 	// ci is a CI job: CI is set, and not to false or 0.
 	ci bool
+	// doNotTrack is DO_NOT_TRACK: requests then name only string's version.
+	doNotTrack bool
 }
 
 func newExecCtx(env func(string) (string, bool), stdin, stdout, stderr *os.File) execCtx {
 	c := execCtx{
-		stdinTTY:  isTerminal(stdin),
-		stdoutTTY: isTerminal(stdout),
-		stderrTTY: isTerminal(stderr),
-		ci:        inCI(env),
+		stdinTTY:   isTerminal(stdin),
+		stdoutTTY:  isTerminal(stdout),
+		stderrTTY:  isTerminal(stderr),
+		ci:         inCI(env),
+		doNotTrack: switchedOn(env, "DO_NOT_TRACK"),
 	}
 	c.agent, c.agentFrom, c.agentRaw = detectAgent(env, c.stdinTTY)
 	return c
@@ -46,6 +49,19 @@ func (c execCtx) interactive() bool {
 // only reader an update notice is for.
 func (c execCtx) attended() bool {
 	return c.stdoutTTY && c.stderrTTY && c.agent == "" && !c.ci
+}
+
+// mode is how string runs, as the X-String-CLI-Mode header names it.
+func (c execCtx) mode() string {
+	switch {
+	case c.agent != "":
+		return "agent"
+	case c.ci:
+		return "ci"
+	case c.interactive():
+		return "interactive"
+	}
+	return "non-interactive"
 }
 
 // agentVars are set only by a coding agent's own command runner, never in a
@@ -158,4 +174,12 @@ func headerText(text string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// switchedOn reports whether the variable is set to something other than
+// false or 0.
+func switchedOn(env func(string) (string, bool), name string) bool {
+	value, _ := env(name)
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value != "" && value != "0" && value != "false"
 }

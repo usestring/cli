@@ -259,7 +259,7 @@ func oauthCall(rt runtime, request *http.Request, out any) (int, error) {
 // caller that reads Retry-After.
 func oauthCallHeader(rt runtime, request *http.Request, out any) (int, http.Header, error) {
 	request.Header.Set("Accept", "application/json")
-	response, err := rt.client.Do(request)
+	response, err := rt.send(request)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -430,7 +430,7 @@ func saveToken(rt runtime, envFile string) error {
 		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+key)
-	response, err := rt.client.Do(request)
+	response, err := rt.send(request)
 	if err != nil {
 		return err
 	}

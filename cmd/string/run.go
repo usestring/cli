@@ -1133,7 +1133,7 @@ func (c apiClient) call(op *operation) ([]byte, error) {
 	if op.body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	response, err := c.rt.client.Do(request)
+	response, err := c.rt.send(request)
 	if err != nil {
 		return nil, err
 	}
