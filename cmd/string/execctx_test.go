@@ -87,16 +87,17 @@ func TestAgentNamesAreShort(t *testing.T) {
 // sees an update notice; an agent never is, whatever its streams are.
 func TestExecCtxDecisions(t *testing.T) {
 	for _, c := range []struct {
-		about               string
-		in, out, err        bool
-		agent               string
-		ci                  bool
-		interactive, notice bool
+		about                        string
+		in, out, err, noOpen         bool
+		agent                        string
+		ci                           bool
+		interactive, notice, browser bool
 	}{
-		{about: "a person at a terminal", in: true, out: true, err: true, interactive: true, notice: true},
+		{about: "a person at a terminal", in: true, out: true, err: true, interactive: true, notice: true, browser: true},
+		{about: "a person at a terminal with --no-open", in: true, out: true, err: true, noOpen: true, interactive: true, notice: true},
 		{about: "a person saving stdout to a file", in: true, err: true},
 		{about: "a person piping stdin in", out: true, err: true, notice: true},
-		{about: "stderr redirected at a terminal", in: true, out: true, interactive: true},
+		{about: "stderr redirected at a terminal", in: true, out: true, interactive: true, browser: true},
 		{about: "a script"},
 		{about: "CI", ci: true},
 		{about: "CI with a terminal", in: true, out: true, err: true, ci: true},
@@ -104,23 +105,26 @@ func TestExecCtxDecisions(t *testing.T) {
 		{about: "an agent with a terminal", in: true, out: true, err: true, agent: "codex"},
 		{about: "an agent in CI", agent: "claude-code", ci: true},
 	} {
-		ctx := execCtx{stdinTTY: c.in, stdoutTTY: c.out, stderrTTY: c.err, agent: c.agent, ci: c.ci}
+		ctx := execCtx{stdinTTY: c.in, stdoutTTY: c.out, stderrTTY: c.err, agent: c.agent, ci: c.ci, noOpen: c.noOpen}
 		if got := ctx.interactive(); got != c.interactive {
 			t.Errorf("%s: interactive %t, want %t", c.about, got, c.interactive)
 		}
 		if got := ctx.attended(); got != c.notice {
 			t.Errorf("%s: attended %t, want %t", c.about, got, c.notice)
 		}
+		if got := ctx.opensBrowser(); got != c.browser {
+			t.Errorf("%s: opensBrowser %t, want %t", c.about, got, c.browser)
+		}
 	}
 
 	// Every combination, for what holds whatever the streams are.
-	for bits := range 1 << 5 {
-		ctx := execCtx{stdinTTY: bits&1 != 0, stdoutTTY: bits&2 != 0, stderrTTY: bits&4 != 0, ci: bits&16 != 0}
+	for bits := range 1 << 6 {
+		ctx := execCtx{stdinTTY: bits&1 != 0, stdoutTTY: bits&2 != 0, stderrTTY: bits&4 != 0, ci: bits&16 != 0, noOpen: bits&32 != 0}
 		if bits&8 != 0 {
 			ctx.agent = "codex"
 		}
 		about := fmt.Sprintf("%+v", ctx)
-		if (ctx.agent != "" || ctx.ci) && (ctx.interactive() || ctx.attended()) {
+		if (ctx.agent != "" || ctx.ci) && (ctx.interactive() || ctx.attended() || ctx.opensBrowser()) {
 			t.Errorf("%s: an agent or CI counts as a person", about)
 		}
 		if ctx.interactive() && !(ctx.stdinTTY && ctx.stdoutTTY) {
@@ -128,6 +132,9 @@ func TestExecCtxDecisions(t *testing.T) {
 		}
 		if ctx.attended() && !(ctx.stdoutTTY && ctx.stderrTTY) {
 			t.Errorf("%s: an update notice without a terminal on stdout and stderr", about)
+		}
+		if ctx.opensBrowser() != (ctx.interactive() && !ctx.noOpen) {
+			t.Errorf("%s: opensBrowser %t", about, ctx.opensBrowser())
 		}
 	}
 }

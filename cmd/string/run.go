@@ -78,6 +78,14 @@ func (rt runtime) clock() time.Time {
 	return rt.now()
 }
 
+// openLink opens a link string has already printed in the browser, when
+// execCtx says it may.
+func (rt runtime) openLink(link string) {
+	if rt.exec.opensBrowser() && rt.openURL != nil {
+		_ = rt.openURL(link)
+	}
+}
+
 const help = `String Web Access CLI
 
 Start here: string fetch and string search work without a key, within a daily
@@ -183,6 +191,8 @@ then shows no update notices. STRING_AGENT=NAME names the agent instead, and
 STRING_AGENT=human says a person runs string. Requests to String carry
 string's version, the system and the agent's name; DO_NOT_TRACK=1 sends only
 the version.
+string opens a sign-in link in the browser only for a person at a terminal,
+never under an agent, in CI or in a pipe, and --no-open stops it there too.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 
@@ -1027,8 +1037,36 @@ func truncateUTF16(text string, limit int) string {
 	return text
 }
 
+// globalSwitches are the switches every command takes, wherever they are on
+// the command line before "--".
+type globalSwitches struct {
+	json   bool // --json
+	noOpen bool // --no-open
+}
+
+// takeGlobalSwitches removes the global switches from the arguments before
+// any "--" and reports which were there.
+func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
+	var found globalSwitches
+	kept := make([]string, 0, len(list))
+	for i, arg := range list {
+		switch arg {
+		case "--":
+			return append(kept, list[i:]...), found
+		case "--json":
+			found.json = true
+		case "--no-open":
+			found.noOpen = true
+		default:
+			kept = append(kept, arg)
+		}
+	}
+	return kept, found
+}
+
 func run(list []string, rt runtime) int {
-	list, rt.json = takeJSONFlag(list)
+	list, global := takeGlobalSwitches(list)
+	rt.json, rt.exec.noOpen = global.json, global.noOpen
 	if err := execute(list, rt); err != nil {
 		return report(rt.stderr, err, rt.json)
 	}

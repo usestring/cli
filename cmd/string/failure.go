@@ -118,22 +118,6 @@ func report(w io.Writer, err error, asJSON bool) int {
 	return f.exit
 }
 
-// takeJSONFlag removes --json from the arguments before any "--".
-func takeJSONFlag(list []string) ([]string, bool) {
-	kept, found := make([]string, 0, len(list)), false
-	for i, arg := range list {
-		if arg == "--" {
-			return append(kept, list[i:]...), found
-		}
-		if arg == "--json" {
-			found = true
-			continue
-		}
-		kept = append(kept, arg)
-	}
-	return kept, found
-}
-
 // refusal is the JSON body of an API error. Older API versions send only
 // error, plus message and signupUrl on keyless refusals.
 type refusal struct {

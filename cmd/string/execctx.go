@@ -23,6 +23,8 @@ type execCtx struct {
 	agentRaw string
 	// ci is a CI job: CI is set, and not to false or 0.
 	ci bool
+	// noOpen is --no-open: string opens no browser, even for a person.
+	noOpen bool
 	// doNotTrack is DO_NOT_TRACK: requests then name only string's version.
 	doNotTrack bool
 }
@@ -43,6 +45,13 @@ func newExecCtx(env func(string) (string, bool), stdin, stdout, stderr *os.File)
 // and can answer it there.
 func (c execCtx) interactive() bool {
 	return c.stdinTTY && c.stdoutTTY && c.agent == "" && !c.ci
+}
+
+// opensBrowser reports whether string may open a link in the browser itself:
+// only for a person at a terminal, and not with --no-open. Anywhere else the
+// link it prints is the whole hand-off.
+func (c execCtx) opensBrowser() bool {
+	return c.interactive() && !c.noOpen
 }
 
 // attended reports a person watching both output streams at a terminal, the

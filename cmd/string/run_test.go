@@ -602,12 +602,13 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 		sleep:   func(d time.Duration) { waits = append(waits, d) },
 	}
 
-	// Without a terminal, login hands back the link at once and --poll finishes.
+	// Without a terminal, login hands back the link at once, opens no
+	// browser, and --poll finishes.
 	if status := run([]string{"login", "--json"}, rt); status != 0 {
 		t.Fatalf("login status %d: %s", status, stderr.String())
 	}
 	started := decode(t, stdout.String()).(map[string]any)
-	if started["user_code"] != "ABCD-EFGH" || started["next"] != "string login --poll" || !reflect.DeepEqual(opened, []string{"https://example.test/device?code=ABCD-EFGH"}) {
+	if started["user_code"] != "ABCD-EFGH" || started["next"] != "string login --poll" || len(opened) > 0 {
 		t.Errorf("output %q, opened %v", stdout.String(), opened)
 	}
 	pendingFile := filepath.Join(home, ".config", "string", "pending.json")
