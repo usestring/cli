@@ -168,10 +168,22 @@ string integrations run reddit post --post https://www.reddit.com/r/technology/c
 Errors go to stderr, followed by the `Retry-After`, keyless allowance and `x-request-id` headers when the API sends them, and the next step. Add `--json` to any command to get the error as one JSON object on stderr instead:
 
 ```json
-{"error":{"status":429,"code":"keyless_refused","message":"…","retry_after_seconds":3600,"request_id":"…","next_step":"run `string login` or set STRING_API_KEY","help_url":"https://usestring.ai/auth.md"}}
+{"error":{"status":429,"code":"keyless_refused","exit_code":3,"message":"…","retryable":false,"retry_after_seconds":3600,"user_action_required":true,"request_id":"…","next_step":"run `string login` or set STRING_API_KEY","next_commands":[{"type":"login","command":"string login","argv":["string","login"]},{"type":"env","why":"set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys"}],"help_url":"https://usestring.ai/auth.md"}}
 ```
 
-When the API sends `code`, `retryable` or `next_actions`, they are passed through.
+`exit_code`, `retryable`, `user_action_required` and `next_commands` are always there. `retryable` says whether running the same command again can help. `user_action_required` says a person must act: sign in, pay, approve a crawl, or let `string` out of a sandbox that blocks the network. Each entry of `next_commands` has a `type` an agent can choose by, without reading prose:
+
+| `type` | The step |
+| --- | --- |
+| `fix_command` | run the corrected `command` |
+| `wait` | run `command` to pick up a crawl, sign-in or claim that keeps going |
+| `retry` | run the same command again, as `why` says |
+| `login`, `trial` | get a key with `command` |
+| `env` | set the variable `why` names |
+| `pay` | pay for the call |
+| `tell_user` | tell the person what `why` says |
+
+`reason`, when there is one, is finer than `code`: a request that got no answer says `dns`, `connect`, `tls` or, inside a sandbox that blocks the network, `sandbox`. When the API sends `code`, `retryable` or `next_actions`, they are passed through.
 
 | Exit | Meaning |
 | --- | --- |
