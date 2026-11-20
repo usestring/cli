@@ -952,8 +952,12 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 	return &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed), changes: true, note: note}, nil
 }
 
+// searchAliases are older names of search's fields, which string help --json
+// lists with each field.
+var searchAliases = map[string]string{"count": "searchCount"}
+
 func searchCommand(list []string, stdin io.Reader) (*operation, error) {
-	parsed, err := parse(list, spec{options: []string{"output"}, fields: searchFields, aliases: map[string]string{"count": "searchCount"}})
+	parsed, err := parse(list, spec{options: []string{"output"}, fields: searchFields, aliases: searchAliases})
 	if err != nil || parsed.help {
 		return nil, err
 	}
@@ -1211,10 +1215,21 @@ func execute(list []string, rt runtime) error {
 		list = append(slices.Clone(list[1:]), "--help")
 	}
 	if len(list) == 0 || slices.Contains([]string{"", "--help"}, list[0]) {
+		if rt.json {
+			return helpJSON(rt, nil)
+		}
 		return write(rt.stdout, []byte(rootHelp(rt)))
 	}
 	if list[0] == "help" {
-		if len(list) == 1 || strings.HasPrefix(list[1], "-") {
+		rest := list[1:]
+		switch {
+		case rt.json && len(rest) > 0 && helpTopics[rest[0]] != "":
+			return helpJSON(rt, nil)
+		case rt.json:
+			return helpJSON(rt, commandWords(rest))
+		case slices.Contains(rest, "--all"):
+			return write(rt.stdout, []byte(helpAll()))
+		case len(rest) == 0 || strings.HasPrefix(rest[0], "-"):
 			return write(rt.stdout, []byte(rootHelp(rt)))
 		}
 		if topic, ok := helpTopics[list[1]]; ok {
@@ -1230,6 +1245,10 @@ func execute(list []string, rt runtime) error {
 	// has, is fetched.
 	if !strings.HasPrefix(list[0], "-") && (strings.Contains(list[0], "://") || strings.Contains(list[0], ".")) {
 		list = append([]string{"fetch"}, list...)
+	}
+	// With --json, a command's help is its part of string help --json.
+	if rt.json && slices.Contains(beforeDashes(list), "--help") {
+		return helpJSON(rt, commandWords(list))
 	}
 	switch list[0] {
 	case "--version", "-v":

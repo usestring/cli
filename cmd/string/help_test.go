@@ -44,7 +44,6 @@ func TestEveryCommandHasItsOwnHelp(t *testing.T) {
 		"login":        {{"login", "--poll", "-h"}},
 		"trial":        {{"trial", "claim", "--poll", "-h"}, {"help", "trial", "claim"}},
 		"update":       {{"update", "--check", "-h"}},
-		"version":      {{"version", "--json", "-h"}},
 	}
 	for command, doc := range commandDocs {
 		want := doc.page(command)
