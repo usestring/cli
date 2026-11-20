@@ -201,7 +201,8 @@ and the first part of its hostname, as in Mac · work-laptop. String puts it in
 the new key's name, which your organization sees on its API keys page.
 --device-name NAME sends NAME instead, and init takes it too. --browser and
 --with-token send no name.
-STRING_API_KEY wins over a saved key; whoami says which one is in use.
+STRING_API_KEY wins over a saved key. whoami says which one is in use and
+checks it with String, which costs nothing; whoami --offline doesn't check.
 trial registers an agent for a trial key with no account: after a few seconds'
 proof of work, it saves a key with a small balance that doesn't expire, and a
 claim token a person can use to adopt the agent onto their account.
