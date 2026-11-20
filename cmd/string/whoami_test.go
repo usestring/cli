@@ -72,6 +72,12 @@ func TestWhoamiChecksTheKeyWithString(t *testing.T) {
 	if got := whoami(offline, "", true, "--offline"); got.status != 0 || !strings.HasPrefix(got.output, "Logged in as dev@localhost, with the key saved in ") || !strings.HasSuffix(got.output, "credentials.json.\n") {
 		t.Errorf("--offline: %+v", got)
 	}
+	// With --json, --offline gives the object too, without accepted, since
+	// nothing asked String.
+	got = whoami(offline, envKey, false, "--offline", "--json")
+	if shown, _ := decode(t, got.output).(map[string]any); got.status != 0 || shown["source"] != "STRING_API_KEY" || shown["key_prefix"] != "env-key-…" || shown["accepted"] != nil {
+		t.Errorf("--offline --json: %+v", got)
+	}
 	if got := whoami(offline, "", false); got.status != exitAuth || !strings.HasPrefix(got.errors, "error: Not logged in.") {
 		t.Errorf("no key: %+v", got)
 	}

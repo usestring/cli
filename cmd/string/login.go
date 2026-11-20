@@ -853,7 +853,17 @@ func whoamiCommand(list []string, rt runtime) error {
 			helpURL:  helpURL,
 		}
 	}
+	source := "saved"
+	if key == env {
+		source = "STRING_API_KEY"
+	}
+	shown := map[string]any{"source": source, "credentials": path, "email": saved.Email, "key_prefix": keyPrefix(key)}
 	if parsed.switches["offline"] {
+		// Nothing asked String, so the object says nothing of accepted.
+		if rt.json {
+			encoded, _ := json.Marshal(shown)
+			return write(rt.stdout, append(encoded, '\n'))
+		}
 		return write(rt.stdout, []byte(said+".\n"))
 	}
 	// One request, which spends no credit, says whether String takes the key.
@@ -873,12 +883,9 @@ func whoamiCommand(list []string, rt runtime) error {
 		return &failure{exit: exitUpstream, code: "unverified", retryable: &yes, message: said + " (" + keyPrefix(key) + "), but string couldn't check it with String.", notes: []string{strings.TrimPrefix(asFailure(err).Error(), "error: ")}, nextStep: "run it again, or `string whoami --offline` to see the key without checking it"}
 	}
 	if rt.json {
-		source := "saved"
-		if key == env {
-			source = "STRING_API_KEY"
-		}
-		shown, _ := json.Marshal(map[string]any{"source": source, "credentials": path, "email": saved.Email, "key_prefix": keyPrefix(key), "accepted": true})
-		return write(rt.stdout, append(shown, '\n'))
+		shown["accepted"] = true
+		encoded, _ := json.Marshal(shown)
+		return write(rt.stdout, append(encoded, '\n'))
 	}
 	return write(rt.stdout, []byte(said+" ("+keyPrefix(key)+"). String accepts it.\n"))
 }
