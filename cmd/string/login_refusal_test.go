@@ -175,11 +175,12 @@ func newSignInSession(t *testing.T) *signInSession {
 
 func (s *signInSession) run(list ...string) result {
 	var stdout, stderr bytes.Buffer
+	env := func(name string) (string, bool) {
+		value, ok := s.env[name]
+		return value, ok
+	}
 	status := run(list, runtime{
-		env: func(name string) (string, bool) {
-			value, ok := s.env[name]
-			return value, ok
-		},
+		env:      env,
 		lookPath: func(string) (string, error) { return "/usr/local/bin/string", nil },
 		client:   http.DefaultClient,
 		stdin:    strings.NewReader(""),
@@ -189,8 +190,9 @@ func (s *signInSession) run(list ...string) result {
 			s.waits = append(s.waits, d)
 			s.now = s.now.Add(d)
 		},
-		now:  func() time.Time { return s.now },
-		exec: execCtx{stdinTTY: s.terminal, stderrTTY: s.progress},
+		now: func() time.Time { return s.now },
+		// CI, an agent and STRING_NO_INPUT come from the session's variables.
+		exec: execCtxFor(env, s.terminal, s.terminal, s.progress),
 		// A fixed hostname, so no test sends the name of the machine it runs on.
 		osHostname: func() (string, error) { return "build-7.corp.example.test", nil },
 	})

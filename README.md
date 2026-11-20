@@ -53,7 +53,7 @@ Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, o
 
 A key lifts those limits and unlocks every option, `request` and `sitemap`. There are three ways to give the CLI one:
 
-- `string login` prints a code and, for a person at a terminal, opens String in the browser; `--no-open` stops that. Once you approve, String creates a new API key for that sign-in and the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when no key is set, unless you pass `--no-login`: from a terminal it waits for your approval, and when its output is captured, as under a coding agent outside CI, it prints the link and code as `string login` does there. If that sign-in doesn't finish, init still succeeds and says how to sign in later. Without a terminal, as under a coding agent, or with `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
+- `string login` prints a code and, for a person at a terminal, opens String in the browser; `--no-open` stops that. Once you approve, String creates a new API key for that sign-in and the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when no key is set, unless you pass `--no-login`: a person at a terminal waits for the approval there, and under a coding agent, with `--no-input`, or when its output is captured outside CI, it prints the link and code as `string login` does there. If that sign-in doesn't finish, init still succeeds and says how to sign in later. Under a coding agent, in CI, in a pipe, or with `--no-input` or `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
 
   ```bash
   string login --json   # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll"}
@@ -76,7 +76,7 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 
 An agent working with nobody present can register for a trial key instead, where the server offers it. `string trial` solves a few seconds' proof of work and saves a key with a small balance in the same file. The key doesn't expire; it works until its credit runs out. Beside it, in `trial.json`, it keeps a claim token, which a person can use for 7 days to adopt the agent onto their String account. Neither is printed. Where trial keys are switched off, `string trial` exits 3.
 
-`string trial claim --email ADDRESS` starts that claim. It prints a link and a code for the person at that address, who signs in to String with that email and enters the code. The CLI then saves a key on their account in place of the trial key, which stops working, and deletes `trial.json`. Without a terminal, or with `--no-wait`, it prints the link and code and exits, and `string trial claim --poll` waits for the person and saves the key. `--json` gives both as JSON.
+`string trial claim --email ADDRESS` starts that claim. It prints a link and a code for the person at that address, who signs in to String with that email and enters the code. The CLI then saves a key on their account in place of the trial key, which stops working, and deletes `trial.json`. Without a person at a terminal, or with `--no-wait`, it prints the link and code and exits, and `string trial claim --poll` waits for the person and saves the key. `--json` gives both as JSON.
 
 `string status` shows the version and the key in use. With a key, it adds the balance left, any amount held for crawls still running, the plan and its request rate, and auto top-up. Without one, it shows what the last keyless call from this machine left of today's allowance, kept in `~/.config/string/keyless.json`, so checking spends none of it. `--json` gives the same as one JSON object.
 
@@ -183,7 +183,9 @@ A copy that the install script installed checks for a new release once a day and
 
 `string` works out whether a coding agent runs it from the variables the agent sets for the commands it runs: `AI_AGENT`, or Claude Code's, Codex's, Gemini CLI's, Cursor's, OpenCode's, Goose's, Amp's, Cline's, GitHub Copilot's or Warp's own. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` count only when stdin is not a terminal, since IDE terminals set them for people too, and `AGENT` comes last. `string` never guesses from the terminal type or from the processes around it. `STRING_AGENT=NAME` names the agent instead, and `STRING_AGENT=human` says a person runs `string`.
 
-Under an agent, `string` shows no update notices and opens no browser. What it prints on stdout and its exit codes are the same for an agent, a script and a person.
+Under an agent, `string` never waits for a person: `login`, `init` and `trial claim` print the link and code and return, and only `--poll` waits for the approval. It also opens no browser and shows no update notices. What it prints on stdout and its exit codes are the same for an agent, a script and a person.
+
+`--no-input`, or `STRING_NO_INPUT=1`, does the same for anyone who sets it, such as a script run from a terminal: `string` then waits for no person. `-y` and `--yes` are taken by every command, to confirm what it would ask first; none asks yet.
 
 Each request to String's API, portal and sign-in service says how `string` runs:
 

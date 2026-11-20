@@ -392,7 +392,7 @@ func loginCommand(list []string, rt runtime) error {
 		return saveToken(rt, envFile)
 	case slices.Contains(chosen, "--poll"):
 		return finishPending(rt, envFile, deviceName)
-	case slices.Contains(chosen, "--no-wait") || rt.json || !rt.exec.stdinTTY:
+	case slices.Contains(chosen, "--no-wait") || rt.json || !rt.exec.interactive():
 		_, err := startSignIn(rt, browser, false, envFile, deviceName)
 		return err
 	}

@@ -651,7 +651,7 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 
 	stderr.Reset()
 	tokenAnswers = []string{`{"error":"access_denied"}`}
-	rt.exec.stdinTTY = true
+	rt.exec.stdinTTY, rt.exec.stdoutTTY = true, true
 	if status := run([]string{"login"}, rt); status != 3 || !strings.Contains(stderr.String(), "Sign-in was denied") {
 		t.Errorf("denied login status %d: %s", status, stderr.String())
 	}
