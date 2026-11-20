@@ -169,6 +169,10 @@ click Authorize. login --with-token reads an API key from stdin, checks it and
 saves it. --env-file PATH also writes the key to that file as its
 STRING_API_KEY line and keeps the file's other lines; a new file is readable
 only by you.
+Where no person watches stderr at a terminal, login --poll first says how to
+resume, then prints a line every 15s. Under an agent it stops after 90s, and
+--timeout sets another limit; a wait that reaches it exits 7, and running
+string login --poll again goes on with the same code until it expires.
 With the key request, login sends String a name for this machine: its system
 and the first part of its hostname, as in Mac · work-laptop. String puts it in
 the new key's name, which your organization sees on its API keys page.
@@ -182,6 +186,7 @@ trial claim --email ADDRESS shows a link and a code for that person. Once they
 sign in to String with that email and enter the code, a key on their account
 replaces the trial key. Without a person at a terminal, or with --no-wait, it
 exits after showing them; trial claim --poll then waits and saves the key.
+That wait stops as login --poll's does, and trial claim --poll resumes it.
 status shows the version and the key in use. With a key it adds the balance
 left, any amount held by running crawls, the plan and its request rate, and
 auto top-up; without one, what the last keyless call left of today's allowance.
@@ -209,10 +214,10 @@ never under an agent, in CI or in a pipe, and --no-open stops it there too.
 for no person, as under an agent, and only --poll waits for an approval. -y
 and --yes confirm what a command would ask first; none asks yet.
 --timeout DURATION, as 90s, 5m or a number of seconds, limits how long each
-request to String may take, or with --wait the whole wait, and 0 means no
-limit. Without it a request may take 120s, an integrations run 300s, and any
-request under an agent 90s. A request that runs past its limit, or whose
-answer stops arriving for 60s, exits 7.
+request to String may take, or the whole wait of a command that waits, as with
+--wait and --poll, and 0 means no limit. Without it a request may take 120s,
+an integrations run 300s, and any request under an agent 90s. A request that
+runs past its limit, or whose answer stops arriving for 60s, exits 7.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 

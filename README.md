@@ -60,6 +60,15 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
   string login --poll   # after the person approves
   ```
 
+  Where no person watches stderr at a terminal, `string login --poll` first prints what it waits for and the command that resumes it, then a line every 15 seconds:
+
+  ```
+  sign-in · waiting for approval · the code expires in 10m · resume: string login --poll
+  waiting: not approved yet · 15s
+  ```
+
+  Under a coding agent it stops after 90 seconds, under the 2 minutes some agents allow a command. `--timeout DURATION` sets another limit for anyone, and `--timeout 0` none; otherwise it waits until the person approves or the code expires. A wait that reaches its limit exits 7 with code `wait_timeout`, and the code still works: run `string login --poll` again to go on with it.
+
   Add `--env-file .env` to `string login`, to `--poll` or to `--with-token` to also write the key to that file as its `STRING_API_KEY=` line, without printing it. Every other line stays as it was, and a new file is created readable only by you.
 
   When it asks for the key, `string login` sends String a name for the machine it runs on: its system and the first part of its hostname, as in `Mac · work-laptop`. String puts it in the name of the key it creates, `String CLI · Mac · work-laptop`, so your organization's [API keys page](https://portal.usestring.ai/api-keys) shows which machine holds which key. To send another name, add `--device-name NAME`, of up to 51 characters, to `string login`, to `--no-wait` or `--poll`, or to `string init`. `string login --browser` and `--with-token` send no name.
@@ -76,7 +85,7 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 
 An agent working with nobody present can register for a trial key instead, where the server offers it. `string trial` solves a few seconds' proof of work and saves a key with a small balance in the same file. The key doesn't expire; it works until its credit runs out. Beside it, in `trial.json`, it keeps a claim token, which a person can use for 7 days to adopt the agent onto their String account. Neither is printed. Where trial keys are switched off, `string trial` exits 3.
 
-`string trial claim --email ADDRESS` starts that claim. It prints a link and a code for the person at that address, who signs in to String with that email and enters the code. The CLI then saves a key on their account in place of the trial key, which stops working, and deletes `trial.json`. Without a person at a terminal, or with `--no-wait`, it prints the link and code and exits, and `string trial claim --poll` waits for the person and saves the key. `--json` gives both as JSON.
+`string trial claim --email ADDRESS` starts that claim. It prints a link and a code for the person at that address, who signs in to String with that email and enters the code. The CLI then saves a key on their account in place of the trial key, which stops working, and deletes `trial.json`. Without a person at a terminal, or with `--no-wait`, it prints the link and code and exits, and `string trial claim --poll` waits for the person and saves the key. `--json` gives both as JSON. That wait stops as `string login --poll` does, after 90 seconds under a coding agent or at `--timeout`, with exit 7, and `string trial claim --poll` goes on while the code works.
 
 `string status` shows the version and the key in use. With a key, it adds the balance left, any amount held for crawls still running, the plan and its request rate, and auto top-up. Without one, it shows what the last keyless call from this machine left of today's allowance, kept in `~/.config/string/keyless.json`, so checking spends none of it. `--json` gives the same as one JSON object.
 
@@ -174,7 +183,7 @@ When the API sends `code`, `retryable` or `next_actions`, they are passed throug
 | 7 | Timeout |
 | 130 | Interrupted |
 
-Each request to String has a time limit: 120 seconds, 300 for `integrations run`, and 90 for any request under a coding agent, which stays under the 2 minutes some agents allow a command. `--timeout DURATION` sets another, as `90s`, `5m` or a number of seconds, and `--timeout 0` sets none. With `--wait`, it limits the whole wait instead (see [sitemap crawls](#commands)). A request that runs past its limit, or whose answer stops arriving for 60 seconds, exits 7 with code `timeout`, and the error suggests a longer `--timeout`.
+Each request to String has a time limit: 120 seconds, 300 for `integrations run`, and 90 for any request under a coding agent, which stays under the 2 minutes some agents allow a command. `--timeout DURATION` sets another, as `90s`, `5m` or a number of seconds, and `--timeout 0` sets none. With `--wait` or `--poll`, it limits the whole wait instead (see [sitemap crawls](#commands) and [keys](#keys)). A request that runs past its limit, or whose answer stops arriving for 60 seconds, exits 7 with code `timeout`, and the error suggests a longer `--timeout`.
 
 ## Updating
 

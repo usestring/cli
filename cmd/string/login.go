@@ -305,10 +305,19 @@ func refusalExit(status int) int {
 }
 
 // deviceToken waits for the user to approve the device code and returns the
-// access token, asking no more often than RFC 8628 allows.
-func deviceToken(rt runtime, deviceCode string, interval, lifetime time.Duration) (string, error) {
+// access token, asking no more often than RFC 8628 allows. It stops at the
+// wait's limit too, and then string login --poll goes on with the same code.
+func deviceToken(w *waiter, deviceCode string, interval time.Duration, expires time.Time) (string, error) {
+	defer w.end()
+	lifetime := expires.Sub(w.rt.clock())
+	first := "sign-in · waiting for approval · the code expires in " + elapsed(lifetime) + " · resume: string login --poll"
 	for waited := time.Duration(0); waited < lifetime; waited += interval {
-		rt.sleep(interval)
+		w.begin(first)
+		w.pause(interval)
+		rt, ok := w.next()
+		if !ok {
+			return "", w.stoppedBefore(expires, "the code", "string login --poll", errLoginExpired)
+		}
 		var answer struct {
 			AccessToken string `json:"access_token"`
 			Error       string `json:"error"`
@@ -319,6 +328,9 @@ func deviceToken(rt runtime, deviceCode string, interval, lifetime time.Duration
 			"client_id":   {oauthClientID},
 		}, &answer)
 		if err != nil {
+			if w.over() {
+				return "", w.stoppedBefore(expires, "the code", "string login --poll", errLoginExpired)
+			}
 			return "", err
 		}
 		switch answer.Error {
@@ -337,6 +349,7 @@ func deviceToken(rt runtime, deviceCode string, interval, lifetime time.Duration
 		default:
 			return "", &failure{exit: exitAuth, code: "login_failed", message: "Sign-in failed: " + answer.Error}
 		}
+		w.progress("", "not approved yet")
 	}
 	return "", errLoginExpired
 }
@@ -480,11 +493,12 @@ func pendingPath(env func(string) (string, bool)) (string, bool) {
 // the sign-in of string login --browser over a device code. deviceName is
 // --device-name, or "" for this machine's default name.
 func signIn(rt runtime, browser bool, envFile, deviceName string) error {
+	started := rt.clock()
 	pending, err := startSignIn(rt, browser, true, envFile, deviceName)
 	if err != nil {
 		return err
 	}
-	return finishSignIn(rt, pending)
+	return finishSignIn(rt, pending, started)
 }
 
 // startSignIn asks for a device code, or with browser makes a browser
@@ -584,6 +598,7 @@ func approvalLink(sent, userCode string) string {
 // deviceName, from --env-file and --device-name now, win over the ones given
 // when it started.
 func finishPending(rt runtime, envFile, deviceName string) error {
+	started := rt.clock()
 	path, ok := pendingPath(rt.env)
 	if !ok {
 		return errors.New("Cannot find your home directory; set HOME")
@@ -606,24 +621,25 @@ func finishPending(rt runtime, envFile, deviceName string) error {
 	if deviceName != "" {
 		pending.DeviceName = deviceName
 	}
-	return finishSignIn(rt, pending)
+	return finishSignIn(rt, pending, started)
 }
 
 // finishSignIn waits for approval of a pending sign-in, then fetches and saves
-// the key. A device code is dropped once it can no longer succeed.
-func finishSignIn(rt runtime, pending pendingLogin) error {
+// the key. A device code is dropped once it can no longer succeed. The wait's
+// limit counts from started, when the command began.
+func finishSignIn(rt runtime, pending pendingLogin, started time.Time) error {
 	if pending.SessionID != "" {
-		return finishBrowserSignIn(rt, pending)
+		return finishBrowserSignIn(rt, pending, started)
 	}
 	pendingFile, _ := pendingPath(rt.env)
 	path, ok := credentialsPath(rt.env)
 	if !ok {
 		return errors.New("Cannot find your home directory; set HOME")
 	}
-	token, err := deviceToken(rt, pending.DeviceCode, time.Duration(pending.Interval)*time.Second, pending.ExpiresAt.Sub(rt.clock()))
-	// A busy sign-in server, or one that didn't answer in time, has not spent
-	// the code, so the code stays saved and the failure says that string login
-	// --poll can still finish with it.
+	token, err := deviceToken(newWaiter(rt, started), pending.DeviceCode, time.Duration(pending.Interval)*time.Second, pending.ExpiresAt)
+	// A busy sign-in server, one that didn't answer in time, or a wait that
+	// reached its limit has not spent the code, so the code stays saved and
+	// the failure says that string login --poll can still finish with it.
 	var refused *failure
 	if err == nil || (errors.As(err, &refused) && refused.exit != exitRateLimit && refused.exit != exitUpstream && refused.exit != exitTimeout) {
 		os.Remove(pendingFile)
