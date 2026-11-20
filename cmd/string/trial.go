@@ -235,6 +235,7 @@ func trialClaimCommand(list []string, rt runtime) error {
 	if !poll && email == "" {
 		return &failure{exit: exitUsage, code: "missing_input", message: "trial claim needs --email ADDRESS (or --poll to finish a claim already started)"}
 	}
+	started := rt.clock()
 	registrationFile, registration, err := loadTrialRegistration(rt.env)
 	if err != nil {
 		return err
@@ -243,14 +244,14 @@ func trialClaimCommand(list []string, rt runtime) error {
 		if registration.ClaimEmail == "" {
 			return usage(errors.New("No claim is waiting. Run string trial claim --email ADDRESS first."))
 		}
-		return collectClaimedKey(rt, registrationFile, registration)
+		return collectClaimedKey(rt, registrationFile, registration, started)
 	}
 	wait := !slices.Contains(chosen, "--no-wait") && !rt.json && rt.exec.interactive()
 	registration, err = startClaim(rt, registrationFile, registration, email, wait)
 	if err != nil || !wait {
 		return err
 	}
-	return collectClaimedKey(rt, registrationFile, registration)
+	return collectClaimedKey(rt, registrationFile, registration, started)
 }
 
 func loadTrialRegistration(env func(string) (string, bool)) (string, trialRegistration, error) {
@@ -338,15 +339,34 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 }
 
 // collectClaimedKey polls until the person enters the code, then saves the key
-// on their account. It stops once the code can no longer be entered.
-func collectClaimedKey(rt runtime, registrationFile string, registration trialRegistration) error {
+// on their account. It stops once the code can no longer be entered, or at the
+// wait's limit, which counts from started; string trial claim --poll then goes
+// on while the code lasts.
+func collectClaimedKey(rt runtime, registrationFile string, registration trialRegistration, started time.Time) error {
 	interval := time.Duration(registration.ClaimInterval) * time.Second
+	expires := registration.ClaimCodeExpires
+	expired := func(status int) *failure {
+		return &failure{
+			exit:     exitAuth,
+			code:     "claim_expired",
+			status:   status,
+			message:  "The claim code expired, or was entered wrong too many times.",
+			nextStep: fmt.Sprintf("run `string trial claim --email %s` for a new code", registration.ClaimEmail),
+		}
+	}
+	w := newWaiter(rt, started)
+	defer w.end()
+	first := fmt.Sprintf("claim · waiting for %s to enter the code · the code expires in %s · resume: string trial claim --poll", registration.ClaimEmail, elapsed(max(expires.Sub(rt.clock()), 0)))
 	for {
+		poll, ok := w.next()
+		if !ok {
+			return w.stoppedBefore(expires, "the code", "string trial claim --poll", expired(0))
+		}
 		var answer struct {
 			portalRefusal
 			AccessToken string `json:"access_token"`
 		}
-		status, err := postForm(rt, portalURL+"/api/agent-signup/token", url.Values{
+		status, err := postForm(poll, portalURL+"/api/agent-signup/token", url.Values{
 			"grant_type":  {claimGrantType},
 			"claim_token": {registration.ClaimToken},
 		}, &answer)
@@ -354,21 +374,20 @@ func collectClaimedKey(rt runtime, registrationFile string, registration trialRe
 			return trialUnavailable(status)
 		}
 		if err != nil {
+			if w.over() {
+				return w.stoppedBefore(expires, "the code", "string trial claim --poll", expired(0))
+			}
 			return err
 		}
 		switch {
 		case status == http.StatusOK:
 			return saveClaimedKey(rt, registrationFile, registration, answer.AccessToken)
-		case answer.Error == "authorization_pending" && rt.clock().Before(registration.ClaimCodeExpires.Add(interval)):
-			rt.pause(interval)
+		case answer.Error == "authorization_pending" && rt.clock().Before(expires.Add(interval)):
+			w.begin(first)
+			w.progress("", "code not entered yet")
+			w.pause(interval)
 		case answer.Error == "authorization_pending", answer.Error == "expired_token":
-			return &failure{
-				exit:     exitAuth,
-				code:     "claim_expired",
-				status:   status,
-				message:  "The claim code expired, or was entered wrong too many times.",
-				nextStep: fmt.Sprintf("run `string trial claim --email %s` for a new code", registration.ClaimEmail),
-			}
+			return expired(status)
 		default:
 			return trialFailure(status, answer.portalRefusal, "Collecting the key")
 		}

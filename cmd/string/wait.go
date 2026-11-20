@@ -38,6 +38,8 @@ type waiter struct {
 	// redrawn is set once a progress line is on the terminal, so the wait
 	// ends that line before anything else is printed.
 	redrawn bool
+	// begun is set once the wait has said what it waits for.
+	begun bool
 }
 
 // newWaiter starts a wait whose limit counts from started.
@@ -84,12 +86,27 @@ func (w *waiter) pause(d time.Duration) {
 	w.rt.pause(d)
 }
 
+// begin prints line, which says what the wait is for and the command that
+// resumes it, once and only where no person watches stderr at a terminal.
+func (w *waiter) begin(line string) {
+	if w.begun {
+		return
+	}
+	w.begun = true
+	if !w.rt.exec.redraws() {
+		fmt.Fprintln(w.rt.stderr, line)
+	}
+}
+
 // progress shows how the wait stands: redrawn in place for a person who sees
-// stderr at a terminal, and elsewhere as a plain line every waitHeartbeat.
+// stderr at a terminal, unless redrawn is empty, and elsewhere as a plain
+// line every waitHeartbeat.
 func (w *waiter) progress(redrawn, plain string) {
 	if w.rt.exec.redraws() {
-		fmt.Fprintf(w.rt.stderr, "\r\x1b[K%s", redrawn)
-		w.redrawn = true
+		if redrawn != "" {
+			fmt.Fprintf(w.rt.stderr, "\r\x1b[K%s", redrawn)
+			w.redrawn = true
+		}
 		return
 	}
 	now := w.rt.clock()
@@ -117,6 +134,17 @@ func (w *waiter) stopped(carriesOn, resume string) *failure {
 		message:  fmt.Sprintf("Stopped waiting after %s; %s.", shortDuration(w.limit), carriesOn),
 		nextStep: "run `" + resume + "`",
 	}
+}
+
+// stoppedBefore is stopped for a wait on a code or a link, what, that works
+// until expires: it says how long that has left, or is expired once it has
+// less than a second.
+func (w *waiter) stoppedBefore(expires time.Time, what, resume string, expired error) error {
+	left := expires.Sub(w.rt.clock())
+	if left < time.Second {
+		return expired
+	}
+	return w.stopped(what+" expires in "+elapsed(left), resume)
 }
 
 // elapsed writes how long a wait has lasted, as 45s or 1m15s.

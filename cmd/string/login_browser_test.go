@@ -28,6 +28,10 @@ func (s *signInService) checks() []browserCheck {
 	return slices.Clone(s.asked)
 }
 
+// browserWaiting starts the wait for a fresh link on stderr, where no person
+// watches it at a terminal.
+const browserWaiting = "sign-in · waiting for authorization · the link expires in 15m · resume: string login --poll\n"
+
 var (
 	browserPending  = signInAnswer{http.StatusOK, `{"status":"pending"}`, ""}
 	browserComplete = signInAnswer{http.StatusOK, `{"status":"complete","apiKey":"authorized-key","teamName":"Acme"}`, ""}
@@ -71,7 +75,7 @@ func TestLoginBrowserSavesTheKeyOnceThePersonAuthorizes(t *testing.T) {
 
 	link := browserLink(t, got.output, service.checks())
 	want := "Open this link, sign in to String or create an account, and click Authorize:\n" + link + "\nLogged in to Acme. The key is saved in " + session.file("credentials.json") + ".\nWrote it to " + envFile + " as STRING_API_KEY.\n"
-	if got.status != 0 || got.output != want || got.errors != "" {
+	if got.status != 0 || got.output != want || got.errors != browserWaiting {
 		t.Errorf("login --browser: %+v, want %q", got, want)
 	}
 	if want := []time.Duration{3 * time.Second, 3 * time.Second}; !reflect.DeepEqual(session.waits, want) || len(service.checks()) != 3 {
@@ -104,7 +108,7 @@ func TestLoginBrowserSavesTheKeyOnceThePersonAuthorizes(t *testing.T) {
 		t.Errorf("pending.json is not a 0600 file with the session id and verifier that were sent: %v, %v", err, statErr)
 	}
 	done := session.run("login", "--poll", "--json")
-	if want := map[string]any{"status": "logged_in", "team": "Acme", "credentials": session.file("credentials.json")}; done.status != 0 || done.errors != "" || !reflect.DeepEqual(decode(t, done.output), want) {
+	if want := map[string]any{"status": "logged_in", "team": "Acme", "credentials": session.file("credentials.json")}; done.status != 0 || done.errors != browserWaiting || !reflect.DeepEqual(decode(t, done.output), want) {
 		t.Errorf("login --poll --json: %+v, want %v", done, want)
 	}
 	if _, err := os.Stat(session.file("pending.json")); !os.IsNotExist(err) || strings.Contains(started.output+started.errors+done.output+done.errors, "authorized-key") {
@@ -148,7 +152,7 @@ func TestLoginBrowserEndsOnAFinalAnswer(t *testing.T) {
 
 		got := session.run("login", "--poll", "--json")
 
-		envelope := decode(t, got.errors).(map[string]any)["error"].(map[string]any)
+		envelope := decode(t, lastLine(got.errors)).(map[string]any)["error"].(map[string]any)
 		if got.status != exitAuth || got.output != "" || envelope["code"] != c.code || envelope["message"] != c.message {
 			t.Errorf("%s: %+v, want exit %d, %s and %q", c.answer.body, got, exitAuth, c.code, c.message)
 		}
@@ -207,6 +211,7 @@ func TestLoginBrowserWaitsOutABusyPortalUntilItsDeadline(t *testing.T) {
 	}
 
 	// Nobody acts on the link: the CLI asks every 3 seconds for 15 minutes.
+	// stderr, which is not a terminal here, gets a line every 15 seconds.
 	service := &signInService{status: []signInAnswer{browserPending}}
 	service.start(t)
 	session := newSignInSession(t)
@@ -216,8 +221,9 @@ func TestLoginBrowserWaitsOutABusyPortalUntilItsDeadline(t *testing.T) {
 	for _, wait := range session.waits {
 		waited += wait
 	}
-	if got.status != exitAuth || got.errors != "The sign-in link expired; run string login --browser again\n" || waited != 15*time.Minute || len(service.checks()) != 301 {
-		t.Errorf("nobody acts: %+v after %v and %d checks, want the expiry after 15m and 301", got, waited, len(service.checks()))
+	beats := strings.Count(got.errors, "\nwaiting: not authorized yet · ")
+	if got.status != exitAuth || !strings.HasPrefix(got.errors, browserWaiting) || !strings.HasSuffix(got.errors, "\nwaiting: not authorized yet · 15m\nThe sign-in link expired; run string login --browser again\n") || beats != 60 || waited != 15*time.Minute || len(service.checks()) != 301 {
+		t.Errorf("nobody acts: %+v after %v, %d checks and %d lines, want the expiry after 15m, 301 checks and 60 lines", got, waited, len(service.checks()), beats)
 	}
 	if _, err := os.Stat(session.file("pending.json")); !os.IsNotExist(err) {
 		t.Errorf("nobody acts: pending.json is there afterwards: %v", err)

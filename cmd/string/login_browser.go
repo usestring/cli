@@ -119,16 +119,23 @@ func askPortal(rt runtime, pending pendingLogin) (int, http.Header, agentAuthAns
 }
 
 // browserKey asks the portal every few seconds whether the person has
-// authorized the sign-in, until it gives a final answer or the sign-in
-// expires. A busy or unreachable portal is asked again, no sooner than its
-// Retry-After says.
-func browserKey(rt runtime, pending pendingLogin) (agentAuthAnswer, error) {
+// authorized the sign-in, until it gives a final answer, the sign-in expires
+// or the wait reaches its limit. A busy or unreachable portal is asked again,
+// no sooner than its Retry-After says.
+func browserKey(w *waiter, pending pendingLogin) (agentAuthAnswer, error) {
+	defer w.end()
+	first := "sign-in · waiting for authorization · the link expires in " + elapsed(pending.ExpiresAt.Sub(w.rt.clock())) + " · resume: string login --poll"
 	for wait := browserInterval; ; {
-		if rt.clock().Add(wait).After(pending.ExpiresAt) {
+		if w.rt.clock().Add(wait).After(pending.ExpiresAt) {
 			return agentAuthAnswer{}, errBrowserExpired
 		}
-		rt.pause(wait)
+		w.begin(first)
+		w.pause(wait)
 		wait = browserInterval
+		rt, ok := w.next()
+		if !ok {
+			return agentAuthAnswer{}, w.stoppedBefore(pending.ExpiresAt, "the link", "string login --poll", errBrowserExpired)
+		}
 		status, header, answer, err := askPortal(rt, pending)
 		switch {
 		case status == http.StatusNotFound:
@@ -138,12 +145,18 @@ func browserKey(rt runtime, pending pendingLogin) (agentAuthAnswer, error) {
 			if seconds, ok := retryAfterSeconds(header); ok {
 				wait = max(wait, time.Duration(min(seconds, int64(browserWindow/time.Second)))*time.Second)
 			}
+			busy := "no answer from the portal"
+			if status != 0 {
+				busy = fmt.Sprintf("the portal answered HTTP %d", status)
+			}
+			w.progress("", busy)
 			continue
 		case err != nil:
 			return answer, &failure{exit: exitAuth, code: "login_failed", status: status, message: "Sign-in failed: " + err.Error()}
 		}
 		switch answer.Status {
 		case "pending":
+			w.progress("", "not authorized yet")
 		case "complete":
 			if answer.APIKey == "" || !validKey(answer.APIKey) {
 				return answer, errors.New("The portal did not return a usable API key")
@@ -174,16 +187,21 @@ func browserRefusal(status int, answer agentAuthAnswer) *failure {
 }
 
 // finishBrowserSignIn waits for the person to authorize a browser sign-in,
-// then saves the key, which the portal hands over only once.
-func finishBrowserSignIn(rt runtime, pending pendingLogin) error {
+// then saves the key, which the portal hands over only once. The wait's limit
+// counts from started.
+func finishBrowserSignIn(rt runtime, pending pendingLogin, started time.Time) error {
 	pendingFile, _ := pendingPath(rt.env)
 	path, ok := credentialsPath(rt.env)
 	if !ok {
 		return errors.New("Cannot find your home directory; set HOME")
 	}
-	answer, err := browserKey(rt, pending)
-	// The wait ends only on a final answer, and the session is spent.
-	os.Remove(pendingFile)
+	answer, err := browserKey(newWaiter(rt, started), pending)
+	// A final answer spends the session. A wait that reached its limit got
+	// none, so string login --poll can still finish the sign-in.
+	var stopped *failure
+	if !errors.As(err, &stopped) || stopped.exit != exitTimeout {
+		os.Remove(pendingFile)
+	}
 	if err != nil {
 		return err
 	}
