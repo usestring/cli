@@ -135,6 +135,9 @@ reference reads straight onto the command line:
   string fetch https://example.com --mainContentOnly --countryCode DE
 A boolean flag alone is true, =false turns it off (--solveCaptcha=false), and
 an object or array field takes JSON, or @ and a file path (--jsonSchema @./schema.json).
+A flag of more than one word takes its kebab-case and snake_case spellings too:
+--main-content-only is --mainContentOnly. A near miss of a flag or a command
+names the one meant, and string exits 2 without running it.
 string COMMAND --help, or -h anywhere on the line, shows the command's own page:
 examples, what it prints, its exit codes, what it costs, and its flags and fields.
 version adds the build to the version: the commit, its date, the system and the
