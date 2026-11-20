@@ -122,6 +122,14 @@ saved page.md · 293 KB · ~75,000 tokens · 200 · en.wikipedia.org
 
 The outline gives each of a Markdown page's headings after the line it starts on, so `sed -n 618,700p page.md` reads one section. `-o -` is stdout, and `-q` leaves status lines like these out of stderr.
 
+`--max-tokens N` prints a page in parts of about N tokens, at four characters a token, each cut at a line's end. stderr says which part it is and gives the command for the next:
+
+```
+part 1 of 13 (tokens 0–6,000 of ~75,000). next: string fetch https://en.wikipedia.org/wiki/List_of_countries --max-tokens 6000 --offset 6000
+```
+
+The parts after the first come from a local copy that the first part saves for 15 minutes, under `$XDG_CACHE_HOME/string/fetch` or `~/.cache/string/fetch`. They send no request and cost nothing, keyless allowance included.
+
 A bare domain works too: `string example.com` fetches `https://example.com`. When `fetch`, `request` or `sitemap submit` gets a URL with no scheme, it uses `https://` and says so on stderr.
 
 **Every API field is a flag of the same name.** A field from the [API reference](https://docs.usestring.ai/api-reference/fetch) works on the command line as written: `executeJS` is `--executeJS`, and `countryCode` is `--countryCode DE`. A boolean flag alone is true, and `=false` turns it off (`--solveCaptcha=false`). An object or array field takes JSON, or `@` and a file path (`--jsonSchema @./schema.json`). `string fetch --help`, `string search --help` and `string sitemap --help` list each command's fields. Every flag of more than one word also takes its kebab-case and snake_case spellings, so `--main-content-only` and `--main_content_only` are `--mainContentOnly`, and `--envFile` is `--env-file`. A near miss of a flag, such as `--mainContentOnyl`, gets the right name back, and so does a near miss of a command, or a word other tools use for one: `string scrape URL` answers `Did you mean fetch?` with `string fetch URL` as the next step, and exits 2 without running it.
