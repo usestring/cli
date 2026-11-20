@@ -46,11 +46,13 @@ func unknownCommand(typed string, rest []string) error {
 	for _, arg := range rest {
 		line = append(line, shellQuote(arg))
 	}
+	argv := append([]string{"string"}, meant...)
 	return &failure{
 		exit:     exitUsage,
 		code:     "unknown_command",
 		message:  fmt.Sprintf("Unknown command: %s. Did you mean %s?", typed, strings.Join(meant, " ")),
 		nextStep: "run `" + strings.Join(line, " ") + "`",
+		next:     []nextCommand{{Type: stepFix, Command: strings.Join(line, " "), Argv: append(argv, rest...), Why: "the command meant"}},
 	}
 }
 

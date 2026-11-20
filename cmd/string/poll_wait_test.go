@@ -88,7 +88,7 @@ func TestLoginPollUnderAnAgentStopsAfter90sAndKeepsTheCode(t *testing.T) {
 	if got.status != exitTimeout || got.output != "" || !strings.HasPrefix(got.errors, signInWaiting) {
 		t.Errorf("login --poll --json: %+v", got)
 	}
-	expectJSON(t, lastLine(got.errors), "{\"error\":{\"code\":\"wait_timeout\",\"message\":\"Stopped waiting after 90s; the code expires in 8m30s.\",\"next_step\":\""+signInPoll+"\",\"retry_after_seconds\":null}}")
+	expectJSON(t, lastLine(got.errors), "{\"error\":{\"code\":\"wait_timeout\",\"message\":\"Stopped waiting after 90s; the code expires in 8m30s.\",\"next_step\":\""+signInPoll+"\",\"retry_after_seconds\":null,\"exit_code\":7,\"retryable\":true,\"user_action_required\":false,\"next_commands\":[{\"type\":\"wait\",\"command\":\"string login --poll\",\"argv\":[\"string\",\"login\",\"--poll\"]}]}}")
 
 	// A code that has expired ends login --poll at once, with nothing to resume.
 	session = newSignInSession(t)

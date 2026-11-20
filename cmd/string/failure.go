@@ -1,12 +1,16 @@
 package main
 
 import (
+	"cmp"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -47,6 +51,114 @@ type failure struct {
 	nextActions json.RawMessage
 	// notes are extra stderr lines, such as the Retry-After header.
 	notes []string
+	// reason is finer than code, such as dns or connect for a request that
+	// got no answer.
+	reason string
+	// userAction says a person must act, as when the network is blocked.
+	userAction bool
+	// next are the steps out of the failure. Without them, the --json
+	// envelope reads them from nextStep.
+	next []nextCommand
+}
+
+// nextCommand is one step out of a failure, in the --json envelope's
+// next_commands: a command to run, or something to tell the user. Its type
+// lets an agent pick the steps it can take alone.
+type nextCommand struct {
+	Type    string   `json:"type"`
+	Command string   `json:"command,omitempty"`
+	Argv    []string `json:"argv,omitempty"`
+	Why     string   `json:"why,omitempty"`
+}
+
+// The types of step: get a trial key, sign in, set a variable, pay, wait on
+// or resume something still going, run the same command again, run a
+// corrected command, or tell the user something only they can act on.
+const (
+	stepTrial = "trial"
+	stepLogin = "login"
+	stepEnv   = "env"
+	stepPay   = "pay"
+	stepWait  = "wait"
+	stepRetry = "retry"
+	stepFix   = "fix_command"
+	stepTell  = "tell_user"
+)
+
+// backticked finds the commands that a next step names in backticks.
+var backticked = regexp.MustCompile("`(string [^`]+)`")
+
+// nextCommands are the steps out of f: its own, or those its next step names.
+// A command in it is a wait when it resumes something still going, a login
+// or a trial when it gets a key, and otherwise a corrected command.
+func (f *failure) nextCommands() []nextCommand {
+	if f.next != nil {
+		return f.next
+	}
+	steps := []nextCommand{}
+	for _, match := range backticked.FindAllStringSubmatch(f.nextStep, -1) {
+		argv := shellWords(match[1])
+		kind := stepFix
+		switch {
+		case slices.Contains(argv, "--poll") || slices.Contains(argv, "--wait"):
+			kind = stepWait
+		case len(argv) > 1 && argv[1] == "login":
+			kind = stepLogin
+		case len(argv) == 2 && argv[1] == "trial":
+			kind = stepTrial
+		}
+		steps = append(steps, nextCommand{Type: kind, Command: match[1], Argv: argv})
+	}
+	switch {
+	case strings.Contains(f.nextStep, "STRING_API_KEY"):
+		steps = append(steps, nextCommand{Type: stepEnv, Why: "set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys"})
+	case f.exit == exitPayment:
+		steps = append(steps, nextCommand{Type: stepTell, Why: cmp.Or(f.nextStep, "the account is out of credit")})
+	case len(steps) == 0 && f.retryableOrNot():
+		steps = append(steps, nextCommand{Type: stepRetry, Why: cmp.Or(f.nextStep, "run the same command again")})
+	}
+	return steps
+}
+
+// retryableOrNot is the envelope's retryable: what the API said, and
+// otherwise whether running the command again can help: after a rate limit,
+// a failure at String or a timeout.
+func (f *failure) retryableOrNot() bool {
+	if f.retryable != nil {
+		return *f.retryable
+	}
+	return f.exit == exitRateLimit || f.exit == exitUpstream || f.exit == exitTimeout
+}
+
+// shellWords splits a command line as a shell does for plain words and
+// single- or double-quoted ones.
+func shellWords(line string) []string {
+	var words []string
+	var word strings.Builder
+	inWord, quote := false, rune(0)
+	for _, r := range line {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote != 0:
+			word.WriteRune(r)
+		case r == '\'' || r == '"':
+			quote, inWord = r, true
+		case r == ' ':
+			if inWord {
+				words = append(words, word.String())
+				word.Reset()
+				inWord = false
+			}
+		default:
+			word.WriteRune(r)
+			inWord = true
+		}
+	}
+	if inWord {
+		words = append(words, word.String())
+	}
+	return words
 }
 
 func (f *failure) Error() string {
@@ -66,6 +178,45 @@ func usage(err error) error {
 		return err
 	}
 	return &failure{exit: exitUsage, code: "invalid_usage", message: err.Error()}
+}
+
+// networkFailure is the failure for a request to host that got no answer:
+// the name didn't resolve, the connection was refused, or TLS failed. Inside
+// a sandbox that blocks the network, it says so instead, since trying again
+// there can't help: only the person who runs the agent can let string out.
+func networkFailure(rt runtime, host string, err error) *failure {
+	if switchedOn(rt.env, "CODEX_SANDBOX_NETWORK_DISABLED") {
+		no := false
+		return &failure{
+			exit:       exitFailure,
+			code:       "failed",
+			reason:     "sandbox",
+			message:    "string couldn't reach " + host + ": the sandbox this command runs in blocks the network.",
+			retryable:  &no,
+			userAction: true,
+			nextStep:   "ask the person to allow " + host + " in the sandbox's network settings, or to run string outside it",
+			next:       []nextCommand{{Type: stepTell, Why: "ask the person to allow " + host + " in the sandbox's network settings, or to run string outside it"}},
+		}
+	}
+	f := &failure{exit: exitFailure, code: "failed", message: err.Error()}
+	var dns *net.DNSError
+	var dial *net.OpError
+	var record tls.RecordHeaderError
+	var certificate *tls.CertificateVerificationError
+	switch {
+	case errors.As(err, &dns):
+		f.reason = "dns"
+	case errors.As(err, &record), errors.As(err, &certificate):
+		f.reason = "tls"
+	case errors.As(err, &dial) && dial.Op == "dial":
+		f.reason = "connect"
+	default:
+		return f
+	}
+	// The request never reached host, so sending it again is safe.
+	yes := true
+	f.retryable = &yes
+	return f
 }
 
 func asFailure(err error) *failure {
@@ -93,9 +244,16 @@ func report(w io.Writer, err error, asJSON bool) int {
 		message = f.summary
 	}
 	envelope := map[string]any{
-		"code":                f.code,
-		"message":             message,
-		"retry_after_seconds": f.retryAfter,
+		"code":                 f.code,
+		"message":              message,
+		"retry_after_seconds":  f.retryAfter,
+		"exit_code":            f.exit,
+		"retryable":            f.retryableOrNot(),
+		"user_action_required": f.userAction || f.exit == exitAuth || f.exit == exitPayment || f.code == "awaiting_approval",
+		"next_commands":        f.nextCommands(),
+	}
+	if f.reason != "" {
+		envelope["reason"] = f.reason
 	}
 	optional := map[string]string{"request_id": f.requestID, "next_step": f.nextStep, "help_url": f.helpURL}
 	for name, value := range optional {
@@ -105,9 +263,6 @@ func report(w io.Writer, err error, asJSON bool) int {
 	}
 	if f.status != 0 {
 		envelope["status"] = f.status
-	}
-	if f.retryable != nil {
-		envelope["retryable"] = *f.retryable
 	}
 	if len(f.nextActions) > 0 {
 		envelope["next_actions"] = f.nextActions

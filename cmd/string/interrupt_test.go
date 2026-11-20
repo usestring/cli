@@ -34,7 +34,7 @@ func TestCtrlCSaysWhatKeepsRunningOrMayHaveHappened(t *testing.T) {
 	}{
 		{"a crawl's wait", execCtx{}, []string{"sitemap", "status", "job-1", "--wait"}, "GET /v1/sitemap/job-1 2", crawlGoesOn},
 		{"a crawl's wait for a person", person, []string{"sitemap", "status", "job-1", "--wait"}, "GET /v1/sitemap/job-1 2", "\r\x1b[K" + crawlGoesOn},
-		{"a crawl's wait under --json", execCtx{agent: "codex"}, []string{"sitemap", "status", "job-1", "--wait", "--json"}, "GET /v1/sitemap/job-1 2", `{"error":{"code":"interrupted","message":"Interrupted; the crawl job-1 keeps running.","next_step":"run ` + "`string sitemap status job-1 --wait`" + `","retry_after_seconds":null}}` + "\n"},
+		{"a crawl's wait under --json", execCtx{agent: "codex"}, []string{"sitemap", "status", "job-1", "--wait", "--json"}, "GET /v1/sitemap/job-1 2", `{"error":{"code":"interrupted","exit_code":130,"message":"Interrupted; the crawl job-1 keeps running.","next_commands":[{"type":"wait","command":"string sitemap status job-1 --wait","argv":["string","sitemap","status","job-1","--wait"]}],"next_step":"run ` + "`string sitemap status job-1 --wait`" + `","retry_after_seconds":null,"retryable":false,"user_action_required":false}}` + "\n"},
 		{"a submit", execCtx{}, []string{"sitemap", "submit", "https://example.com"}, "POST /v1/sitemap 1", mayBeDone},
 		{"an approval", execCtx{}, []string{"sitemap", "submit", "https://example.com", "--approve", "--wait"}, "POST /v1/sitemap/job-1/approve 1", mayBeDone},
 		{"a cancel", execCtx{}, []string{"sitemap", "cancel", "job-1"}, "DELETE /v1/sitemap/job-1 1", mayBeDone},

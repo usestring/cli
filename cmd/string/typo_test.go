@@ -50,7 +50,7 @@ func TestAnUnknownCommandNamesTheOneMeant(t *testing.T) {
 		t.Errorf("string xyzzy: %+v", got)
 	}
 	got := runOffline(t, "--json", "fecth", "https://example.com")
-	expectJSON(t, got.errors, "{\"error\":{\"code\":\"unknown_command\",\"message\":\"Unknown command: fecth. Did you mean fetch?\",\"next_step\":\"run `string fetch https://example.com`\",\"retry_after_seconds\":null}}")
+	expectJSON(t, got.errors, "{\"error\":{\"code\":\"unknown_command\",\"message\":\"Unknown command: fecth. Did you mean fetch?\",\"next_step\":\"run `string fetch https://example.com`\",\"retry_after_seconds\":null,\"exit_code\":2,\"retryable\":false,\"user_action_required\":false,\"next_commands\":[{\"type\":\"fix_command\",\"command\":\"string fetch https://example.com\",\"argv\":[\"string\",\"fetch\",\"https://example.com\"],\"why\":\"the command meant\"}]}}")
 }
 
 // Every multi-word flag takes its camelCase, kebab-case and snake_case

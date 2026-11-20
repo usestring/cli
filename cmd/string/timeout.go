@@ -80,7 +80,7 @@ func (rt runtime) limited(request *http.Request) (*http.Response, error) {
 		if f := timedOut(); f != nil {
 			return nil, f
 		}
-		return nil, err
+		return nil, networkFailure(rt, request.URL.Host, err)
 	}
 	body := &watchedBody{ReadCloser: response.Body, stop: stop, timedOut: timedOut}
 	body.idle = time.AfterFunc(bodyIdleLimit, func() { cancel(errWentQuiet) })

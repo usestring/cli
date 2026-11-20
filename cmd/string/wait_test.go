@@ -84,7 +84,7 @@ func TestSitemapWaitUnderAnAgentStopsAfter90s(t *testing.T) {
 	crawl.polls = 0
 	got = runCrawl(base, execCtx{agent: "claude-code"}, "sitemap", "status", "job-1", "--wait", "--json")
 	lines := strings.Split(strings.TrimSpace(got.errors), "\n")
-	expectJSON(t, lines[len(lines)-1], "{\"error\":{\"code\":\"wait_timeout\",\"message\":\"Stopped waiting after 90s; the crawl keeps running.\",\"next_step\":\"run `string sitemap status job-1 --wait`\",\"retry_after_seconds\":null}}")
+	expectJSON(t, lines[len(lines)-1], "{\"error\":{\"code\":\"wait_timeout\",\"message\":\"Stopped waiting after 90s; the crawl keeps running.\",\"next_step\":\"run `string sitemap status job-1 --wait`\",\"retry_after_seconds\":null,\"exit_code\":7,\"retryable\":true,\"user_action_required\":false,\"next_commands\":[{\"type\":\"wait\",\"command\":\"string sitemap status job-1 --wait\",\"argv\":[\"string\",\"sitemap\",\"status\",\"job-1\",\"--wait\"]}]}}")
 	if got.status != exitTimeout || lines[0] != "job job-1 · running · resume: string sitemap status job-1 --wait" {
 		t.Errorf("status --wait --json: %+v", got)
 	}
