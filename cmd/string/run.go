@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -63,6 +64,9 @@ type runtime struct {
 	// interrupt is what a Ctrl-C would leave behind, which commands note
 	// while they wait or send. Tests that don't look at it leave it nil.
 	interrupt *interruption
+	// quiet is -q: no status lines on stderr, only errors and the keyless
+	// allowance.
+	quiet bool
 }
 
 func (rt runtime) binary() (string, error) {
@@ -148,7 +152,13 @@ Go version. Help and version send no request.
 fetch prints the page as Markdown, unless --format asks for json or raw or a
 field that only JSON carries is set: jsonSchema, screenshot, captureXHR,
 captureIframes, captureCookies or actions. request, search and sitemap print JSON.
---output FILE, or -o FILE, writes the response to FILE instead of stdout.
+--output FILE, or -o FILE, writes the response to FILE instead of stdout, and
+says on stderr what it saved: the size, the tokens, a fetch's status and host,
+and a Markdown page's outline, each heading after its line number. A path
+that can't take a file fails before the request. -o - is stdout.
+A fetched page over 16 KB says its size on stderr first where no person reads
+stdout at a terminal, with what the agent keeps of it. -q, or --quiet, leaves
+such status lines out of stderr; errors and the keyless allowance stay.
 --input reads more request fields from a JSON object in FILE, or from stdin
 with -; flags win over it.
 sitemap submit only quotes a crawl. --approve starts it at the quoted cost, and
@@ -270,6 +280,10 @@ type operation struct {
 	changes bool
 	// note goes to stderr before the call, as when https:// was added to a URL.
 	note string
+	// line is the command as it was given, which a suggestion repeats.
+	line []string
+	// siteStatus is the status the fetched site answered, from X-Status-Code.
+	siteStatus string
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -1030,6 +1044,7 @@ type globalSwitches struct {
 	hasTimeout bool   // --timeout
 	timeout    string // --timeout's value
 	errors     string // --errors's value: json or text
+	quiet      bool   // -q or --quiet
 }
 
 // takeGlobalSwitches removes the global switches from the arguments before
@@ -1039,7 +1054,7 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 	kept := make([]string, 0, len(list))
 	for i := 0; i < len(list); i++ {
 		arg := list[i]
-		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout", "--errors"}); ok {
+		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout", "--errors", "--quiet"}); ok {
 			arg = global
 		}
 		switch {
@@ -1051,6 +1066,8 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 			found.noOpen = true
 		case arg == "--no-input":
 			found.noInput = true
+		case arg == "-q", arg == "--quiet":
+			found.quiet = true
 		case arg == "-y", arg == "--yes":
 			// They confirm what a command would ask before going on. None
 			// asks yet; taking them here lets scripts and agents pass them.
@@ -1084,6 +1101,7 @@ func run(list []string, rt runtime) int {
 	list, global := takeGlobalSwitches(list)
 	rt.json, rt.exec.noOpen = global.json, global.noOpen
 	rt.exec.noInput = rt.exec.noInput || global.noInput
+	rt.quiet = global.quiet
 	// --errors json gives JSON errors, as --json does, and leaves stdout as
 	// it is.
 	jsonErrors := rt.json || global.errors == "json"
@@ -1162,11 +1180,16 @@ func execute(list []string, rt runtime) error {
 	if op == nil {
 		return write(rt.stdout, []byte(helpFor(list[0])))
 	}
-	op.command = list[0]
-	if op.note != "" {
+	op.command, op.line = list[0], list
+	if op.output != "" && op.output != "-" {
+		if err := checkOutput(op.output); err != nil {
+			return err
+		}
+	}
+	if op.note != "" && !rt.quiet {
 		fmt.Fprintln(rt.stderr, op.note)
 	}
-	if op.command == "fetch" && rt.json && announcing(rt.env) {
+	if op.command == "fetch" && rt.json && announcing(rt.env) && !rt.quiet {
 		fmt.Fprint(rt.stderr, fetchJSONNotice)
 	}
 	key, err := apiKey(rt.env)
@@ -1248,8 +1271,9 @@ func (c apiClient) call(op *operation) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if op.command == "fetch" && announcing(c.rt.env) {
-		if warning := siteStatusWarning(response.Header.Get("X-Status-Code"), jsString(op.body["url"])); warning != "" {
+	op.siteStatus = response.Header.Get("X-Status-Code")
+	if op.command == "fetch" && announcing(c.rt.env) && !c.rt.quiet {
+		if warning := siteStatusWarning(op.siteStatus, jsString(op.body["url"])); warning != "" {
 			fmt.Fprint(c.rt.stderr, warning)
 		}
 	}
@@ -1268,14 +1292,37 @@ func (c apiClient) emit(op *operation, data []byte) error {
 		}
 		data = []byte(text)
 	}
-	if op.output == "" {
+	fetched := op.command == "fetch"
+	if op.output == "" || op.output == "-" {
+		// Where no person reads stdout at a terminal, a large page's size
+		// comes first, before an agent's runner cuts the output.
+		if fetched && len(data) > largeBody && !c.rt.quiet && !(c.rt.exec.stdoutTTY && c.rt.exec.agent == "") {
+			fmt.Fprint(c.rt.stderr, sizeNotice(c.rt, jsString(op.body["url"]), len(data), op.line))
+		}
 		return write(c.rt.stdout, data)
 	}
 	if err := os.WriteFile(op.output, data, 0o644); err != nil {
 		return err
 	}
-	if !c.rt.json {
-		fmt.Fprintf(c.rt.stderr, "Saved %d bytes to %s\n", len(data), op.output)
+	if !c.rt.json && !c.rt.quiet {
+		status, target := "", ""
+		if fetched {
+			status, target = op.siteStatus, jsString(op.body["url"])
+		}
+		fmt.Fprint(c.rt.stderr, receipt(op.output, data, status, target, fetched && jsString(op.body["format"]) == "markdown"))
+	}
+	return nil
+}
+
+// checkOutput refuses an -o path that can't take a file before any request
+// spends the call: a directory, or a file in a directory that doesn't exist.
+func checkOutput(path string) error {
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return usage(fmt.Errorf("-o %s is a directory; name a file in it, as %s", path, filepath.Join(path, "page.md")))
+	}
+	dir := filepath.Dir(path)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return usage(fmt.Errorf("Can't save to %s: there is no directory %s", path, dir))
 	}
 	return nil
 }
@@ -1325,7 +1372,9 @@ func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([
 	if cost := strings.Trim(string(quote.Cost), `"`); op.approve && cost != "" && cost != "null" {
 		first += " · up to $" + cost
 	}
-	fmt.Fprintf(c.rt.stderr, "%s · resume: %s\n", first, resume)
+	if !c.rt.quiet {
+		fmt.Fprintf(c.rt.stderr, "%s · resume: %s\n", first, resume)
+	}
 	defer c.rt.interrupt.note("the crawl "+job+" keeps running", resume)()
 
 	w := newWaiter(c.rt, started)

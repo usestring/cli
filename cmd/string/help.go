@@ -539,11 +539,17 @@ stdout holds the result and nothing else:
   status, login, trial, text for a person; --json gives one JSON object
   whoami, version
 stderr holds the rest: what a wait is doing, notes, what is left of the
-keyless allowance, and errors.
+keyless allowance, and errors. A fetched page over 16 KB says its size there
+first, where no person reads stdout at a terminal, so an agent sees it before
+its runner cuts the output.
 
   --json                JSON where the command has it, and errors as one
                         {"error":{...}} object, the last line of stderr
-  -o, --output FILE     the response goes to FILE instead of stdout
+  -o, --output FILE     the response goes to FILE instead of stdout, and stderr
+                        says what was saved: size, tokens, a fetch's status
+                        and host, and a Markdown page's outline. -o - is stdout
+  -q, --quiet           no status lines on stderr: no notes, receipts or wait
+                        lines. Errors and the keyless allowance stay
   --input FILE          more request fields, from a JSON object in FILE or -
                         for stdin; flags win over it
   --errors json         errors as JSON, as --json gives them, with stdout as it
