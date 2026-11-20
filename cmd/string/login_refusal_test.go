@@ -62,6 +62,8 @@ type signInService struct {
 	token  []signInAnswer
 	key    []signInAnswer
 	status []signInAnswer
+	// during, when set, runs as each request arrives, given its path.
+	during func(path string)
 
 	mu     sync.Mutex
 	calls  map[string]int
@@ -106,6 +108,9 @@ func (s *signInService) start(t *testing.T) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.calls[r.URL.Path]++
+		if s.during != nil {
+			s.during(r.URL.Path)
+		}
 		if name, sent := r.Header[deviceNameHeader]; sent || r.URL.Path == "/api/oauth/api-key" {
 			s.named = append(s.named, r.URL.Path+" "+strings.Join(name, ","))
 		}
@@ -180,8 +185,10 @@ type signInSession struct {
 	// realTime runs the commands on the real clock, sleeping through no
 	// waits, so a wait reaches its limit only while a request is going.
 	realTime bool
-	waits    []time.Duration
-	now      time.Time
+	// interrupt, when set, is what a Ctrl-C would leave behind.
+	interrupt *interruption
+	waits     []time.Duration
+	now       time.Time
 }
 
 func newSignInSession(t *testing.T) *signInSession {
@@ -209,6 +216,7 @@ func (s *signInSession) run(list ...string) result {
 		// CI, an agent and STRING_NO_INPUT come from the session's variables.
 		exec:       execCtxFor(env, s.terminal, s.terminal, s.progress),
 		usualLimit: s.limit,
+		interrupt:  s.interrupt,
 		// A fixed hostname, so no test sends the name of the machine it runs on.
 		osHostname: func() (string, error) { return "build-7.corp.example.test", nil },
 	}

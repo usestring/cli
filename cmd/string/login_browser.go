@@ -124,6 +124,7 @@ func askPortal(rt runtime, pending pendingLogin) (int, http.Header, agentAuthAns
 // no sooner than its Retry-After says.
 func browserKey(w *waiter, pending pendingLogin) (agentAuthAnswer, error) {
 	defer w.end()
+	defer w.rt.interrupt.note("the sign-in stays open until its link expires", "string login --poll")()
 	first := "sign-in · waiting for authorization · the link expires in " + elapsed(pending.ExpiresAt.Sub(w.rt.clock())) + " · resume: string login --poll"
 	for wait := browserInterval; ; {
 		if w.rt.clock().Add(wait).After(pending.ExpiresAt) {

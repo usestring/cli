@@ -60,6 +60,9 @@ type runtime struct {
 	// osHostname gives this machine's hostname, which string login puts in
 	// the name of the key it gets: os.Hostname, unless a test gives its own.
 	osHostname func() (string, error)
+	// interrupt is what a Ctrl-C would leave behind, which commands note
+	// while they wait or send. Tests that don't look at it leave it nil.
+	interrupt *interruption
 }
 
 func (rt runtime) binary() (string, error) {
@@ -336,6 +339,9 @@ type operation struct {
 	approve bool
 	wait    bool
 	job     string
+	// changes is set for a call that does something beyond reading, which a
+	// Ctrl-C while it is sent may leave done.
+	changes bool
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -894,7 +900,7 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 	if hasText {
 		body["body"] = text
 	}
-	return &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed)}, nil
+	return &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed), changes: true}, nil
 }
 
 func searchCommand(list []string, stdin io.Reader) (*operation, error) {
@@ -957,7 +963,7 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 			return nil, err
 		}
 		body["url"] = target
-		return &operation{method: "POST", path: "/sitemap", body: body, output: output, approve: approve, wait: wait}, nil
+		return &operation{method: "POST", path: "/sitemap", body: body, output: output, approve: approve, wait: wait, changes: true}, nil
 	}
 	if _, ok := parsed.value("input"); ok {
 		return nil, errors.New("--input applies only to sitemap submit")
@@ -983,7 +989,7 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 		if action == "approve" {
 			path += "/approve"
 		}
-		return &operation{method: methods[action], path: path, output: output, wait: wait, job: parsed.positionals[0]}, nil
+		return &operation{method: methods[action], path: path, output: output, wait: wait, job: parsed.positionals[0], changes: action != "status"}, nil
 	case "results", "list":
 		var query []string
 		if hasLimit {
@@ -1111,6 +1117,7 @@ func run(list []string, rt runtime) int {
 	list, global := takeGlobalSwitches(list)
 	rt.json, rt.exec.noOpen = global.json, global.noOpen
 	rt.exec.noInput = rt.exec.noInput || global.noInput
+	rt.interrupt.answer(rt.json, rt.exec.redraws())
 	if global.hasTimeout {
 		limit, err := parseTimeout(global.timeout)
 		if err != nil {
@@ -1225,6 +1232,9 @@ func (c apiClient) call(op *operation) ([]byte, error) {
 	if op.body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	if op.changes {
+		defer c.rt.interrupt.note("the request may already have been processed", "")()
+	}
 	response, err := c.rt.send(request)
 	if err != nil {
 		return nil, err
@@ -1290,7 +1300,7 @@ func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([
 	}
 	path := "/sitemap/" + encodeURIComponent(job)
 	if op.approve {
-		approved, err := c.call(&operation{method: "POST", path: path + "/approve"})
+		approved, err := c.call(&operation{method: "POST", path: path + "/approve", changes: true})
 		if err != nil {
 			return nil, err
 		}
@@ -1313,6 +1323,7 @@ func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([
 		first += " · up to $" + cost
 	}
 	fmt.Fprintf(c.rt.stderr, "%s · resume: %s\n", first, resume)
+	defer c.rt.interrupt.note("the crawl "+job+" keeps running", resume)()
 
 	w := newWaiter(c.rt, started)
 	defer w.end()

@@ -356,6 +356,7 @@ func collectClaimedKey(rt runtime, registrationFile string, registration trialRe
 	}
 	w := newWaiter(rt, started)
 	defer w.end()
+	defer rt.interrupt.note("the claim stays open until its code expires", "string trial claim --poll")()
 	first := fmt.Sprintf("claim · waiting for %s to enter the code · the code expires in %s · resume: string trial claim --poll", registration.ClaimEmail, elapsed(max(expires.Sub(rt.clock()), 0)))
 	for {
 		poll, ok := w.next()
