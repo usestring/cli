@@ -26,14 +26,12 @@ func main() {
 		<-interrupts
 		os.Exit(exitInterrupted)
 	}()
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// Node's fetch gives up on a response that sends no headers for five
-	// minutes; without this a stalled request would hang forever.
-	transport.ResponseHeaderTimeout = 5 * time.Minute
+	// The client has no time limits of its own: runtime.limited sets them on
+	// each request to String, and the updater sets its own on downloads.
 	rt := runtime{
 		env:      os.LookupEnv,
 		lookPath: exec.LookPath,
-		client:   &http.Client{Transport: transport},
+		client:   &http.Client{},
 		stdin:    os.Stdin,
 		stdout:   os.Stdout,
 		stderr:   os.Stderr,
