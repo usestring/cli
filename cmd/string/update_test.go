@@ -221,7 +221,9 @@ type testCopy struct {
 	env      map[string]string
 	keys     []ed25519.PublicKey
 	spawned  []string
-	terminal bool
+	terminal bool   // a person at a terminal, unless agent is set
+	agent    string // the coding agent that runs the copy's commands
+	piped    bool   // stdout goes somewhere other than the terminal
 	now      time.Time
 }
 
@@ -282,7 +284,7 @@ func (c *testCopy) rt(stdout, stderr io.Writer) runtime {
 		spawn:      func(path string) error { c.spawned = append(c.spawned, path); return nil },
 		versionOf:  os.ReadFile,
 		keys:       func() ([]ed25519.PublicKey, error) { return c.keys, nil },
-		progress:   c.terminal,
+		exec:       execCtx{stdinTTY: c.terminal, stdoutTTY: c.terminal && !c.piped, stderrTTY: c.terminal, agent: c.agent},
 	}
 }
 

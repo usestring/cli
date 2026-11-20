@@ -40,8 +40,7 @@ func main() {
 		openURL:  openBrowser,
 		sleep:    time.Sleep,
 		program:  runProgram,
-		terminal: isTerminal(os.Stdin),
-		progress: isTerminal(os.Stderr),
+		exec:     newExecCtx(os.LookupEnv, os.Stdin, os.Stdout, os.Stderr),
 		spawn:    spawnDetached,
 	}
 	status := run(os.Args[1:], rt)

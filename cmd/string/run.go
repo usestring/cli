@@ -33,11 +33,9 @@ type runtime struct {
 	// program runs another program, such as claude for init, and returns
 	// what it printed.
 	program func(name string, args ...string) ([]byte, error)
-	// terminal is true when a person is at the keyboard, so init can sign in.
-	terminal bool
-	// progress is true when stderr is a terminal, so a long wait can show
-	// how far it has got without cluttering an agent's output.
-	progress bool
+	// exec is where this run happens: which streams are terminals, and
+	// whether a coding agent or a CI job runs it.
+	exec execCtx
 	// json is set by --json: machine-readable output for agents.
 	json bool
 	now  func() time.Time
@@ -180,6 +178,9 @@ a new release in the background. A new release's first command also rewrites
 the skill wherever init installed it. STRING_AUTO_UPDATE=0 turns both off, and
 so does CI set to anything but false or 0.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
+string finds a coding agent that runs it from the variables agents set, and
+then shows no update notices. STRING_AGENT=NAME names the agent instead, and
+STRING_AGENT=human says a person runs string.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 
@@ -1229,7 +1230,7 @@ func (c apiClient) followCrawl(op *operation, data []byte) ([]byte, error) {
 		case "awaiting_approval":
 			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `string sitemap approve " + job + " --wait`"}
 		}
-		if c.rt.progress {
+		if c.rt.exec.stderrTTY {
 			fmt.Fprintf(c.rt.stderr, "\r\x1b[KCrawling: %d pages done, %d queued", state.Processed, state.Pending)
 			shown = true
 		}

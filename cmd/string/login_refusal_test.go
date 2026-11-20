@@ -189,9 +189,8 @@ func (s *signInSession) run(list ...string) result {
 			s.waits = append(s.waits, d)
 			s.now = s.now.Add(d)
 		},
-		now:      func() time.Time { return s.now },
-		terminal: s.terminal,
-		progress: s.progress,
+		now:  func() time.Time { return s.now },
+		exec: execCtx{stdinTTY: s.terminal, stderrTTY: s.progress},
 		// A fixed hostname, so no test sends the name of the machine it runs on.
 		osHostname: func() (string, error) { return "build-7.corp.example.test", nil },
 	})

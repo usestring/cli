@@ -175,11 +175,11 @@ func initCommand(list []string, rt runtime) error {
 		return write(rt.stdout, []byte(report.String()))
 	}
 	// A person who pipes install.sh into sh reads stderr at a terminal, and starts keyless.
-	captured := !rt.progress && !inCI(rt.env)
-	if oauthClientID != "" && !parsed.switches["no-login"] && (rt.terminal || captured) {
+	captured := !rt.exec.stderrTTY && !inCI(rt.env)
+	if oauthClientID != "" && !parsed.switches["no-login"] && (rt.exec.stdinTTY || captured) {
 		browser := parsed.switches["browser"]
 		var err error
-		if rt.terminal {
+		if rt.exec.stdinTTY {
 			report.WriteString("\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\n")
 			if err := write(rt.stdout, []byte(report.String())); err != nil {
 				return err

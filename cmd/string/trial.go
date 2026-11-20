@@ -242,7 +242,7 @@ func trialClaimCommand(list []string, rt runtime) error {
 		}
 		return collectClaimedKey(rt, registrationFile, registration)
 	}
-	wait := !slices.Contains(chosen, "--no-wait") && !rt.json && rt.terminal
+	wait := !slices.Contains(chosen, "--no-wait") && !rt.json && rt.exec.stdinTTY
 	registration, err = startClaim(rt, registrationFile, registration, email, wait)
 	if err != nil || !wait {
 		return err
@@ -417,7 +417,7 @@ func solveProofOfWork(rt runtime, proof proofOfWork) (string, error) {
 	if proof.Challenge == "" || proof.Algorithm != "sha256" || proof.Difficulty < 1 || proof.Difficulty > maxTrialDifficulty {
 		return "", fmt.Errorf("The portal asked for a proof of work this CLI can't solve: %s at %d bits", proof.Algorithm, proof.Difficulty)
 	}
-	if rt.progress {
+	if rt.exec.stderrTTY {
 		fmt.Fprintln(rt.stderr, "Solving the proof of work...")
 	}
 	prefix := []byte(proof.Challenge + ":")
