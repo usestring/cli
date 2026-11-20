@@ -1332,7 +1332,9 @@ func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([
 		case "canceled":
 			return status, &failure{exit: exitFailure, code: "crawl_canceled", message: "The crawl was canceled."}
 		case "awaiting_approval":
-			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `string sitemap approve " + job + " --wait`"}
+			approve := "string sitemap approve " + job + " --wait"
+			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `" + approve + "`",
+				next: []nextCommand{{Type: stepFix, Command: approve, Argv: strings.Fields(approve), Why: "starts the crawl at its quoted cost, which needs the user's go"}}}
 		case "running":
 		default:
 			// Waiting on a status string doesn't know could last forever.

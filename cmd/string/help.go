@@ -486,7 +486,9 @@ var helpTopics = map[string]string{
   130  interrupted by Ctrl-C                nothing
 
 With --json, an error is one {"error":{...}} object on stderr, with code,
-message and, when there is one, next_step.
+message, exit_code, retryable, user_action_required and next_commands. Each
+of next_commands has a type: fix_command, wait, retry, login, trial, env, pay
+or tell_user, so an agent can take the steps that need no person.
 
 Learn more: https://github.com/usestring/cli#errors-and-exit-codes
 `,
