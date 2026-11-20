@@ -72,14 +72,15 @@ type updater struct {
 	keys []ed25519.PublicKey
 }
 
-// open sends a GET for path on the download host. It sends the version and
-// platform in the User-Agent and nothing else about the machine or the person.
+// open sends a GET for path on the download host. It sends the User-Agent
+// every request to String carries and nothing else about the machine or the
+// person. The X-String headers stay off: the download host doesn't read them.
 func (u updater) open(ctx context.Context, path string) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, "GET", u.base+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("User-Agent", fmt.Sprintf("string/%s (%s; %s)", version, goruntime.GOOS, goruntime.GOARCH))
+	request.Header.Set("User-Agent", userAgent(u.rt.exec))
 	// An archive must arrive as the bytes its checksum is of.
 	request.Header.Set("Accept-Encoding", "identity")
 	response, err := u.rt.client.Do(request)
