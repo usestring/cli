@@ -161,7 +161,7 @@ string integrations run reddit post --post https://www.reddit.com/r/technology/c
 
 **Each flag is a field of the action's input, spelled exactly as the field.** Reddit's `post` action takes `post`, `sort` and `maxPages`, so its flags are `--post`, `--sort` and `--maxPages`, the same names the integration docs and the manifest use. A list field takes one item per flag (`--items a --items b`) or a JSON array. `run` prints the JSON response: `data` holds the rows, and `failures` lists any input that produced none. `list` needs no key; `run` needs one.
 
-`string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint. Each command has its own page too, from `string COMMAND --help`, `-h` anywhere on the line, or `string help COMMAND`: examples, what it prints, its exit codes, what it costs, and its flags. `string version` gives the version with the commit, its date, the system and the Go version, and `--json` gives them as one object; `string -v` prints the version alone. Help and version send no request.
+`string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint. Each command has its own page too, from `string COMMAND --help`, `-h` anywhere on the line, or `string help COMMAND`: examples, what it prints, its exit codes, what it costs, and its flags. `string version` gives the version with the commit, its date, the system and the Go version, and `--json` gives them as one object; `string -v` prints the version alone. Help and version send no request. Four topics cover what no one command owns: `string help exit-codes`, `string help environment` (every variable string reads, and what each request tells String), `string help formatting` and `string help agents`.
 
 ## Errors and exit codes
 
@@ -207,7 +207,7 @@ A copy that the install script installed checks for a new release once a day and
 
 `string` works out whether a coding agent runs it from the variables the agent sets for the commands it runs: `AI_AGENT`, or Claude Code's, Codex's, Gemini CLI's, Cursor's, OpenCode's, Goose's, Amp's, Cline's, GitHub Copilot's or Warp's own. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` count only when stdin is not a terminal, since IDE terminals set them for people too, and `AGENT` comes last. `string` never guesses from the terminal type or from the processes around it. `STRING_AGENT=NAME` names the agent instead, and `STRING_AGENT=human` says a person runs `string`.
 
-Under an agent, `string` never waits for a person: `login`, `init` and `trial claim` print the link and code and return, and only `--poll` waits for the approval. It also opens no browser and shows no update notices. What it prints on stdout and its exit codes are the same for an agent, a script and a person.
+Under an agent, `string` never waits for a person: `login`, `init` and `trial claim` print the link and code and return, and only `--poll` waits for the approval. It also opens no browser and shows no update notices. What it prints on stdout and its exit codes are the same for an agent, a script and a person. Bare `string`, `string help` and `string --help` start with three lines for an agent, on where to find one command's page and how to keep big pages out of its context.
 
 `--no-input`, or `STRING_NO_INPUT=1`, does the same for anyone who sets it, such as a script run from a terminal: `string` then waits for no person. `-y` and `--yes` are taken by every command, to confirm what it would ask first; none asks yet.
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
 	goruntime "runtime"
 	"runtime/debug"
 	"slices"
@@ -461,4 +462,141 @@ var commandDocs = map[string]commandDoc{
 		cost: "Free, and it sends no request.",
 		more: "https://github.com/usestring/cli#updating",
 	},
+}
+
+// helpTopics are the pages of string help TOPIC that no one command owns.
+var helpTopics = map[string]string{
+	"exit-codes": `string help exit-codes: what each exit code means, and what to do next
+
+  0    ok                                   use the output
+  1    the operation failed: a crawl failed or was canceled, String couldn't
+       be reached, or something unexpected happened
+                                            read the message; report it
+  2    bad input: a flag, a value, a URL, a command string doesn't have, a
+       400, 404 or 422 from the API, or a crawl that waits for approval
+                                            fix the command as Next says
+  3    a key is needed, or the key was refused, or today's keyless allowance
+       is used up                           follow Next: drop the field, run
+                                            string login --json, or ask the user
+  4    out of credit; nothing was charged   tell the user
+  5    rate limited                         wait for Retry-After, then retry
+  6    String failed or didn't answer       retry once
+  7    timed out. A wait that stopped leaves its crawl, sign-in or claim
+       going                                run the command in Next
+  130  interrupted by Ctrl-C                nothing
+
+With --json, an error is one {"error":{...}} object on stderr, with code,
+message and, when there is one, next_step.
+
+Learn more: https://github.com/usestring/cli#errors-and-exit-codes
+`,
+	"environment": `string help environment: the variables string reads, and what it sends
+
+  STRING_API_KEY        the API key; it wins over the key string login saved
+  STRING_API_BASE_URL   another API endpoint
+  STRING_AGENT          NAME says the coding agent NAME runs string, and human
+                        says a person does; it wins over what string finds
+  AI_AGENT, AGENT       an agent's name, as some agents set it
+  STRING_NO_INPUT       1 makes string wait for no person, as --no-input does
+  STRING_AUTO_UPDATE    0 turns off the daily update check, and the rewrite of
+                        the skill after an update
+  STRING_DOWNLOAD_URL   where string update takes releases from, for tests
+  DO_NOT_TRACK          1 sends String only string's version
+  CI                    set to anything but false or 0: a CI job, where
+                        nobody approves a sign-in and nothing updates itself
+  XDG_CONFIG_HOME       where the saved key lives: $XDG_CONFIG_HOME/string, or
+                        ~/.config/string without it
+  CLAUDE_CONFIG_DIR     where init finds Claude Code's settings
+  CODEX_HOME            where init finds Codex's settings
+
+string finds Claude Code, Codex, Gemini CLI, Cursor, Copilot CLI, Cline, Amp,
+Goose and Warp from the variables each sets, and treats them as agents.
+
+Each request to String carries:
+  User-Agent            string-cli/VERSION (OS/ARCH; agent=NAME)
+  X-String-CLI-Mode     interactive, agent, non-interactive or ci
+  X-String-Agent        the agent's name, under an agent
+  X-String-Agent-Raw    AI_AGENT as it was set
+With DO_NOT_TRACK=1 it carries only User-Agent: string-cli/VERSION.
+
+Learn more: https://github.com/usestring/cli#coding-agents
+`,
+	"formatting": `string help formatting: where output goes, and in what shape
+
+stdout holds the result and nothing else:
+  fetch                 the page as Markdown, or the API's JSON with --format
+                        json or a field only JSON carries
+  search, request,      JSON, as the API sends it
+  sitemap, balance,
+  integrations run
+  status, login, trial, text for a person; --json gives one JSON object
+  whoami, version
+stderr holds the rest: what a wait is doing, notes, what is left of the
+keyless allowance, and errors.
+
+  --json                JSON where the command has it, and errors as one
+                        {"error":{...}} object, the last line of stderr
+  -o, --output FILE     the response goes to FILE instead of stdout
+  --input FILE          more request fields, from a JSON object in FILE or -
+                        for stdin; flags win over it
+  --format              fetch's format: markdown, json or raw
+
+Exit codes: string help exit-codes.
+
+Learn more: https://github.com/usestring/cli#commands
+`,
+	"agents": `string help agents: what changes when a coding agent runs string
+
+Under an agent, string:
+  - never opens a browser, and never waits for a person: login, init and
+    trial claim print the link and code, and --poll waits for the approval;
+  - stops --wait and --poll after 90s with exit 7, and Next says how to go
+    on; each request to String may take 90s too. --timeout sets another limit;
+  - shows no update notices;
+  - names the agent in each request: string help environment.
+What it prints on stdout and its exit codes are the same as for anyone.
+
+string finds the agent from the variables agents set. STRING_AGENT=NAME names
+it instead, and STRING_AGENT=human says a person runs string.
+
+Ways that work well:
+  string fetch URL -o page.md           a big page goes to a file, not context
+  string login --json                   give the user the link, then run
+  string login --poll                   which saves the key once they approve
+  string trial                          a key when nobody can approve one
+  --json                                errors as one JSON object
+  string COMMAND --help                 one command's examples, output, exit
+                                        codes, cost and flags
+
+Learn more: https://github.com/usestring/cli#coding-agents
+`,
+}
+
+// agentPreamble starts the help for all of string under an agent.
+const agentPreamble = `For agents: string COMMAND --help gives one command's examples, output, exit
+codes, cost and flags, and string help agents what changes under an agent.
+Pages curl or WebFetch can't read: string fetch URL. Big pages: add -o FILE.
+
+`
+
+// rootHelp is the help for all of string, which starts with a few lines for
+// agents under one.
+func rootHelp(rt runtime) string {
+	if rt.exec.agent != "" {
+		return agentPreamble + help
+	}
+	return help
+}
+
+// unknownTopic is the failure for string help WORD when WORD is no command
+// but a near miss of a topic, which it names.
+func unknownTopic(word string) error {
+	if slices.Contains(commands, word) {
+		return nil
+	}
+	topic, near := nearest(word, slices.Sorted(maps.Keys(helpTopics)))
+	if !near {
+		return nil
+	}
+	return &failure{exit: exitUsage, code: "unknown_command", message: "No help on " + word + ". Did you mean " + topic + "?", nextStep: "run `string help " + topic + "`"}
 }
