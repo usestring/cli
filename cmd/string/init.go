@@ -174,12 +174,13 @@ func initCommand(list []string, rt runtime) error {
 	if key, err := apiKey(rt.env); err == nil && key != "" {
 		return write(rt.stdout, []byte(report.String()))
 	}
-	// A person who pipes install.sh into sh reads stderr at a terminal, and starts keyless.
-	captured := !rt.exec.stderrTTY && !inCI(rt.env)
-	if oauthClientID != "" && !parsed.switches["no-login"] && (rt.exec.stdinTTY || captured) {
+	// Nobody approves a sign-in in CI. A person who pipes install.sh into sh
+	// reads stderr at a terminal, and starts keyless.
+	handBack := !rt.exec.ci && (rt.exec.agent != "" || rt.exec.noInput || !rt.exec.stderrTTY)
+	if oauthClientID != "" && !parsed.switches["no-login"] && (rt.exec.interactive() || handBack) {
 		browser := parsed.switches["browser"]
 		var err error
-		if rt.exec.stdinTTY {
+		if rt.exec.interactive() {
 			report.WriteString("\nSigning in. string fetch and string search already work without a key, within a daily allowance, so you can press Ctrl-C to skip this and run string login later.\n")
 			if err := write(rt.stdout, []byte(report.String())); err != nil {
 				return err
@@ -187,9 +188,10 @@ func initCommand(list []string, rt runtime) error {
 			report.Reset()
 			err = signIn(rt, browser, "", deviceName)
 		} else {
-			// Nobody approves while init waits under an agent, so init hands
-			// back the link and code, as string login does there, and
-			// string login --poll saves the key. init prints text only.
+			// Nobody approves while init waits under an agent or with
+			// --no-input, so init hands back the link and code, as string
+			// login does there, and string login --poll saves the key. init
+			// prints text only.
 			var started bytes.Buffer
 			text := rt
 			text.json, text.stdout = false, &started

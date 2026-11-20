@@ -146,17 +146,19 @@ printed to stderr after each keyless call.
 init installs the string-cli skill for the coding agents found on this machine,
 adds String's MCP server to Claude Code and Codex unless --no-mcp is given,
 then signs in when no key is set; --browser picks login --browser's sign-in.
-At a terminal it waits for the approval; when its output is captured, as under
-an agent outside CI, it prints the link and code as login does. --no-login
-skips the sign-in, and init exits 0 whether or not the sign-in finishes.
+A person at a terminal waits for the approval there. Under an agent, with
+--no-input, or when its output is captured outside CI, it prints the link and
+code as login does. --no-login skips the sign-in, and init exits 0 whether or
+not the sign-in finishes.
 login signs in through your browser and saves a new API key that String
-creates for that sign-in. Without a terminal, or with --no-wait, it prints the
-link and code and exits; string login --poll then waits for the approval and
-saves the key. With --json both print JSON. --browser needs no code: on the
-String page the link opens, you sign in or create an account and click
-Authorize. login --with-token reads an API key from stdin, checks it and saves
-it. --env-file PATH also writes the key to that file as its STRING_API_KEY
-line and keeps the file's other lines; a new file is readable only by you.
+creates for that sign-in. Without a person at a terminal, or with --no-wait,
+it prints the link and code and exits; string login --poll then waits for the
+approval and saves the key. With --json both print JSON. --browser needs no
+code: on the String page the link opens, you sign in or create an account and
+click Authorize. login --with-token reads an API key from stdin, checks it and
+saves it. --env-file PATH also writes the key to that file as its
+STRING_API_KEY line and keeps the file's other lines; a new file is readable
+only by you.
 With the key request, login sends String a name for this machine: its system
 and the first part of its hostname, as in Mac · work-laptop. String puts it in
 the new key's name, which your organization sees on its API keys page.
@@ -168,8 +170,8 @@ proof of work, it saves a key with a small balance that doesn't expire, and a
 claim token a person can use to adopt the agent onto their account.
 trial claim --email ADDRESS shows a link and a code for that person. Once they
 sign in to String with that email and enter the code, a key on their account
-replaces the trial key. Without a terminal, or with --no-wait, it exits after
-showing them; trial claim --poll then waits and saves the key.
+replaces the trial key. Without a person at a terminal, or with --no-wait, it
+exits after showing them; trial claim --poll then waits and saves the key.
 status shows the version and the key in use. With a key it adds the balance
 left, any amount held by running crawls, the plan and its request rate, and
 auto top-up; without one, what the last keyless call left of today's allowance.
@@ -193,6 +195,9 @@ string's version, the system and the agent's name; DO_NOT_TRACK=1 sends only
 the version.
 string opens a sign-in link in the browser only for a person at a terminal,
 never under an agent, in CI or in a pipe, and --no-open stops it there too.
+--no-input, or STRING_NO_INPUT=1, says nobody will answer: string then waits
+for no person, as under an agent, and only --poll waits for an approval. -y
+and --yes confirm what a command would ask first; none asks yet.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 
@@ -1040,8 +1045,9 @@ func truncateUTF16(text string, limit int) string {
 // globalSwitches are the switches every command takes, wherever they are on
 // the command line before "--".
 type globalSwitches struct {
-	json   bool // --json
-	noOpen bool // --no-open
+	json    bool // --json
+	noOpen  bool // --no-open
+	noInput bool // --no-input
 }
 
 // takeGlobalSwitches removes the global switches from the arguments before
@@ -1057,6 +1063,11 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 			found.json = true
 		case "--no-open":
 			found.noOpen = true
+		case "--no-input":
+			found.noInput = true
+		case "-y", "--yes":
+			// They confirm what a command would ask before going on. None
+			// asks yet; taking them here lets scripts and agents pass them.
 		default:
 			kept = append(kept, arg)
 		}
@@ -1067,6 +1078,7 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 func run(list []string, rt runtime) int {
 	list, global := takeGlobalSwitches(list)
 	rt.json, rt.exec.noOpen = global.json, global.noOpen
+	rt.exec.noInput = rt.exec.noInput || global.noInput
 	if err := execute(list, rt); err != nil {
 		return report(rt.stderr, err, rt.json)
 	}

@@ -229,8 +229,11 @@ func trialClaimCommand(list []string, rt runtime) error {
 	email, _ := parsed.value("email")
 	_, input := parsed.value("input")
 	poll := slices.Contains(chosen, "--poll")
-	if len(chosen) > 1 || len(parsed.positionals) > 0 || input || (poll && email != "") || (!poll && email == "") {
+	if len(chosen) > 1 || len(parsed.positionals) > 0 || input || (poll && email != "") {
 		return usage(errors.New("Usage: string trial claim --email ADDRESS [--no-wait], then string trial claim --poll"))
+	}
+	if !poll && email == "" {
+		return &failure{exit: exitUsage, code: "missing_input", message: "trial claim needs --email ADDRESS (or --poll to finish a claim already started)"}
 	}
 	registrationFile, registration, err := loadTrialRegistration(rt.env)
 	if err != nil {
@@ -242,7 +245,7 @@ func trialClaimCommand(list []string, rt runtime) error {
 		}
 		return collectClaimedKey(rt, registrationFile, registration)
 	}
-	wait := !slices.Contains(chosen, "--no-wait") && !rt.json && rt.exec.stdinTTY
+	wait := !slices.Contains(chosen, "--no-wait") && !rt.json && rt.exec.interactive()
 	registration, err = startClaim(rt, registrationFile, registration, email, wait)
 	if err != nil || !wait {
 		return err

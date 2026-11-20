@@ -25,26 +25,36 @@ type execCtx struct {
 	ci bool
 	// noOpen is --no-open: string opens no browser, even for a person.
 	noOpen bool
+	// noInput is --no-input or STRING_NO_INPUT: nobody will answer, so
+	// string waits for no person, even at a terminal.
+	noInput bool
 	// doNotTrack is DO_NOT_TRACK: requests then name only string's version.
 	doNotTrack bool
 }
 
 func newExecCtx(env func(string) (string, bool), stdin, stdout, stderr *os.File) execCtx {
+	return execCtxFor(env, isTerminal(stdin), isTerminal(stdout), isTerminal(stderr))
+}
+
+// execCtxFor is newExecCtx for streams already known to be terminals or not.
+func execCtxFor(env func(string) (string, bool), stdinTTY, stdoutTTY, stderrTTY bool) execCtx {
 	c := execCtx{
-		stdinTTY:   isTerminal(stdin),
-		stdoutTTY:  isTerminal(stdout),
-		stderrTTY:  isTerminal(stderr),
+		stdinTTY:   stdinTTY,
+		stdoutTTY:  stdoutTTY,
+		stderrTTY:  stderrTTY,
 		ci:         inCI(env),
 		doNotTrack: switchedOn(env, "DO_NOT_TRACK"),
+		noInput:    switchedOn(env, "STRING_NO_INPUT"),
 	}
 	c.agent, c.agentFrom, c.agentRaw = detectAgent(env, c.stdinTTY)
 	return c
 }
 
 // interactive reports a person at the keyboard who sees what string prints
-// and can answer it there.
+// and can answer it there. Only then does a command wait for a person
+// without being told to with --poll.
 func (c execCtx) interactive() bool {
-	return c.stdinTTY && c.stdoutTTY && c.agent == "" && !c.ci
+	return c.stdinTTY && c.stdoutTTY && c.agent == "" && !c.ci && !c.noInput
 }
 
 // opensBrowser reports whether string may open a link in the browser itself:

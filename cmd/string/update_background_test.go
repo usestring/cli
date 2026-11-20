@@ -156,7 +156,8 @@ func TestUpdateTriggerLeavesProbesAlone(t *testing.T) {
 		c.record(updateState{Latest: "0.3.1", UpdatedFrom: "0.2.9", UpdatedTo: "0.3.0"})
 		return c
 	}
-	for _, list := range [][]string{{}, {"--version"}, {"--json", "--version"}, {"--help"}, {"-h"}, {"help"}, {"search", "--help"}, {"sitemap"}, {"integrations", "help"}, {"update"}, {"update", "--check"}} {
+	// The global switches can come before the command, and it still counts.
+	for _, list := range [][]string{{}, {"--version"}, {"--json", "--version"}, {"--help"}, {"-h"}, {"help"}, {"search", "--help"}, {"sitemap"}, {"integrations", "help"}, {"update"}, {"update", "--check"}, {"--no-open", "update"}, {"-y", "update"}} {
 		c := newCopy()
 		before, _ := os.ReadFile(c.file("update.json"))
 		got := c.run(list...)
