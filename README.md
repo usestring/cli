@@ -175,7 +175,7 @@ error: Keyless requests can't use mainContentOnly (HTTP 400)
 next: run `string login` or set STRING_API_KEY
 ```
 
-Add `--json` to any command to get the error as one JSON object on stderr instead:
+Add `--json` to any command to get the error as one JSON object on stderr instead. `--errors json` does the same and leaves stdout as it is, so `string fetch URL --errors json` still prints Markdown. From 0.4, `--json` on fetch prints a JSON object. 0.3 says so with a notice when it runs, and warns when a fetched site answers 404, 410 or another error, whose exit codes change in 0.4. `string help formatting` lists each change. `STRING_NO_DEPRECATION_WARNINGS=1` silences the notices, and `STRING_COMPAT=0.2` will keep 0.2's behavior:
 
 ```json
 {"error":{"status":429,"code":"keyless_refused","exit_code":3,"message":"…","retryable":false,"retry_after_seconds":3600,"user_action_required":true,"request_id":"…","next_step":"run `string login` or set STRING_API_KEY","next_commands":[{"type":"login","command":"string login","argv":["string","login"]},{"type":"env","why":"set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys"}],"help_url":"https://usestring.ai/auth.md"}}

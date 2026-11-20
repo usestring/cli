@@ -238,7 +238,9 @@ that runs it stops too.
 Errors go to stderr as error: and one sentence, the API's own message when it
 sends one, then the details under it, such as Retry-After, the keyless
 allowance and x-request-id, then next: and the step out. They never carry an
-HTML page or a raw answer. --json prints them as {"error":{...}} instead.
+HTML page or a raw answer. --json prints them as {"error":{...}} instead, and
+--errors json does the same with stdout left as it is. From 0.4, fetch --json
+prints a JSON object: string help formatting lists what changes.
 
 Exit codes: 0 ok, 1 other failure, 2 bad input, 3 needs a key or the key was
 refused, 4 out of credit, 5 rate limited, 6 upstream failure, 7 timeout,
@@ -1027,6 +1029,7 @@ type globalSwitches struct {
 	noInput    bool   // --no-input
 	hasTimeout bool   // --timeout
 	timeout    string // --timeout's value
+	errors     string // --errors's value: json or text
 }
 
 // takeGlobalSwitches removes the global switches from the arguments before
@@ -1036,7 +1039,7 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 	kept := make([]string, 0, len(list))
 	for i := 0; i < len(list); i++ {
 		arg := list[i]
-		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout"}); ok {
+		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout", "--errors"}); ok {
 			arg = global
 		}
 		switch {
@@ -1061,6 +1064,15 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 			}
 		case strings.HasPrefix(arg, "--timeout="):
 			found.hasTimeout, found.timeout = true, strings.TrimPrefix(arg, "--timeout=")
+		case arg == "--errors":
+			// Its value always follows, as --timeout's does.
+			found.errors = "--errors"
+			if i+1 < len(list) {
+				i++
+				found.errors = list[i]
+			}
+		case strings.HasPrefix(arg, "--errors="):
+			found.errors = strings.TrimPrefix(arg, "--errors=")
 		default:
 			kept = append(kept, arg)
 		}
@@ -1072,16 +1084,22 @@ func run(list []string, rt runtime) int {
 	list, global := takeGlobalSwitches(list)
 	rt.json, rt.exec.noOpen = global.json, global.noOpen
 	rt.exec.noInput = rt.exec.noInput || global.noInput
-	rt.interrupt.answer(rt.json, rt.exec.redraws())
+	// --errors json gives JSON errors, as --json does, and leaves stdout as
+	// it is.
+	jsonErrors := rt.json || global.errors == "json"
+	rt.interrupt.answer(jsonErrors, rt.exec.redraws())
+	if global.errors != "" && global.errors != "json" && global.errors != "text" {
+		return report(rt.stderr, usage(fmt.Errorf("--errors takes json or text, not %q", global.errors)), jsonErrors)
+	}
 	if global.hasTimeout {
 		limit, err := parseTimeout(global.timeout)
 		if err != nil {
-			return report(rt.stderr, usage(err), rt.json)
+			return report(rt.stderr, usage(err), jsonErrors)
 		}
 		rt.timeout = &limit
 	}
 	if err := execute(list, rt); err != nil {
-		return report(rt.stderr, err, rt.json)
+		return report(rt.stderr, err, jsonErrors)
 	}
 	return 0
 }
@@ -1147,6 +1165,9 @@ func execute(list []string, rt runtime) error {
 	op.command = list[0]
 	if op.note != "" {
 		fmt.Fprintln(rt.stderr, op.note)
+	}
+	if op.command == "fetch" && rt.json && announcing(rt.env) {
+		fmt.Fprint(rt.stderr, fetchJSONNotice)
 	}
 	key, err := apiKey(rt.env)
 	if err != nil {
@@ -1226,6 +1247,11 @@ func (c apiClient) call(op *operation) ([]byte, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if op.command == "fetch" && announcing(c.rt.env) {
+		if warning := siteStatusWarning(response.Header.Get("X-Status-Code"), jsString(op.body["url"])); warning != "" {
+			fmt.Fprint(c.rt.stderr, warning)
+		}
 	}
 	if notes := keylessNotes(response.Header); len(notes) > 0 {
 		fmt.Fprintf(c.rt.stderr, "%s\nRan without a key. For more, %s.\n", strings.Join(notes, "\n"), needsKey)
