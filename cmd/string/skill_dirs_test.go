@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -203,6 +205,44 @@ func TestSkillPrintsTheGuideAndWhereItIsInstalled(t *testing.T) {
 	}
 	if got := runOffline(t, "skills"); got.status != exitUsage || !strings.Contains(got.errors, "string skill") {
 		t.Errorf("string skills: %+v", got)
+	}
+}
+
+// The skill names only commands and flags that string has, and stays short
+// enough to load into every session that uses it.
+func TestTheSkillTeachesOnlyWhatStringHas(t *testing.T) {
+	skill := embeddedSkill(t)
+	if lines := strings.Count(skill, "\n"); lines > 150 {
+		t.Errorf("the skill has %d lines, want 150 or fewer", lines)
+	}
+	front, _, _ := strings.Cut(strings.TrimPrefix(skill, "---\n"), "\n---\n")
+	description, _ := strings.CutPrefix(front[strings.Index(front, "description:"):], "description: |\n")
+	if !strings.HasPrefix(front, "name: string-cli\n") || len(description) > 1024 {
+		t.Errorf("the frontmatter is\n%s", front)
+	}
+
+	// `string WORD`, in a code span or at the start of a line in a code block.
+	for _, match := range regexp.MustCompile("(?m)(?:`|^)string ([a-z][a-z-]*)").FindAllStringSubmatch(skill, -1) {
+		// string dev is what --version prints for a build from source.
+		if !slices.Contains(commands, match[1]) && match[1] != "dev" {
+			t.Errorf("the skill runs %q, which is no command", match[0])
+		}
+	}
+
+	documented := help
+	for name, doc := range commandDocs {
+		documented += doc.page(name)
+	}
+	for _, topic := range helpTopics {
+		documented += topic
+	}
+	flag := regexp.MustCompile(`--[a-zA-Z][a-zA-Z-]*`)
+	known := flag.FindAllString(documented, -1)
+	for _, used := range flag.FindAllString(skill, -1) {
+		// --no-init is install.sh's, and --post is a field of reddit post.
+		if !slices.Contains(known, used) && used != "--no-init" && used != "--post" {
+			t.Errorf("the skill uses %s, which no help page has", used)
+		}
 	}
 }
 
