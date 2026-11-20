@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
@@ -290,6 +291,9 @@ type operation struct {
 	maxTokens, offset int
 	// fromCopy says the page came from its local copy, not a request.
 	fromCopy bool
+	// contentType is the answer's Content-Type, the site's own for --format
+	// raw.
+	contentType string
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -1347,7 +1351,7 @@ func (c apiClient) call(op *operation) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	op.siteStatus = response.Header.Get("X-Status-Code")
+	op.siteStatus, op.contentType = response.Header.Get("X-Status-Code"), response.Header.Get("Content-Type")
 	if op.command == "fetch" && announcing(c.rt.env) && !c.rt.quiet {
 		if warning := siteStatusWarning(op.siteStatus, jsString(op.body["url"])); warning != "" {
 			fmt.Fprint(c.rt.stderr, warning)
@@ -1361,6 +1365,17 @@ func (c apiClient) call(op *operation) ([]byte, error) {
 
 // emit writes a response to stdout, or to the --output file.
 func (c apiClient) emit(op *operation, data []byte) error {
+	// Pages are untrusted. On a person's terminal, bytes that aren't text are
+	// refused, and text loses what could take the terminal over; anywhere
+	// else, output goes out as it came.
+	person := c.rt.exec.stdoutTTY && c.rt.exec.agent == "" && (op.output == "" || op.output == "-")
+	if person && op.binary && !textual(op.contentType, data) {
+		media := cmp.Or(strings.TrimSpace(strings.Split(op.contentType, ";")[0]), "no content type")
+		return &failure{exit: exitUsage, code: "invalid_usage", reason: "binary_on_tty", message: fmt.Sprintf("binary content (%s, %s): use -o FILE", media, sizeText(len(data))), nextStep: "run `" + commandLine(append(slices.Clone(op.line), "-o", "page.bin")) + "`"}
+	}
+	if person {
+		op.binary = false
+	}
 	if !op.binary {
 		text := decodeText(data)
 		if !strings.HasSuffix(text, "\n") {
@@ -1372,6 +1387,9 @@ func (c apiClient) emit(op *operation, data []byte) error {
 	if op.maxTokens > 0 {
 		whole := decodeText(data)
 		part, start, end, next := page(whole, op.maxTokens, op.offset)
+		if person {
+			part = forTerminal(part)
+		}
 		if !strings.HasSuffix(part, "\n") {
 			part += "\n"
 		}
@@ -1380,6 +1398,9 @@ func (c apiClient) emit(op *operation, data []byte) error {
 		}
 		fmt.Fprint(c.rt.stderr, pageFooter(op.line, len(whole), op.maxTokens, start, end, next, op.fromCopy))
 		return nil
+	}
+	if person {
+		data = []byte(forTerminal(string(data)))
 	}
 	if op.output == "" || op.output == "-" {
 		// Where no person reads stdout at a terminal, a large page's size
