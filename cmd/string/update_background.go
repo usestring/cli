@@ -84,9 +84,9 @@ func probeOrUpdate(list []string) bool {
 // afterCommand follows every command but a probe once the command's own
 // output is done. On the first command of a new release it rewrites the skill
 // where init installed it. Once a day it starts the update check in the
-// background, and on a terminal it passes on what an earlier check found.
-// When nothing is due it reads one small file. It never writes to stdout,
-// never changes how the command ended, and fails silently.
+// background, and to a person at a terminal it passes on what an earlier
+// check found. When nothing is due it reads one small file. It never writes
+// to stdout, never changes how the command ended, and fails silently.
 func afterCommand(list []string, rt runtime) {
 	defer func() { _ = recover() }()
 	list, asJSON := takeJSONFlag(list)
@@ -119,7 +119,7 @@ func afterCommand(list []string, rt runtime) {
 	if updatesOff(rt.env, copy, keys, keysErr) != "" {
 		return
 	}
-	notices := rt.exec.stderrTTY && !asJSON
+	notices := rt.exec.attended() && !asJSON
 	if notices && updated && copy.kind == installScript {
 		fmt.Fprintf(rt.stderr, "string updated itself from %s to %s. Turn automatic updates off with STRING_AUTO_UPDATE=0.\n", state.UpdatedFrom, version)
 		_ = changeUpdateState(statePath, func(s *updateState) { s.UpdateAnnounced = true })
@@ -135,7 +135,7 @@ func afterCommand(list []string, rt runtime) {
 	// A copy that only gets notices is checked only when a person could see
 	// one. The check is recorded first, so that a machine where it can never
 	// succeed, or where nothing can be recorded, starts no more than one a day.
-	if due && rt.spawn != nil && (copy.kind == installScript || rt.exec.stderrTTY) {
+	if due && rt.spawn != nil && (copy.kind == installScript || rt.exec.attended()) {
 		if changeUpdateState(statePath, func(s *updateState) { s.CheckedAt = now.UTC() }) == nil {
 			_ = rt.spawn(copy.path)
 		}

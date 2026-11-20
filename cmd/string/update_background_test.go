@@ -37,6 +37,8 @@ func TestUpdateTriggerStartsACheckOnlyWhenOneIsDueAndAllowed(t *testing.T) {
 		env      map[string]string
 		noKeys   bool
 		terminal bool
+		agent    string
+		piped    bool
 		// checked is when the last check was; zero is never.
 		checked time.Time
 		due     bool
@@ -57,6 +59,8 @@ func TestUpdateTriggerStartsACheckOnlyWhenOneIsDueAndAllowed(t *testing.T) {
 		{name: "from Homebrew on a terminal", dir: homebrewDir, terminal: true, due: true},
 		{name: "from Homebrew with nobody to tell", dir: homebrewDir},
 		{name: "from Homebrew on a terminal in CI", dir: homebrewDir, terminal: true, env: map[string]string{"CI": "1"}},
+		{name: "from Homebrew under an agent at a terminal", dir: homebrewDir, terminal: true, agent: "codex"},
+		{name: "from Homebrew with stdout piped", dir: homebrewDir, terminal: true, piped: true},
 		{name: "from npx on a terminal", dir: npxDir, terminal: true},
 		{name: "installed by hand on a terminal", dir: byHandDir, terminal: true, due: true},
 		{name: "installed by hand with nobody to tell", dir: byHandDir},
@@ -77,7 +81,7 @@ func TestUpdateTriggerStartsACheckOnlyWhenOneIsDueAndAllowed(t *testing.T) {
 					c.keys = nil
 				}
 				maps.Copy(c.env, check.env)
-				c.terminal = check.terminal
+				c.terminal, c.agent, c.piped = check.terminal, check.agent, check.piped
 				c.now = now
 				if !check.checked.IsZero() {
 					c.record(updateState{CheckedAt: check.checked})
@@ -167,6 +171,9 @@ func TestUpdateTriggerLeavesProbesAlone(t *testing.T) {
 	}
 }
 
+// A notice is for a person who sees both output streams at a terminal. A
+// coding agent can run string in a terminal too, and a notice there would
+// land in what it reads.
 func TestUpdateNoticesShowOnATerminalOnly(t *testing.T) {
 	_, public := testKey(t)
 	host := newUpdateHost(t)
@@ -184,6 +191,15 @@ func TestUpdateNoticesShowOnATerminalOnly(t *testing.T) {
 		if notice := c.notice("status", "--json"); notice != "" {
 			t.Errorf("with --json: %q", notice)
 		}
+		c.agent = "claude-code"
+		if notice := c.notice("status"); notice != "" {
+			t.Errorf("under an agent: %q", notice)
+		}
+		c.agent, c.piped = "", true
+		if notice := c.notice("status"); notice != "" {
+			t.Errorf("with stdout piped: %q", notice)
+		}
+		c.piped = false
 		if notice := c.notice("balance"); !strings.Contains(notice, "0.3.0") || !strings.Contains(notice, "0.3.1") {
 			t.Errorf("on a terminal: %q", notice)
 		}
@@ -224,18 +240,22 @@ func TestUpdateNoticesShowOnATerminalOnly(t *testing.T) {
 	for _, check := range []struct {
 		name, dir, latest string
 		env               map[string]string
+		agent             string
+		piped             bool
 	}{
 		// The next npx run fetches the new release anyway.
 		{name: "from npx", dir: npxDir, latest: "0.3.1"},
 		{name: "of a pre-release, to a stable build", dir: homebrewDir, latest: "0.4.0-rc.1"},
 		{name: "in CI", dir: homebrewDir, latest: "0.3.1", env: map[string]string{"CI": "true"}},
 		{name: "with STRING_AUTO_UPDATE=0", dir: homebrewDir, latest: "0.3.1", env: map[string]string{"STRING_AUTO_UPDATE": "0"}},
+		{name: "under an agent at a terminal", dir: homebrewDir, latest: "0.3.1", agent: "claude-code"},
+		{name: "with stdout piped", dir: homebrewDir, latest: "0.3.1", piped: true},
 	} {
 		t.Run("none "+check.name, func(t *testing.T) {
 			setVersion(t, "0.3.0")
 			c := newTestCopy(t, host, keys, check.dir)
 			maps.Copy(c.env, check.env)
-			c.terminal = true
+			c.terminal, c.agent, c.piped = true, check.agent, check.piped
 			c.record(updateState{CheckedAt: c.now.Add(-time.Hour), Latest: check.latest})
 			if notice := c.notice("status"); notice != "" {
 				t.Errorf("%q", notice)
