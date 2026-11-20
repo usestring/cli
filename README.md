@@ -267,16 +267,27 @@ String uses them to tell people, scripts, CI and each agent apart in its own req
 
 ## Agent skills
 
-`skills/string-cli` is an [Agent Skills](https://agentskills.io) skill that teaches a coding agent the `string` commands. The native binary carries it, and `string init` installs it into `~/.agents/skills` (read by Codex and others) and into every agent it finds on the machine: Claude Code, Cursor, Gemini CLI, OpenCode, GitHub Copilot, Windsurf, Goose, Droid, Kiro CLI, Qwen Code, Grok Build, OpenClaw and Hermes Agent. Run it again after an upgrade to update the skill.
+`skills/string-cli` is an [Agent Skills](https://agentskills.io) skill that teaches a coding agent the `string` commands: keyless first, big pages to a file or in parts, exit codes and `next_commands`, and what never to spend without asking. The native binary carries it, and `string skill` prints it, so an agent can read it without installing anything.
 
-The first command of a new release also rewrites the skill wherever it is already installed, however `string` was installed, and never installs it anywhere new.
+`string init` installs it in two places that between them reach almost every coding agent:
+
+- `~/.agents/skills`, which Codex, Cursor, Gemini CLI, OpenCode, GitHub Copilot, Goose, Droid and others read;
+- `~/.claude/skills`, for Claude Code, when it is on the machine (under `$CLAUDE_CONFIG_DIR` when that is set).
+
+An agent found on the machine that reads neither, such as Windsurf, Kiro CLI, Qwen Code, Grok Build, OpenClaw or Hermes Agent, also gets a copy in its own directory. Releases before 0.3 put a copy in each agent's directory. Gemini CLI reads both `~/.gemini/skills` and `~/.agents/skills` and warns of a skill conflict when it finds the skill twice, so `string init` removes its copy in `~/.gemini/skills` and says so. It removes only a plain copy as `string init` wrote it: a directory, not a link, with just the skill's `SKILL.md`. Anything else there stays, and init says why. The older copies for other agents stay where they are.
+
+`--agent NAME` installs in exactly the agents it names, each in its own directory, and touches nothing else. That covers an agent version too old to read `~/.agents/skills`.
 
 ```bash
-string init                            # the shared directory and every agent found
-string init --agent claude-code,codex  # only these
+string init                            # ~/.agents/skills, ~/.claude/skills, and agents that read neither
+string init --agent claude-code,codex  # only these, each in its own directory
 string init --no-login                 # without signing in, even at a terminal
+string skill                           # print the skill
+string skill --path                    # list the installed copies
 npx skills add usestring/cli           # the same skill through the skills installer
 ```
+
+The first command of a new release also rewrites the skill wherever it is already installed, however `string` was installed, and never installs it anywhere new. To move it where this release puts it, run `string init` again.
 
 `string init` also adds String's [hosted MCP server](https://docs.usestring.ai/mcp/remote) to Claude Code and Codex as `string`, unless the server is already there or another server has that name. An entry for it under another name, such as `string-web-access`, stays as it is, and init prints that name for you to use in place of `string`. Both sign in to it with String, so no key goes into their settings: run `claude mcp login string` or `codex mcp login string` and choose the key each may use. For the other agents it found, init prints the setup page instead: most connect with an API key, which init never copies into another program's settings, and OpenCode signs in only from v2. `--no-mcp` skips this step.
 

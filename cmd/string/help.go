@@ -311,8 +311,8 @@ var commandDocs = map[string]commandDoc{
 			"exit     0 ok, whether or not the sign-in finishes · 2 bad input",
 		},
 		cost: "Free.",
-		flags: `  --agent NAME[,NAME...]   only these agents: claude-code, codex, cursor,
-                           gemini-cli or opencode
+		flags: `  --agent NAME[,NAME...]   only these agents, each in its own skills directory,
+                           such as claude-code, codex, cursor or gemini-cli
   --no-mcp                 don't add String's MCP server to Claude Code and Codex
   --no-login               skip the sign-in
   --browser                sign in as string login --browser does
@@ -624,6 +624,8 @@ Ways that work well:
   --json                                errors as one JSON object
   string COMMAND --help                 one command's examples, output, exit
                                         codes, cost and flags
+  string skill                          the whole guide for agents, the skill
+                                        string init installs
 
 Learn more: https://github.com/usestring/cli#coding-agents
 `,
