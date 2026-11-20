@@ -152,7 +152,13 @@ Go version. Help and version send no request.
 fetch prints the page as Markdown, unless --format asks for json or raw or a
 field that only JSON carries is set: jsonSchema, screenshot, captureXHR,
 captureIframes, captureCookies or actions. request, search and sitemap print JSON.
---output FILE, or -o FILE, writes the response to FILE instead of stdout.
+--output FILE, or -o FILE, writes the response to FILE instead of stdout, and
+says on stderr what it saved: the size, the tokens, a fetch's status and host,
+and a Markdown page's outline, each heading after its line number. A path
+that can't take a file fails before the request. -o - is stdout.
+A fetched page over 16 KB says its size on stderr first where no person reads
+stdout at a terminal, with what the agent keeps of it. -q, or --quiet, leaves
+such status lines out of stderr; errors and the keyless allowance stay.
 --input reads more request fields from a JSON object in FILE, or from stdin
 with -; flags win over it.
 sitemap submit only quotes a crawl. --approve starts it at the quoted cost, and
