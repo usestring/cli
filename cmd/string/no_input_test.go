@@ -22,7 +22,10 @@ func TestGlobalSwitchesComeOutAnywhereBeforeTheDoubleDash(t *testing.T) {
 		{[]string{"login", "--no-input"}, []string{"login"}, globalSwitches{noInput: true}},
 		{[]string{"--json", "--no-open", "login", "--no-wait"}, []string{"login", "--no-wait"}, globalSwitches{json: true, noOpen: true}},
 		{[]string{"-y", "fetch", "https://example.com", "--yes"}, []string{"fetch", "https://example.com"}, globalSwitches{}},
-		{[]string{"search", "--", "--no-input", "-y", "--json"}, []string{"search", "--", "--no-input", "-y", "--json"}, globalSwitches{}},
+		{[]string{"--timeout", "90s", "fetch", "https://example.com"}, []string{"fetch", "https://example.com"}, globalSwitches{hasTimeout: true, timeout: "90s"}},
+		{[]string{"search", "golang", "--timeout=5m", "--json"}, []string{"search", "golang"}, globalSwitches{json: true, hasTimeout: true, timeout: "5m"}},
+		{[]string{"login", "--poll", "--timeout"}, []string{"login", "--poll"}, globalSwitches{hasTimeout: true}},
+		{[]string{"search", "--", "--no-input", "-y", "--json", "--timeout", "5"}, []string{"search", "--", "--no-input", "-y", "--json", "--timeout", "5"}, globalSwitches{}},
 	} {
 		kept, got := takeGlobalSwitches(c.list)
 		if !slices.Equal(kept, c.kept) || got != c.want {

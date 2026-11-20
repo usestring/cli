@@ -259,7 +259,11 @@ func runIntegration(caller apiClient, list []string) error {
 			return usage(err)
 		}
 		op := &operation{method: "POST", path: "/integrations/" + encodeURIComponent(siteName) + "/" + encodeURIComponent(actionName), body: body, output: parsed.values["output"]}
-		response, err := caller.call(op)
+		// An action can drive a site through several pages, so it gets
+		// longer than one fetch.
+		long := caller
+		long.rt.usualLimit = integrationRequestLimit
+		response, err := long.call(op)
 		if err != nil {
 			return err
 		}

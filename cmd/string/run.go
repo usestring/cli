@@ -38,7 +38,13 @@ type runtime struct {
 	exec execCtx
 	// json is set by --json: machine-readable output for agents.
 	json bool
-	now  func() time.Time
+	// timeout is --timeout when it was given: how long each request to String
+	// may take, or zero for no limit.
+	timeout *time.Duration
+	// usualLimit is how long a request may take when neither --timeout nor
+	// an agent sets the limit. Zero means requestLimit.
+	usualLimit time.Duration
+	now        func() time.Time
 	// executable gives the path of the running binary, which tells init how
 	// this copy was installed.
 	executable func() (string, error)
@@ -198,6 +204,11 @@ never under an agent, in CI or in a pipe, and --no-open stops it there too.
 --no-input, or STRING_NO_INPUT=1, says nobody will answer: string then waits
 for no person, as under an agent, and only --poll waits for an approval. -y
 and --yes confirm what a command would ask first; none asks yet.
+--timeout DURATION, as 90s, 5m or a number of seconds, limits how long each
+request to String may take, and 0 means no limit. Without it a request may
+take 120s, an integrations run 300s, and any request under an agent 90s. A
+request that runs past its limit, or whose answer stops arriving for 60s,
+exits 7.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 
@@ -1045,9 +1056,11 @@ func truncateUTF16(text string, limit int) string {
 // globalSwitches are the switches every command takes, wherever they are on
 // the command line before "--".
 type globalSwitches struct {
-	json    bool // --json
-	noOpen  bool // --no-open
-	noInput bool // --no-input
+	json       bool   // --json
+	noOpen     bool   // --no-open
+	noInput    bool   // --no-input
+	hasTimeout bool   // --timeout
+	timeout    string // --timeout's value
 }
 
 // takeGlobalSwitches removes the global switches from the arguments before
@@ -1055,19 +1068,29 @@ type globalSwitches struct {
 func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 	var found globalSwitches
 	kept := make([]string, 0, len(list))
-	for i, arg := range list {
-		switch arg {
-		case "--":
+	for i := 0; i < len(list); i++ {
+		switch arg := list[i]; {
+		case arg == "--":
 			return append(kept, list[i:]...), found
-		case "--json":
+		case arg == "--json":
 			found.json = true
-		case "--no-open":
+		case arg == "--no-open":
 			found.noOpen = true
-		case "--no-input":
+		case arg == "--no-input":
 			found.noInput = true
-		case "-y", "--yes":
+		case arg == "-y", arg == "--yes":
 			// They confirm what a command would ask before going on. None
 			// asks yet; taking them here lets scripts and agents pass them.
+		case arg == "--timeout":
+			// The next argument is always its value, so a missing one is
+			// reported as a bad duration rather than run as a command.
+			found.hasTimeout, found.timeout = true, ""
+			if i+1 < len(list) {
+				i++
+				found.timeout = list[i]
+			}
+		case strings.HasPrefix(arg, "--timeout="):
+			found.hasTimeout, found.timeout = true, strings.TrimPrefix(arg, "--timeout=")
 		default:
 			kept = append(kept, arg)
 		}
@@ -1079,6 +1102,13 @@ func run(list []string, rt runtime) int {
 	list, global := takeGlobalSwitches(list)
 	rt.json, rt.exec.noOpen = global.json, global.noOpen
 	rt.exec.noInput = rt.exec.noInput || global.noInput
+	if global.hasTimeout {
+		limit, err := parseTimeout(global.timeout)
+		if err != nil {
+			return report(rt.stderr, usage(err), rt.json)
+		}
+		rt.timeout = &limit
+	}
 	if err := execute(list, rt); err != nil {
 		return report(rt.stderr, err, rt.json)
 	}
