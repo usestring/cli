@@ -70,6 +70,13 @@ func (c execCtx) attended() bool {
 	return c.stdoutTTY && c.stderrTTY && c.agent == "" && !c.ci
 }
 
+// redraws reports a person who sees stderr at a terminal, where a wait can
+// redraw one progress line in place. An agent's or CI's terminal keeps every
+// redraw in what it reads, so a wait prints plain lines there instead.
+func (c execCtx) redraws() bool {
+	return c.stderrTTY && c.agent == "" && !c.ci
+}
+
 // mode is how string runs, as the X-String-CLI-Mode header names it.
 func (c execCtx) mode() string {
 	switch {
