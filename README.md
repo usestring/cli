@@ -185,6 +185,8 @@ When the API sends `code`, `retryable` or `next_actions`, they are passed throug
 
 Each request to String has a time limit: 120 seconds, 300 for `integrations run`, and 90 for any request under a coding agent, which stays under the 2 minutes some agents allow a command. `--timeout DURATION` sets another, as `90s`, `5m` or a number of seconds, and `--timeout 0` sets none. With `--wait` or `--poll`, it limits the whole wait instead (see [sitemap crawls](#commands) and [keys](#keys)). A request that runs past its limit, or whose answer stops arriving for 60 seconds, exits 7 with code `timeout`, and the error suggests a longer `--timeout`.
 
+Ctrl-C prints what it leaves behind: a crawl or a sign-in that keeps going, with the command that picks it up, or a request that may already have been processed. Under `--json` that is the error envelope, with code `interrupted`. `string` then ends the way SIGINT ends a program, so the shell sees 130 and a script that runs `string` stops too. On Windows it exits 130.
+
 ## Updating
 
 ```bash

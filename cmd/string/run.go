@@ -221,6 +221,10 @@ request to String may take, or the whole wait of a command that waits, as with
 --wait and --poll, and 0 means no limit. Without it a request may take 120s,
 an integrations run 300s, and any request under an agent 90s. A request that
 runs past its limit, or whose answer stops arriving for 60s, exits 7.
+Ctrl-C says what keeps running, such as a crawl or a sign-in, and the command
+that picks it up, or that a request may already have been processed. string
+then ends as an interrupted program does, so a shell sees 130 and a script
+that runs it stops too.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 
