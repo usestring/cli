@@ -36,7 +36,7 @@ func TestALargePageSaysItsSizeFirst(t *testing.T) {
 	page := strings.Repeat("A line of the page that is long enough.\n", 512)
 	base, _ := fetchAPI(t, page)
 	note := func(cut, command string) string {
-		return "note: example.com returned 20,480 bytes (~5,120 tokens). " + cut + "\nSave it and read parts: " + command + "\n"
+		return "note: example.com returned 20,480 bytes (~5,120 tokens). " + cut + "\nSave it and read parts: " + command + " -o page.md\nOr page it: " + command + " --max-tokens 6000\n"
 	}
 	for _, c := range []struct {
 		about string
@@ -44,9 +44,9 @@ func TestALargePageSaysItsSizeFirst(t *testing.T) {
 		list  []string
 		said  string
 	}{
-		{"Claude Code", execCtx{agent: "claude-code"}, []string{"fetch", "https://example.com"}, note("Claude Code keeps only the first 2 KB of output this long.", "string fetch https://example.com -o page.md")},
-		{"an agent string doesn't know", execCtx{agent: "acme-agent"}, []string{"https://example.com", "--mainContentOnly"}, note("Most agents cut output this long.", "string fetch https://example.com --mainContentOnly -o page.md")},
-		{"a pipe", execCtx{stdinTTY: true, stderrTTY: true}, []string{"fetch", "https://example.com"}, note("Most agents cut output this long.", "string fetch https://example.com -o page.md")},
+		{"Claude Code", execCtx{agent: "claude-code"}, []string{"fetch", "https://example.com"}, note("Claude Code keeps only the first 2 KB of output this long.", "string fetch https://example.com")},
+		{"an agent string doesn't know", execCtx{agent: "acme-agent"}, []string{"https://example.com", "--mainContentOnly"}, note("Most agents cut output this long.", "string fetch https://example.com --mainContentOnly")},
+		{"a pipe", execCtx{stdinTTY: true, stderrTTY: true}, []string{"fetch", "https://example.com"}, note("Most agents cut output this long.", "string fetch https://example.com")},
 		{"a person at a terminal", execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true}, []string{"fetch", "https://example.com"}, ""},
 		{"-q", execCtx{agent: "claude-code"}, []string{"fetch", "https://example.com", "-q"}, ""},
 	} {

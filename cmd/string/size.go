@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -32,8 +33,9 @@ func sizeNotice(rt runtime, target string, size int, line []string) string {
 	if !ok {
 		cut = "Most agents cut output this long."
 	}
-	return fmt.Sprintf("note: %s returned %s bytes (~%s tokens). %s\nSave it and read parts: %s\n",
-		hostOf(target), thousands(int64(size)), thousands(int64(tokens(size))), cut, commandLine(append(line, "-o", "page.md")))
+	return fmt.Sprintf("note: %s returned %s bytes (~%s tokens). %s\nSave it and read parts: %s\nOr page it: %s\n",
+		hostOf(target), thousands(int64(size)), thousands(int64(tokens(size))), cut,
+		commandLine(append(slices.Clone(line), "-o", "page.md")), commandLine(append(slices.Clone(line), "--max-tokens", "6000")))
 }
 
 // tokens estimates the tokens in size bytes of text, at four bytes each.
