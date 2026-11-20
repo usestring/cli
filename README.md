@@ -81,7 +81,7 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
   export STRING_API_KEY="your-api-key"
   ```
 
-`string whoami` shows which key commands use, the account it was saved for and the key's first characters, and checks it with String in one request that spends no credit. It exits 3 when String refuses the key, and 6 when it couldn't ask. `string whoami --offline` only says where the key comes from, as `whoami` did before. `string logout` deletes the saved key.
+`string whoami` shows which key commands use, the account it was saved for and the key's first characters, and checks it with String in one request that spends no credit. It exits 3 when String refuses the key, and 6 when it couldn't ask. `string whoami --offline` only says where the key comes from, as `whoami` did before. With `--json`, either one prints one JSON object; only the checked one has `accepted`. `string logout` deletes the saved key.
 
 An agent working with nobody present can register for a trial key instead, where the server offers it. `string trial` solves a few seconds' proof of work and saves a key with a small balance in the same file. The key doesn't expire; it works until its credit runs out. Beside it, in `trial.json`, it keeps a claim token, which a person can use for 7 days to adopt the agent onto their String account. Neither is printed. Where trial keys are switched off, `string trial` exits 3.
 
