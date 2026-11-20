@@ -135,6 +135,9 @@ reference reads straight onto the command line:
   string fetch https://example.com --mainContentOnly --countryCode DE
 A boolean flag alone is true, =false turns it off (--solveCaptcha=false), and
 an object or array field takes JSON, or @ and a file path (--jsonSchema @./schema.json).
+A flag of more than one word takes its kebab-case and snake_case spellings too:
+--main-content-only is --mainContentOnly. A near miss of a flag or a command
+names the one meant, and string exits 2 without running it.
 string COMMAND --help, or -h anywhere on the line, shows the command's own page:
 examples, what it prints, its exit codes, what it costs, and its flags and fields.
 version adds the build to the version: the commit, its date, the system and the
@@ -315,6 +318,10 @@ func parseArgs(list []string, options ...string) (args, error) {
 
 func parse(list []string, s spec) (args, error) {
 	options := append(slices.Clone(s.options), "input")
+	known := append(append([]string{"help"}, s.switches...), options...)
+	for field := range s.fields {
+		known = append(known, field)
+	}
 	parsed := args{values: map[string]string{}, switches: map[string]bool{}, fields: map[string]any{}}
 	for i := 0; i < len(list); i++ {
 		arg := list[i]
@@ -327,7 +334,7 @@ func parse(list []string, s spec) (args, error) {
 			return parsed, nil
 		case len(arg) > 1 && arg[0] == '-' && arg[1] != '-':
 			first, _ := utf8.DecodeRuneInString(arg[1:])
-			return args{}, unknownOption("-"+string(first), s)
+			return args{}, unknownOption("-"+string(first), known)
 		case len(arg) > 2 && strings.HasPrefix(arg, "--"):
 			name, value, inline := arg[2:], "", false
 			if eq := strings.IndexByte(arg[2:], '='); eq > 0 {
@@ -336,6 +343,13 @@ func parse(list []string, s spec) (args, error) {
 			raw := "--" + name
 			if field, ok := s.aliases[name]; ok {
 				name = field
+			}
+			// Each flag takes its camelCase, kebab-case and snake_case
+			// spellings: --main-content-only is --mainContentOnly.
+			if !slices.Contains(known, name) {
+				if spelled, ok := spelledAs(name, known); ok {
+					name = spelled
+				}
 			}
 			takeValue := func() (string, error) {
 				if inline {
@@ -391,7 +405,7 @@ func parse(list []string, s spec) (args, error) {
 				}
 				parsed.fields[name] = value
 			default:
-				return args{}, unknownOption(raw, s)
+				return args{}, unknownOption(raw, known)
 			}
 		default:
 			parsed.positionals = append(parsed.positionals, arg)
@@ -454,12 +468,12 @@ func jsonValue(raw, value string) (any, error) {
 	return json.RawMessage(bytes.TrimSpace(source)), nil
 }
 
-func unknownOption(raw string, s spec) error {
-	// Flags are spelled as the API's fields, so --max-pages means --maxPages.
-	squash := func(name string) string { return strings.ToLower(strings.ReplaceAll(name, "-", "")) }
-	for name := range s.fields {
-		if squash(name) == squash(strings.TrimPrefix(raw, "--")) {
-			return fmt.Errorf("Unknown option '%s'. Did you mean '--%s'? Flags are spelled exactly as the API's fields.", raw, name)
+// unknownOption is the error for a flag the command doesn't take, naming
+// the one of known it is a near miss of.
+func unknownOption(raw string, known []string) error {
+	if strings.HasPrefix(raw, "--") {
+		if guess, ok := nearest(strings.TrimPrefix(raw, "--"), known); ok {
+			return fmt.Errorf("Unknown option '%s'. Did you mean '--%s'?", raw, guess)
 		}
 	}
 	quoted, _ := json.Marshal(raw)
@@ -959,7 +973,7 @@ func operationFor(command string, list []string, stdin io.Reader) (*operation, e
 	case "sitemap":
 		return sitemapCommand(list, stdin)
 	}
-	return nil, fmt.Errorf("Unknown command: %s", command)
+	return nil, unknownCommand(command, list)
 }
 
 // decodeText decodes a response body as fetch's Response.text() does:
@@ -1001,7 +1015,11 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 	var found globalSwitches
 	kept := make([]string, 0, len(list))
 	for i := 0; i < len(list); i++ {
-		switch arg := list[i]; {
+		arg := list[i]
+		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout"}); ok {
+			arg = global
+		}
+		switch {
 		case arg == "--":
 			return append(kept, list[i:]...), found
 		case arg == "--json":

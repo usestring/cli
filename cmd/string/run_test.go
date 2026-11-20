@@ -135,10 +135,10 @@ func TestFieldFlagsAreTheAPIFieldsOfTheSameName(t *testing.T) {
 	}
 
 	for list, message := range map[string]string{
-		"sitemap submit https://example.com --max-pages 5": "Did you mean '--maxPages'?",
-		"fetch https://example.com --maxRedirects many":    "--maxRedirects must be an integer",
-		"fetch https://example.com --executeJS=yes":        "--executeJS takes no value, or =true or =false",
-		"search coffee --coordinates {":                    "--coordinates must be JSON",
+		"sitemap submit https://example.com --maxPgaes 5": "Did you mean '--maxPages'?",
+		"fetch https://example.com --maxRedirects many":   "--maxRedirects must be an integer",
+		"fetch https://example.com --executeJS=yes":       "--executeJS takes no value, or =true or =false",
+		"search coffee --coordinates {":                   "--coordinates must be JSON",
 	} {
 		if got := invoke(t, strings.Fields(list), baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, message) {
 			t.Errorf("%s: %+v", list, got)
@@ -714,7 +714,7 @@ func TestIntegrationsListAndRunTakeTheInputFieldsAsFlags(t *testing.T) {
 	expectJSON(t, posts[0], `{"post":"1xapaw7","maxPages":2,"flairs":["News","Help"]}`)
 	expectJSON(t, ran.output, `{"envelopeVersion":1,"data":[{"id":"1xapaw7"}],"failures":[]}`)
 
-	if got := invoke(t, []string{"integrations", "run", "reddit", "post", "--max-pages", "2"}, baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, "Did you mean '--maxPages'?") {
+	if got := invoke(t, []string{"integrations", "run", "reddit", "post", "--maxPagse", "2"}, baseURL, "test-key"); got.status != 2 || !strings.Contains(got.errors, "Did you mean '--maxPages'?") {
 		t.Errorf("misspelled flag %+v", got)
 	}
 	if got := invoke(t, []string{"integrations", "run", "reddit", "post", "--post", "1xapaw7"}, baseURL, ""); got.status != 3 || !strings.Contains(got.errors, "needs a key") {
