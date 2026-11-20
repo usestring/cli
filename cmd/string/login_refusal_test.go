@@ -698,22 +698,25 @@ func TestInitSaysHowToPutTheCopyThatIsRunningOnPATH(t *testing.T) {
 }
 
 func TestHelpDescribesSignInAsItWorks(t *testing.T) {
-	got := newSignInSession(t).run("--help")
 	// The help is wrapped by hand, so compare it with the line breaks taken out.
-	text := strings.Join(strings.Fields(got.output), " ")
-	for _, want := range []string{
-		"login signs in through your browser and saves a new API key that String creates for that sign-in.",
-		"set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.",
-		"string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login]",
-		"--no-login skips the sign-in, and init exits 0 whether or not the sign-in finishes.",
+	page := func(args ...string) string {
+		return strings.Join(strings.Fields(newSignInSession(t).run(args...).output), " ")
+	}
+	pages := map[string]string{"--help": page("--help"), "login --help": page("login", "--help"), "init --help": page("init", "--help")}
+	for _, c := range []struct{ page, want string }{
+		{"login --help", "sign in through your browser and save a new API key"},
+		{"--help", "set STRING_API_KEY from https://portal.usestring.ai/api-keys."},
+		{"init --help", "0 ok, whether or not the sign-in finishes"},
 	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the help lacks %q", want)
+		if !strings.Contains(pages[c.page], c.want) {
+			t.Errorf("string %s lacks %q", c.page, c.want)
 		}
 	}
-	for _, gone := range []string{"the API key you choose", "portal.usestring.ai/settings"} {
-		if strings.Contains(text, gone) {
-			t.Errorf("the help still says %q", gone)
+	for name, text := range pages {
+		for _, gone := range []string{"the API key you choose", "portal.usestring.ai/settings"} {
+			if strings.Contains(text, gone) {
+				t.Errorf("string %s still says %q", name, gone)
+			}
 		}
 	}
 }

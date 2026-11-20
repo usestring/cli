@@ -412,7 +412,7 @@ var commandDocs = map[string]commandDoc{
 		},
 	},
 	"init": {
-		summary: "install the string-cli skill for the coding agents on this machine",
+		summary: "install the string-cli skill for your coding agents",
 		usage: []string{
 			"string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login] [--browser]",
 			"            [--device-name NAME]",
@@ -779,6 +779,41 @@ string help --json adds the flags, output and exit codes. One call is enough.
 Pages that curl or WebFetch can't read: string fetch URL. Big pages: -o FILE.
 
 `
+
+// help is the help for all of string: how to start without a key, a line for
+// each command from its page, and where the rest is, in at most 25 lines.
+// Each command's page has its details, and string help --all every command.
+var help = func() string {
+	var b strings.Builder
+	b.WriteString(`String Web Access CLI: web pages, search and crawls for agents and people
+
+string fetch and string search work without a key, within a daily allowance per
+IP address. Past it, and for request, sitemap, integrations run and balance, use
+string login, or set STRING_API_KEY from https://portal.usestring.ai/api-keys.
+
+Usage: string COMMAND [ARGS] [--FLAG VALUE ...], or string URL to fetch a page
+`)
+	var terms []termDoc
+	at := 0
+	for _, name := range commands {
+		page, ok := commandDocs[name]
+		if !ok {
+			continue
+		}
+		term := name
+		if len(page.leaves) == 1 {
+			term = strings.TrimSpace(name + " " + strings.Join(page.leaves[0].args, " "))
+		}
+		terms = append(terms, termDoc{term, page.summary})
+		at = max(at, len(term)+4)
+	}
+	b.WriteString(termLines(terms, at))
+	b.WriteString(`
+API fields are flags, spelled as in the API: --mainContentOnly --countryCode DE
+One command: string COMMAND --help. Every command on one page: string help --all
+`)
+	return b.String()
+}()
 
 // rootHelp is the help for all of string, which starts with a few lines for
 // agents under one.

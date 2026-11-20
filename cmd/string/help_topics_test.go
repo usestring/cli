@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // string help TOPIC prints the topic, with no request, and a near miss of a
@@ -77,5 +78,26 @@ func TestTheHelpForAllOfStringGreetsAnAgent(t *testing.T) {
 	}
 	if lines := strings.Count(agentPreamble, "\n"); lines != 4 || slices.ContainsFunc(strings.Split(agentPreamble, "\n"), func(line string) bool { return len(line) > 80 }) {
 		t.Errorf("the lines for agents are %d lines, some over 80 columns:\n%s", lines, agentPreamble)
+	}
+}
+
+// The help for all of string fits on one screen, so an agent reads it whole
+// for the price of a few lines: a line for each command's page, and last where
+// every command is. A page left out of it is a command nobody finds there.
+func TestTheHelpForAllOfStringFitsOnOneScreen(t *testing.T) {
+	lines := strings.Split(strings.TrimSuffix(help, "\n"), "\n")
+	if last := lines[len(lines)-1]; len(lines) > 25 || !strings.Contains(last, "string help --all") {
+		t.Errorf("the help for all of string is %d lines and ends %q; want 25 at most, ending with string help --all", len(lines), last)
+	}
+	for _, line := range lines {
+		if utf8.RuneCountInString(line) > helpWidth {
+			t.Errorf("the help for all of string has a line of %d columns: %q", utf8.RuneCountInString(line), line)
+		}
+	}
+	flat := strings.Join(strings.Fields(help), " ")
+	for name, page := range commandDocs {
+		if !regexp.MustCompile(`(?m)^  `+regexp.QuoteMeta(name)+`( |$)`).MatchString(help) || !strings.Contains(flat, " "+page.summary+" ") {
+			t.Errorf("the help for all of string has no line for %s, %q", name, page.summary)
+		}
 	}
 }

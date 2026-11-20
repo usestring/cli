@@ -107,7 +107,7 @@ var globalFlagDocs = []flagDoc{
 var helpTopicNames = []string{"exit-codes", "environment", "formatting", "agents"}
 
 // helpAll is string help --all: one line for each command, then the global
-// flags, the exit codes and the topics.
+// flags and what each does, the exit codes and the topics.
 func helpAll() string {
 	var b strings.Builder
 	b.WriteString("string " + version + ": web pages, search and crawls for agents and people\n\n")
@@ -120,18 +120,14 @@ func helpAll() string {
 	for i, l := range leaves {
 		fmt.Fprintf(&b, "%-*s  %-*s  %s\n", nameWidth, names[i], lineWidth, l.line, l.costs)
 	}
-	var globals []string
-	for _, f := range globalFlagDocs {
-		globals = append(globals, f.spelled())
-	}
 	var codes []string
 	for _, e := range exitCodeDocs {
 		meaning, _, _ := strings.Cut(e.meaning, ";")
 		meaning, _, _ = strings.Cut(meaning, ",")
 		codes = append(codes, fmt.Sprintf("%d %s", e.code, meaning))
 	}
-	b.WriteString("\n" + wrapItems("Every command takes:", globals))
-	b.WriteString(wrapItems("Exit codes:", codes))
+	b.WriteString("\nEvery command takes:\n" + flagLines(globalFlagDocs, 27))
+	b.WriteString("\n" + wrapItems("Exit codes:", codes))
 	b.WriteString("\nTopics, a page each:\n")
 	topics := make([]termDoc, len(helpTopicNames))
 	for i, name := range helpTopicNames {
