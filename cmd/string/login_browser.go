@@ -90,9 +90,7 @@ func startBrowserSignIn(rt runtime, wait bool, envFile string) (pendingLogin, er
 	if err := write(rt.stdout, shown); err != nil {
 		return pendingLogin{}, err
 	}
-	if rt.openURL != nil {
-		_ = rt.openURL(link)
-	}
+	rt.openLink(link)
 	return pending, nil
 }
 

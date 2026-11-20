@@ -567,9 +567,7 @@ func startSignIn(rt runtime, browser, wait bool, envFile, deviceName string) (pe
 	if err := write(rt.stdout, shown); err != nil {
 		return pendingLogin{}, err
 	}
-	if rt.openURL != nil {
-		_ = rt.openURL(link)
-	}
+	rt.openLink(link)
 	return pending, nil
 }
 

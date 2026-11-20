@@ -70,9 +70,10 @@ func TestApprovalLinkSwapsOnlyTheHostedPage(t *testing.T) {
 	}
 }
 
-// Every way string login shows the approval link, and the browser it opens,
-// gets String's page: the JSON under an agent and the --no-wait text. The
-// terminal flow and init print the same link through the same code.
+// Every way string login shows the approval link gets String's page: the JSON
+// and the --no-wait text, and the browser it opens for a person at a
+// terminal. The waiting flow and init print the same link through the same
+// code.
 func TestLoginShowsAndOpensStringsApprovalPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/oauth/device_authorization" {
@@ -102,6 +103,7 @@ func TestLoginShowsAndOpensStringsApprovalPage(t *testing.T) {
 			stderr:  &stderr,
 			openURL: func(link string) error { opened = append(opened, link); return nil },
 			sleep:   func(time.Duration) {},
+			exec:    execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true},
 		})
 		if status != 0 {
 			t.Fatalf("%v: status %d, stderr %q", args, status, stderr.String())

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -220,5 +221,59 @@ func TestLoginBrowserWaitsOutABusyPortalUntilItsDeadline(t *testing.T) {
 	}
 	if _, err := os.Stat(session.file("pending.json")); !os.IsNotExist(err) {
 		t.Errorf("nobody acts: pending.json is there afterwards: %v", err)
+	}
+}
+
+// string opens the sign-in link in the browser only for a person at a
+// terminal, and never with --no-open, wherever it is on the command line.
+// Under an agent, in CI or in a pipe, the link it prints is the whole
+// hand-off.
+func TestSignInOpensABrowserOnlyForAPersonAtATerminal(t *testing.T) {
+	person := execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true}
+	for _, c := range []struct {
+		about         string
+		exec          execCtx
+		before, after []string
+		opens         bool
+	}{
+		{about: "a person at a terminal", exec: person, opens: true},
+		{about: "a person at a terminal with --no-open", exec: person, after: []string{"--no-open"}},
+		{about: "a person at a terminal with --no-open first", exec: person, before: []string{"--no-open"}},
+		{about: "Claude Code at a terminal", exec: execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true, agent: "claude-code"}},
+		{about: "CI at a terminal", exec: execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true, ci: true}},
+		{about: "a person piping stdout", exec: execCtx{stdinTTY: true, stderrTTY: true}},
+		{about: "a script", exec: execCtx{}},
+	} {
+		for _, flow := range [][]string{{"login", "--no-wait"}, {"login", "--browser", "--no-wait"}} {
+			service := &signInService{status: []signInAnswer{browserPending}}
+			service.start(t)
+			var stdout, stderr bytes.Buffer
+			var opened []string
+			status := run(slices.Concat(c.before, flow, c.after), runtime{
+				env:        envOf(map[string]string{"HOME": t.TempDir()}),
+				client:     http.DefaultClient,
+				stdin:      strings.NewReader(""),
+				stdout:     &stdout,
+				stderr:     &stderr,
+				openURL:    func(link string) error { opened = append(opened, link); return nil },
+				sleep:      func(time.Duration) {},
+				exec:       c.exec,
+				osHostname: func() (string, error) { return "build-7.corp.example.test", nil },
+			})
+			if status != 0 {
+				t.Fatalf("%s, %v: exit %d: %s", c.about, flow, status, stderr.String())
+			}
+			if (len(opened) > 0) != c.opens {
+				t.Errorf("%s, %v: opened %v", c.about, flow, opened)
+			}
+			for _, link := range opened {
+				if !strings.Contains(stdout.String(), link) {
+					t.Errorf("%s, %v: opened %s without printing it: %q", c.about, flow, link, stdout.String())
+				}
+			}
+			if !strings.Contains(stdout.String(), "string login --poll") {
+				t.Errorf("%s, %v: printed %q", c.about, flow, stdout.String())
+			}
+		}
 	}
 }

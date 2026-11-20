@@ -89,7 +89,8 @@ func probeOrUpdate(list []string) bool {
 // to stdout, never changes how the command ended, and fails silently.
 func afterCommand(list []string, rt runtime) {
 	defer func() { _ = recover() }()
-	list, asJSON := takeJSONFlag(list)
+	list, global := takeGlobalSwitches(list)
+	asJSON := global.json
 	if probeOrUpdate(list) {
 		return
 	}
