@@ -157,6 +157,9 @@ captureIframes, captureCookies or actions. request, search and sitemap print JSO
 says on stderr what it saved: the size, the tokens, a fetch's status and host,
 and a Markdown page's outline, each heading after its line number. A path
 that can't take a file fails before the request. -o - is stdout.
+A page is untrusted. On a person's terminal it loses escape sequences, control
+characters and bidi controls, and bytes that aren't text are refused (exit 2:
+use -o FILE). Piped, or under an agent, it goes out as it came.
 A fetched page over 16 KB says its size on stderr first where no person reads
 stdout at a terminal, with what the agent keeps of it. -q, or --quiet, leaves
 such status lines out of stderr; errors and the keyless allowance stay.
