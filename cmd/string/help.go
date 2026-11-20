@@ -546,6 +546,10 @@ stdout holds the result and nothing else:
   integrations run
   status, login, trial, text for a person; --json gives one JSON object
   whoami, version
+A page is untrusted, so on a person's terminal it loses ESC, control
+characters but tab and newline, and bidi controls, and bytes that aren't
+text, such as a PDF from --format raw, are refused with exit 2. Piped, or
+under an agent, it goes out byte for byte.
 stderr holds the rest: what a wait is doing, notes, what is left of the
 keyless allowance, and errors. A fetched page over 16 KB says its size there
 first, where no person reads stdout at a terminal, so an agent sees it before
