@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -122,6 +123,43 @@ func TestRequestsSayHowStringRuns(t *testing.T) {
 				if got[name] != want[name] {
 					t.Errorf("%s: %s carried %s %q, want %q", c.about, path, name, got[name], want[name])
 				}
+			}
+		}
+	}
+}
+
+// The download host gets the same User-Agent as every request to String, and
+// none of the X-String headers, which it doesn't read.
+func TestDownloadsCarryOnlyTheUserAgent(t *testing.T) {
+	product := "string-cli/" + version
+	platform := product + " (" + goruntime.GOOS + "/" + goruntime.GOARCH
+	for _, c := range []struct {
+		about string
+		exec  execCtx
+		want  string
+	}{
+		{"a person at a terminal", execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true}, platform + ")"},
+		{"Claude Code", execCtx{agent: "claude-code", agentFrom: "AI_AGENT", agentRaw: "claude-code_2-1-322_agent"}, platform + "; agent=claude-code)"},
+		{"an agent under DO_NOT_TRACK", execCtx{agent: "claude-code", agentFrom: "AI_AGENT", agentRaw: "claude-code_2-1-322_agent", doNotTrack: true}, product},
+	} {
+		var got http.Header
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = r.Header.Clone()
+			io.WriteString(w, "0.3.1\n")
+		}))
+		response, err := updater{rt: runtime{client: server.Client(), exec: c.exec}, base: server.URL}.open(context.Background(), "/stable")
+		if err != nil {
+			t.Fatalf("%s: %v", c.about, err)
+		}
+		response.Body.Close()
+		// Close waits for the handler, so got is safe to read after it.
+		server.Close()
+		if agent := got.Get("User-Agent"); agent != c.want {
+			t.Errorf("%s: User-Agent %q, want %q", c.about, agent, c.want)
+		}
+		for name := range got {
+			if strings.HasPrefix(name, "X-String") {
+				t.Errorf("%s: the download host got %s", c.about, name)
 			}
 		}
 	}

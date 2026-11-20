@@ -445,7 +445,7 @@ func TestUpdateReplacesTheBinaryOnlyWhenEveryCheckPasses(t *testing.T) {
 		if info, _ := os.Stat(c.binary); goruntime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
 			t.Errorf("the new binary has mode %v", info.Mode())
 		}
-		want := "string/0.3.0 (" + goruntime.GOOS + "; " + goruntime.GOARCH + ")"
+		want := "string-cli/0.3.0 (" + goruntime.GOOS + "/" + goruntime.GOARCH + ")"
 		for i, header := range host.headers {
 			if header.Get("User-Agent") != want || header.Get("Authorization") != "" || header.Get("Cookie") != "" || strings.Contains(strings.Join(slices.Concat(slices.Collect(maps.Values(header))...), " "), "secret-key") {
 				t.Errorf("request %d for %s carried %v", i, host.paths[i], header)
