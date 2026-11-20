@@ -119,7 +119,7 @@ func afterCommand(list []string, rt runtime) {
 	if updatesOff(rt.env, copy, keys, keysErr) != "" {
 		return
 	}
-	notices := rt.progress && !asJSON
+	notices := rt.exec.stderrTTY && !asJSON
 	if notices && updated && copy.kind == installScript {
 		fmt.Fprintf(rt.stderr, "string updated itself from %s to %s. Turn automatic updates off with STRING_AUTO_UPDATE=0.\n", state.UpdatedFrom, version)
 		_ = changeUpdateState(statePath, func(s *updateState) { s.UpdateAnnounced = true })
@@ -135,7 +135,7 @@ func afterCommand(list []string, rt runtime) {
 	// A copy that only gets notices is checked only when a person could see
 	// one. The check is recorded first, so that a machine where it can never
 	// succeed, or where nothing can be recorded, starts no more than one a day.
-	if due && rt.spawn != nil && (copy.kind == installScript || rt.progress) {
+	if due && rt.spawn != nil && (copy.kind == installScript || rt.exec.stderrTTY) {
 		if changeUpdateState(statePath, func(s *updateState) { s.CheckedAt = now.UTC() }) == nil {
 			_ = rt.spawn(copy.path)
 		}

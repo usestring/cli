@@ -282,7 +282,7 @@ func (c *testCopy) rt(stdout, stderr io.Writer) runtime {
 		spawn:      func(path string) error { c.spawned = append(c.spawned, path); return nil },
 		versionOf:  os.ReadFile,
 		keys:       func() ([]ed25519.PublicKey, error) { return c.keys, nil },
-		progress:   c.terminal,
+		exec:       execCtx{stderrTTY: c.terminal},
 	}
 }
 

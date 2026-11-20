@@ -185,12 +185,12 @@ func TestSitemapApproveAndWaitFollowTheCrawlToItsEnd(t *testing.T) {
 			value, ok := map[string]string{"STRING_API_KEY": "test-key", "STRING_API_BASE_URL": baseURL}[name]
 			return value, ok
 		},
-		client:   http.DefaultClient,
-		stdin:    strings.NewReader(""),
-		stdout:   &stdout,
-		stderr:   &stderr,
-		sleep:    func(time.Duration) {},
-		progress: true,
+		client: http.DefaultClient,
+		stdin:  strings.NewReader(""),
+		stdout: &stdout,
+		stderr: &stderr,
+		sleep:  func(time.Duration) {},
+		exec:   execCtx{stderrTTY: true},
 	})
 
 	if status != 0 {
@@ -650,7 +650,7 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 
 	stderr.Reset()
 	tokenAnswers = []string{`{"error":"access_denied"}`}
-	rt.terminal = true
+	rt.exec.stdinTTY = true
 	if status := run([]string{"login"}, rt); status != 3 || !strings.Contains(stderr.String(), "Sign-in was denied") {
 		t.Errorf("denied login status %d: %s", status, stderr.String())
 	}

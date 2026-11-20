@@ -392,7 +392,7 @@ func loginCommand(list []string, rt runtime) error {
 		return saveToken(rt, envFile)
 	case slices.Contains(chosen, "--poll"):
 		return finishPending(rt, envFile, deviceName)
-	case slices.Contains(chosen, "--no-wait") || rt.json || !rt.terminal:
+	case slices.Contains(chosen, "--no-wait") || rt.json || !rt.exec.stdinTTY:
 		_, err := startSignIn(rt, browser, false, envFile, deviceName)
 		return err
 	}
@@ -402,7 +402,7 @@ func loginCommand(list []string, rt runtime) error {
 // saveToken saves a key read from stdin, so it never appears in argv or the
 // shell history, after checking it with one free API call.
 func saveToken(rt runtime, envFile string) error {
-	if rt.terminal {
+	if rt.exec.stdinTTY {
 		return usage(errors.New("Pipe the key on stdin, as in: string login --with-token < key.txt"))
 	}
 	data, err := io.ReadAll(io.LimitReader(rt.stdin, 4096))
@@ -755,7 +755,7 @@ func releasedKey(rt runtime, token, deviceName string) (string, error) {
 		if waited+wait > keyWait {
 			return "", refusal
 		}
-		if try == 0 && rt.progress {
+		if try == 0 && rt.exec.stderrTTY {
 			fmt.Fprintln(rt.stderr, "Approved. Waiting for String to hand over the key...")
 		}
 		rt.pause(wait)
