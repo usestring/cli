@@ -159,7 +159,7 @@ string integrations run reddit post --post https://www.reddit.com/r/technology/c
 
 **Each flag is a field of the action's input, spelled exactly as the field.** Reddit's `post` action takes `post`, `sort` and `maxPages`, so its flags are `--post`, `--sort` and `--maxPages`, the same names the integration docs and the manifest use. A list field takes one item per flag (`--items a --items b`) or a JSON array. `run` prints the JSON response: `data` holds the rows, and `failures` lists any input that produced none. `list` needs no key; `run` needs one.
 
-`string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint.
+`string --help` lists the commands and the `STRING_API_BASE_URL` setting for a different API endpoint. Each command has its own page too, from `string COMMAND --help`, `-h` anywhere on the line, or `string help COMMAND`: examples, what it prints, its exit codes, what it costs, and its flags. `string version` gives the version with the commit, its date, the system and the Go version, and `--json` gives them as one object; `string -v` prints the version alone. Help and version send no request.
 
 ## Errors and exit codes
 

@@ -126,14 +126,19 @@ Usage:
   string balance
   string update [--version X.Y.Z]
   string update --check
-  string --version
+  string version [--json]
+  string --version, string -v
+  string help COMMAND                     the same as string COMMAND --help
 
 Each API request field is a flag spelled exactly as the field, so the API
 reference reads straight onto the command line:
   string fetch https://example.com --mainContentOnly --countryCode DE
 A boolean flag alone is true, =false turns it off (--solveCaptcha=false), and
 an object or array field takes JSON, or @ and a file path (--jsonSchema @./schema.json).
-string COMMAND --help lists the command's fields.
+string COMMAND --help, or -h anywhere on the line, shows the command's own page:
+examples, what it prints, its exit codes, what it costs, and its flags and fields.
+version adds the build to the version: the commit, its date, the system and the
+Go version. Help and version send no request.
 
 fetch prints the page as Markdown, unless --format asks for json or raw or a
 field that only JSON carries is set: jsonSchema, screenshot, captureXHR,
