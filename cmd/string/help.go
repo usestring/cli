@@ -761,6 +761,8 @@ Ways that work well:
   string login --poll                   which saves the key once they approve
   string trial                          a key when nobody can approve one
   --json                                errors as one JSON object
+  string help --all                     every command on one page, and
+  string help --json                    each one's flags, output and exit codes
   string COMMAND --help                 one command's examples, output, exit
                                         codes, cost and flags
   string skill                          the whole guide for agents, the skill

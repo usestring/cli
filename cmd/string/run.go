@@ -137,6 +137,8 @@ Usage:
   string --version, string -v
   string help COMMAND                     the same as string COMMAND --help
   string help TOPIC                       exit-codes, environment, formatting or agents
+  string help --all                       every command on one page
+  string help --json [COMMAND]            the commands, flags and exit codes as JSON
 
 Each API request field is a flag spelled exactly as the field, so the API
 reference reads straight onto the command line:
