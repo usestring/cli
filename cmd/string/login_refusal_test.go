@@ -51,12 +51,13 @@ type signInAnswer struct {
 var (
 	signInApproved = signInAnswer{http.StatusOK, `{"access_token":"access-1","token_type":"Bearer"}`, ""}
 	signInKey      = signInAnswer{http.StatusOK, `{"apiKey":"released-key"}`, ""}
+	signInSilent   = signInAnswer{status: -1}
 )
 
 // signInService stands in for the sign-in service and the portal. The token
 // endpoint, the key request and the status check of string login --browser
 // each give their answers in order, then repeat the last one. An answer with
-// no status closes the connection instead.
+// no status closes the connection instead, and signInSilent never answers.
 type signInService struct {
 	token  []signInAnswer
 	key    []signInAnswer
@@ -75,10 +76,19 @@ type signInService struct {
 func (s *signInService) start(t *testing.T) {
 	t.Helper()
 	s.calls = map[string]int{}
-	next := func(answers *[]signInAnswer, w http.ResponseWriter) {
+	next := func(answers *[]signInAnswer, w http.ResponseWriter, r *http.Request) {
 		answer := (*answers)[0]
 		if len(*answers) > 1 {
 			*answers = (*answers)[1:]
+		}
+		if answer.status < 0 {
+			// Until string gives up, or long enough to fail a test whose
+			// string never does rather than hang it.
+			select {
+			case <-r.Context().Done():
+			case <-time.After(10 * time.Second):
+			}
+			return
 		}
 		if answer.status == 0 {
 			if connection, _, err := w.(http.Hijacker).Hijack(); err == nil {
@@ -104,12 +114,12 @@ func (s *signInService) start(t *testing.T) {
 			io.WriteString(w, `{"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri":"https://example.test/device","verification_uri_complete":"https://example.test/device?code=ABCD-EFGH","expires_in":600,"interval":5}`)
 		case "/oauth/token":
 			s.polled = append(s.polled, r.FormValue("device_code"))
-			next(&s.token, w)
+			next(&s.token, w, r)
 		case "/api/oauth/api-key":
 			if r.Header.Get("Authorization") != "Bearer access-1" {
 				t.Errorf("the key request carried Authorization %q", r.Header.Get("Authorization"))
 			}
-			next(&s.key, w)
+			next(&s.key, w, r)
 		case "/oauth/userinfo":
 			io.WriteString(w, `{"email":"dev@localhost"}`)
 		case "/api/agent-auth/status":
@@ -120,7 +130,7 @@ func (s *signInService) start(t *testing.T) {
 				t.Errorf("a status check is not a POST of JSON with only session_id and code_verifier, without Origin")
 			}
 			s.asked = append(s.asked, check)
-			next(&s.status, w)
+			next(&s.status, w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -461,6 +471,20 @@ func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
 		if got := session.run("login", "--poll"); got.status != exitUsage || !strings.HasPrefix(got.errors, "No sign-in is waiting.") {
 			t.Errorf("the token endpoint answered %s, then login --poll: %+v, want exit %d and no sign-in waiting", refusal.body, got, exitUsage)
 		}
+	}
+}
+
+// A sign-in server that doesn't answer within the request's limit hasn't
+// spent the code either, so login --poll can still finish with it.
+func TestASignInServerThatDoesNotAnswerLeavesTheCodeForLoginPoll(t *testing.T) {
+	service := &signInService{token: []signInAnswer{signInSilent, signInApproved}, key: []signInAnswer{signInKey}}
+	service.start(t)
+	session := newSignInSession(t)
+	if got := session.startThenPoll(t, "--timeout", "50ms"); got.status != exitTimeout || !strings.HasSuffix(got.errors, " took longer than 50ms to answer, so string stopped waiting.\nNext: "+signInPoll+"\n") {
+		t.Errorf("a token request that got no answer: %+v, want exit 7 and the next step %q", got, signInPoll)
+	}
+	if done := session.run("login", "--poll"); done.status != 0 {
+		t.Errorf("then login --poll: %+v", done)
 	}
 }
 
