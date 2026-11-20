@@ -320,6 +320,24 @@ var commandDocs = map[string]commandDoc{
 `,
 		more: "https://github.com/usestring/cli#agent-skills",
 	},
+	"skill": {
+		summary: "print the string-cli skill, the guide for coding agents",
+		usage:   []string{"string skill [--path]"},
+		examples: []string{
+			"string skill                         the guide, to read or to save anywhere",
+			"string skill --path                  where it is installed",
+		},
+		returns: []string{
+			"stdout   the skill's SKILL.md, the one this release carries; with --path,",
+			"         the SKILL.md of each copy in an agent's skills directory, one a line",
+			"exit     0 ok · 2 bad input",
+		},
+		cost: "Free, and it sends no request.",
+		flags: `  --path                   list the installed copies instead: the SKILL.md in
+                           each agent's skills directory that has the skill
+`,
+		more: "https://github.com/usestring/cli#agent-skills",
+	},
 	"login": {
 		summary: "sign in through your browser and save a new API key",
 		usage: []string{

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/usestring/cli/internal/release"
@@ -34,11 +33,8 @@ func refreshSkills(rt runtime, statePath, seen string, current release.Version) 
 	if err != nil {
 		return
 	}
-	for _, a := range append([]agent{sharedAgent}, agents...) {
-		dir := filepath.Join(a.config(home, rt.env), "skills")
-		if info, err := os.Stat(filepath.Join(dir, "string-cli")); err == nil && info.IsDir() {
-			_ = installSkills(dir)
-		}
+	for _, dir := range skillCopies(home, rt.env) {
+		_ = installSkills(filepath.Dir(dir))
 	}
 }
 

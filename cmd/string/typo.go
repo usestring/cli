@@ -7,7 +7,7 @@ import (
 )
 
 // commands are string's commands, in the order a close guess prefers them.
-var commands = []string{"fetch", "search", "request", "sitemap", "integrations", "init", "login", "logout", "whoami", "trial", "status", "balance", "update", "version", "help"}
+var commands = []string{"fetch", "search", "request", "sitemap", "integrations", "init", "login", "logout", "whoami", "trial", "status", "balance", "update", "version", "skill", "help"}
 
 // commandSynonyms are words other tools taught people and agents for one of
 // string's commands.

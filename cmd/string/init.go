@@ -40,12 +40,17 @@ const (
 )
 
 // agent is a coding agent that loads skills from a directory under the
-// user's home. The skill goes to an agent only when its config directory
-// exists, unless --agent names it.
+// user's home. An agent counts as found on this machine when its config
+// directory exists.
 type agent struct {
 	name   string
 	label  string
 	config func(home string, env func(string) (string, bool)) string
+	// shared is true for an agent that also reads ~/.agents/skills. string
+	// init puts the skill there for all of them, and in such an agent's own
+	// directory only when --agent names it, since an agent that reads both
+	// may see two copies: Gemini CLI then warns of a skill conflict.
+	shared bool
 }
 
 func under(parts ...string) func(string, func(string) (string, bool)) string {
@@ -63,29 +68,55 @@ func underConfig(name string) func(string, func(string) (string, bool)) string {
 	}
 }
 
-// sharedAgent is ~/.agents/skills, which Codex and several other agents
-// read. It is always installed, so every agent that reads it has the skill.
-var sharedAgent = agent{"codex", "Codex and agents that read ~/.agents/skills", under(".agents")}
+// sharedAgent is ~/.agents/skills, which Codex and most other agents read.
+// It is always installed, so every agent that reads it has the skill.
+var sharedAgent = agent{"codex", "Codex and agents that read ~/.agents/skills", under(".agents"), true}
 
+// agents are the agents init knows besides Codex. Claude Code reads only
+// ~/.claude/skills. For each other agent that isn't shared, nothing shows it
+// reads ~/.agents/skills, so it gets a copy of its own.
 var agents = []agent{
 	{"claude-code", "Claude Code", func(home string, env func(string) (string, bool)) string {
 		if dir, ok := env("CLAUDE_CONFIG_DIR"); ok && dir != "" {
 			return dir
 		}
 		return filepath.Join(home, ".claude")
-	}},
-	{"cursor", "Cursor", under(".cursor")},
-	{"gemini-cli", "Gemini CLI", under(".gemini")},
-	{"opencode", "OpenCode", underConfig("opencode")},
-	{"github-copilot", "GitHub Copilot", under(".copilot")},
-	{"windsurf", "Windsurf", under(".codeium", "windsurf")},
-	{"goose", "Goose", underConfig("goose")},
-	{"droid", "Droid", under(".factory")},
-	{"kiro-cli", "Kiro CLI", under(".kiro")},
-	{"qwen-code", "Qwen Code", under(".qwen")},
-	{"grok", "Grok Build", under(".grok")},
-	{"openclaw", "OpenClaw", under(".openclaw")},
-	{"hermes-agent", "Hermes Agent", under(".hermes")},
+	}, false},
+	{"cursor", "Cursor", under(".cursor"), true},
+	{"gemini-cli", "Gemini CLI", under(".gemini"), true},
+	{"opencode", "OpenCode", underConfig("opencode"), true},
+	{"github-copilot", "GitHub Copilot", under(".copilot"), true},
+	{"windsurf", "Windsurf", under(".codeium", "windsurf"), false},
+	{"goose", "Goose", underConfig("goose"), true},
+	{"droid", "Droid", under(".factory"), true},
+	{"kiro-cli", "Kiro CLI", under(".kiro"), false},
+	{"qwen-code", "Qwen Code", under(".qwen"), false},
+	{"grok", "Grok Build", under(".grok"), false},
+	{"openclaw", "OpenClaw", under(".openclaw"), false},
+	{"hermes-agent", "Hermes Agent", under(".hermes"), false},
+}
+
+// skillName is the skill's directory in skills.FS and in each agent's skills
+// directory.
+const skillName = "string-cli"
+
+// skillsDir is where agent a reads skills from.
+func skillsDir(a agent, home string, env func(string) (string, bool)) string {
+	return filepath.Join(a.config(home, env), "skills")
+}
+
+// skillCopies lists the directories under the agents' skills directories that
+// hold the skill, the shared one first. Two agents that read one directory
+// give it once.
+func skillCopies(home string, env func(string) (string, bool)) []string {
+	var dirs []string
+	for _, a := range append([]agent{sharedAgent}, agents...) {
+		dir := filepath.Join(skillsDir(a, home, env), skillName)
+		if info, err := os.Stat(dir); err == nil && info.IsDir() && !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
 }
 
 func homeDir(env func(string) (string, bool)) (string, error) {
@@ -157,13 +188,34 @@ func initCommand(list []string, rt runtime) error {
 	if err != nil {
 		return usage(err)
 	}
+	// Without --agent, an agent found here that reads ~/.agents/skills takes
+	// the skill from there.
+	var sharing []string
+	for _, a := range chosen {
+		if names == "" && a.shared && a.name != sharedAgent.name {
+			sharing = append(sharing, a.label)
+		}
+	}
 	var report strings.Builder
 	for _, a := range chosen {
-		dir := filepath.Join(a.config(home, rt.env), "skills")
+		if slices.Contains(sharing, a.label) {
+			continue
+		}
+		dir := skillsDir(a, home, rt.env)
 		if err := installSkills(dir); err != nil {
 			return err
 		}
-		fmt.Fprintf(&report, "Installed the string-cli skill for %s in %s\n", a.label, filepath.Join(dir, "string-cli"))
+		fmt.Fprintf(&report, "Installed the string-cli skill for %s in %s\n", a.label, filepath.Join(dir, skillName))
+		if a.name == sharedAgent.name && len(sharing) > 0 {
+			verb := "reads"
+			if len(sharing) > 1 {
+				verb = "read"
+			}
+			fmt.Fprintf(&report, "%s %s it there too.\n", joinAnd(sharing), verb)
+		}
+	}
+	if names == "" {
+		removeGeminiCopy(&report, home, rt.env)
 	}
 	if !parsed.switches["no-mcp"] {
 		addMCP(&report, chosen, home, rt)
@@ -244,6 +296,68 @@ func pathHint(rt runtime) string {
 		return "Install it with:\n  npm install -g @usestring/cli"
 	}
 	return "This copy is at:\n  " + path + "\nAdd its directory to your PATH, or move the binary into a directory that is already on it."
+}
+
+// joinAnd lists words as a sentence does: a, b and c.
+func joinAnd(words []string) string {
+	if len(words) < 2 {
+		return strings.Join(words, "")
+	}
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
+}
+
+// removeGeminiCopy removes the skill from Gemini CLI's own skills directory,
+// where releases before 0.3 put it. Gemini CLI reads ~/.agents/skills too,
+// and warns of a skill conflict at every start while both copies are there.
+// Only a copy as string init writes it goes. Anything else there stays, and
+// init says why.
+func removeGeminiCopy(report *strings.Builder, home string, env func(string) (string, bool)) {
+	gemini := agents[slices.IndexFunc(agents, func(a agent) bool { return a.name == "gemini-cli" })]
+	dir := filepath.Join(skillsDir(gemini, home, env), skillName)
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
+		// No skill, so nothing for Gemini CLI to warn about.
+		return
+	}
+	if !initWrote(dir, info) {
+		fmt.Fprintf(report, "Left %s as it is: it isn't a plain copy from string init, so it may be yours. Gemini CLI warns of a skill conflict while it and ~/.agents/skills/%s are both there.\n", dir, skillName)
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintf(report, "Could not remove the older copy in %s, which makes Gemini CLI warn of a skill conflict: %v\n", dir, err)
+		return
+	}
+	fmt.Fprintf(report, "Removed the older copy in %s, since Gemini CLI reads ~/.agents/skills and warns of a skill conflict when it finds two. For a Gemini CLI too old to read ~/.agents/skills, string init --agent gemini-cli puts it back.\n", dir)
+}
+
+// initWrote reports whether dir, which info describes without following a
+// link, holds a copy of the skill as string init writes one: a directory,
+// not a link to one, with no file but the skill's own, and a SKILL.md that
+// names the skill.
+func initWrote(dir string, info fs.FileInfo) bool {
+	if !info.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		embedded, err := fs.Stat(skills.FS, skillName+"/"+entry.Name())
+		if !entry.Type().IsRegular() || err != nil || embedded.IsDir() {
+			return false
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		return false
+	}
+	front, ok := strings.CutPrefix(strings.ReplaceAll(string(data), "\r\n", "\n"), "---\n")
+	front, _, closed := strings.Cut(front, "\n---\n")
+	return ok && closed && slices.Contains(strings.Split(front, "\n"), "name: "+skillName)
 }
 
 // installSkills copies every embedded skill into dir, replacing an older copy.

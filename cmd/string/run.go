@@ -1235,6 +1235,8 @@ func execute(list []string, rt runtime) error {
 		return logoutCommand(list[1:], rt)
 	case "whoami":
 		return whoamiCommand(list[1:], rt)
+	case "skill":
+		return skillCommand(list[1:], rt)
 	case "integrations":
 		return integrationsCommand(list[1:], rt)
 	case "trial":
