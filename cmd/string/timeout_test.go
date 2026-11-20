@@ -139,7 +139,7 @@ func TestARequestThatRunsOutOfTimeExits7(t *testing.T) {
 	base, host := server.URL+"/v1", strings.TrimPrefix(server.URL, "http://")
 
 	got := invoke(t, []string{"fetch", "https://example.com", "--timeout", "50ms"}, base, "test-key")
-	if want := host + " took longer than 50ms to answer, so string stopped waiting.\nNext: run it again with --timeout 100ms\n"; got.status != exitTimeout || got.errors != want {
+	if want := "error: " + host + " took longer than 50ms to answer, so string stopped waiting.\n\nnext: run it again with --timeout 100ms\n"; got.status != exitTimeout || got.errors != want {
 		t.Errorf("fetch: %+v, want exit 7 and %q", got, want)
 	}
 	got = invoke(t, []string{"--json", "--timeout=50ms", "fetch", "https://example.com"}, base, "test-key")
@@ -148,7 +148,7 @@ func TestARequestThatRunsOutOfTimeExits7(t *testing.T) {
 		t.Errorf("fetch --json: %+v", got)
 	}
 
-	quiet := host + " stopped sending its answer: nothing arrived for 50ms.\nNext: run it again\n"
+	quiet := "error: " + host + " stopped sending its answer: nothing arrived for 50ms.\n\nnext: run it again\n"
 	for _, list := range [][]string{{"sitemap", "list"}, {"search", "golang"}} {
 		if got := invoke(t, list, base, "test-key"); got.status != exitTimeout || got.errors != quiet {
 			t.Errorf("%q: %+v, want exit 7 and %q", list, got, quiet)

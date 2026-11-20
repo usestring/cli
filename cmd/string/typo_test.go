@@ -42,11 +42,11 @@ func TestAnUnknownCommandNamesTheOneMeant(t *testing.T) {
 			typed = c.list[1]
 		}
 		got := runOffline(t, c.list...)
-		if want := "Unknown command: " + typed + ". Did you mean " + c.meant + "?\nNext: run `" + c.command + "`\n"; got.status != exitUsage || got.output != "" || got.errors != want {
+		if want := "error: Unknown command: " + typed + ". Did you mean " + c.meant + "?\n\nnext: run `" + c.command + "`\n"; got.status != exitUsage || got.output != "" || got.errors != want {
 			t.Errorf("string %s: %+v, want exit 2 and %q", strings.Join(c.list, " "), got, want)
 		}
 	}
-	if got := runOffline(t, "xyzzy"); got.status != exitUsage || got.errors != "Unknown command: xyzzy\nNext: run `string --help` for the commands\n" {
+	if got := runOffline(t, "xyzzy"); got.status != exitUsage || got.errors != "error: Unknown command: xyzzy\n\nnext: run `string --help` for the commands\n" {
 		t.Errorf("string xyzzy: %+v", got)
 	}
 	got := runOffline(t, "--json", "fecth", "https://example.com")
@@ -109,7 +109,7 @@ func TestFlagsTakeEverySpellingAndNameANearMiss(t *testing.T) {
 		}
 	}
 	// --Poll is --poll for trial claim, which then finds no trial to claim.
-	if got := runOffline(t, "trial", "claim", "--Poll"); got.status != exitUsage || !strings.HasPrefix(got.errors, "No trial registration is waiting to be claimed.") {
+	if got := runOffline(t, "trial", "claim", "--Poll"); got.status != exitUsage || !strings.HasPrefix(got.errors, "error: No trial registration is waiting to be claimed.") {
 		t.Errorf("trial claim --Poll: %+v", got)
 	}
 	// So are the switches every command takes.
@@ -125,7 +125,7 @@ func TestFlagsTakeEverySpellingAndNameANearMiss(t *testing.T) {
 		"login --devce-name ci":                       "Unknown option '--devce-name'. Did you mean '--device-name'?",
 		"search coffee --serchCount 5":                "Unknown option '--serchCount'. Did you mean '--searchCount'?",
 	} {
-		if got := runOffline(t, strings.Fields(list)...); got.status != exitUsage || got.errors != want+"\n" {
+		if got := runOffline(t, strings.Fields(list)...); got.status != exitUsage || got.errors != "error: "+want+"\n" {
 			t.Errorf("string %s: %+v, want %q", list, got, want)
 		}
 	}

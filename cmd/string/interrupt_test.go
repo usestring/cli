@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	crawlGoesOn = "Interrupted; the crawl job-1 keeps running.\nNext: run `string sitemap status job-1 --wait`\n"
-	mayBeDone   = "Interrupted; the request may already have been processed.\n"
+	crawlGoesOn = "error: Interrupted; the crawl job-1 keeps running.\n\nnext: run `string sitemap status job-1 --wait`\n"
+	mayBeDone   = "error: Interrupted; the request may already have been processed.\n"
 )
 
 // A Ctrl-C says what keeps running and the command that picks it up, or that
@@ -104,8 +104,8 @@ func TestCtrlCSaysASignInOrClaimStaysOpen(t *testing.T) {
 		about, at, said string
 		browser         bool
 	}{
-		{"a device code", "/oauth/token", "Interrupted; the sign-in stays open until its code expires.\nNext: run `string login --poll`\n", false},
-		{"a browser sign-in", "/api/agent-auth/status", "Interrupted; the sign-in stays open until its link expires.\nNext: run `string login --poll`\n", true},
+		{"a device code", "/oauth/token", "error: Interrupted; the sign-in stays open until its code expires.\n\nnext: run `string login --poll`\n", false},
+		{"a browser sign-in", "/api/agent-auth/status", "error: Interrupted; the sign-in stays open until its link expires.\n\nnext: run `string login --poll`\n", true},
 	} {
 		// A browser sign-in is checked once before its link is shown.
 		service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}, status: []signInAnswer{browserPending, browserComplete}}
@@ -149,7 +149,7 @@ func TestCtrlCSaysASignInOrClaimStaysOpen(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	status := run([]string{"trial", "claim", "--poll"}, runtime{env: envOf(map[string]string{"HOME": home}), client: http.DefaultClient, stdout: &stdout, stderr: &stderr, interrupt: interrupted})
-	if want := "Interrupted; the claim stays open until its code expires.\nNext: run `string trial claim --poll`\n"; status != 0 || said.String() != want {
+	if want := "error: Interrupted; the claim stays open until its code expires.\n\nnext: run `string trial claim --poll`\n"; status != 0 || said.String() != want {
 		t.Errorf("a claim: exit %d (%s), and a Ctrl-C would say %q, want %q", status, stderr.String(), said.String(), want)
 	}
 }

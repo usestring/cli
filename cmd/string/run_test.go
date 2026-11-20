@@ -319,7 +319,7 @@ func TestAPIErrorsFailWithoutPrintingTheKey(t *testing.T) {
 	})
 
 	rejected := invoke(t, []string{"fetch", "https://example.com"}, baseURL, "private-key")
-	if rejected.status != 3 || !strings.Contains(rejected.errors, "HTTP 401") || !strings.Contains(rejected.errors, "Next: check STRING_API_KEY") || strings.Contains(rejected.errors, "private-key") {
+	if rejected.status != 3 || !strings.Contains(rejected.errors, "HTTP 401") || !strings.Contains(rejected.errors, "next: check STRING_API_KEY") || strings.Contains(rejected.errors, "private-key") {
 		t.Errorf("rejected %+v", rejected)
 	}
 

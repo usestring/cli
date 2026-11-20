@@ -296,7 +296,7 @@ func TestAPortalRefusalAfterApprovalEndsLoginWithItsExitCodeAndANextStep(t *test
 				if envelope["code"] != "key_release_failed" || envelope["status"] != float64(refusal.answer.status) || !strings.HasPrefix(message, refusal.message) || envelope["next_step"] != refusal.next {
 					t.Errorf("%s: want the message %q and the next step %q", said, refusal.message, refusal.next)
 				}
-			} else if !strings.HasPrefix(got.errors, signInWaiting+refusal.message) || !strings.HasSuffix(got.errors, "\nNext: "+refusal.next+"\n") {
+			} else if !strings.HasPrefix(got.errors, signInWaiting+"error: "+refusal.message) || !strings.HasSuffix(got.errors, "\n\nnext: "+refusal.next+"\n") {
 				t.Errorf("%s: want the message %q and the next step %q", said, refusal.message, refusal.next)
 			}
 			if requests := service.requests("/api/oauth/api-key"); requests != refusal.requests {
@@ -388,7 +388,7 @@ func TestLoginAsksAgainNoSoonerThanThePortalSaysAndNotForLong(t *testing.T) {
 		if requests := service.requests("/api/oauth/api-key"); requests != c.requests {
 			t.Errorf("Retry-After %s: asked for the key %d times, want %d", asked, requests, c.requests)
 		}
-		if c.exit != 0 && !strings.Contains(got.errors, "\nRetry-After: "+asked+"\n") {
+		if c.exit != 0 && !strings.Contains(got.errors, "\n  Retry-After: "+asked+"\n") {
 			t.Errorf("Retry-After %s: the failure doesn't pass it on: %s", asked, got.errors)
 		}
 	}
@@ -409,8 +409,8 @@ func TestSignInServerTroubleWhileWaitingForApprovalHasItsOwnExitCode(t *testing.
 		next   string
 	}{
 		// Only a busy server leaves a code to go on with.
-		{signInAnswer{http.StatusTooManyRequests, `{"message":"Too many requests"}`, ""}, exitRateLimit, "Next: " + signInPoll + "\n"},
-		{signInAnswer{http.StatusServiceUnavailable, `{"message":"Service unavailable"}`, ""}, exitUpstream, "Next: " + signInPoll + "\n"},
+		{signInAnswer{http.StatusTooManyRequests, `{"message":"Too many requests"}`, ""}, exitRateLimit, "\nnext: " + signInPoll + "\n"},
+		{signInAnswer{http.StatusServiceUnavailable, `{"message":"Service unavailable"}`, ""}, exitUpstream, "\nnext: " + signInPoll + "\n"},
 		{signInAnswer{http.StatusBadRequest, `{"message":"Bad request"}`, ""}, exitAuth, ""},
 	} {
 		service := &signInService{token: []signInAnswer{c.answer}, key: []signInAnswer{signInKey}}
@@ -419,7 +419,7 @@ func TestSignInServerTroubleWhileWaitingForApprovalHasItsOwnExitCode(t *testing.
 
 		got := session.startThenPoll(t)
 
-		if want := fmt.Sprintf("%sSign-in failed: HTTP %d\n%s", signInWaiting, c.answer.status, c.next); got.status != c.exit || got.errors != want {
+		if want := fmt.Sprintf("%serror: Sign-in failed: HTTP %d\n%s", signInWaiting, c.answer.status, c.next); got.status != c.exit || got.errors != want {
 			t.Errorf("the token endpoint answered %d: %+v, want exit %d and %q", c.answer.status, got, c.exit, want)
 		}
 		if _, err := os.Stat(session.file("credentials.json")); !os.IsNotExist(err) {
@@ -461,7 +461,7 @@ func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
 				if busy.status != c.exit || envelope["code"] != "login_failed" || envelope["message"] != message || envelope["next_step"] != signInPoll {
 					t.Errorf("%s: %+v, want exit %d, the message %q and the next step %q", said, busy, c.exit, message, signInPoll)
 				}
-			} else if want := signInWaiting + message + "\nNext: " + signInPoll + "\n"; busy.status != c.exit || busy.errors != want {
+			} else if want := signInWaiting + "error: " + message + "\n\nnext: " + signInPoll + "\n"; busy.status != c.exit || busy.errors != want {
 				t.Errorf("%s: %+v, want exit %d and %q", said, busy, c.exit, want)
 			}
 
@@ -491,7 +491,7 @@ func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
 		if got := session.startThenPoll(t); got.status != exitAuth || !strings.HasPrefix(got.errors, signInWaiting) || strings.Contains(strings.TrimPrefix(got.errors, signInWaiting), "login --poll") {
 			t.Errorf("the token endpoint answered %s: %+v, want exit %d and no word of login --poll", refusal.body, got, exitAuth)
 		}
-		if got := session.run("login", "--poll"); got.status != exitUsage || !strings.HasPrefix(got.errors, "No sign-in is waiting.") {
+		if got := session.run("login", "--poll"); got.status != exitUsage || !strings.HasPrefix(got.errors, "error: No sign-in is waiting.") {
 			t.Errorf("the token endpoint answered %s, then login --poll: %+v, want exit %d and no sign-in waiting", refusal.body, got, exitUsage)
 		}
 	}
@@ -505,7 +505,7 @@ func TestASignInServerThatDoesNotAnswerLeavesTheCodeForLoginPoll(t *testing.T) {
 	service.start(t)
 	session := newSignInSession(t)
 	session.limit = 50 * time.Millisecond
-	if got := session.startThenPoll(t); got.status != exitTimeout || !strings.HasSuffix(got.errors, " took longer than 50ms to answer, so string stopped waiting.\nNext: "+signInPoll+"\n") {
+	if got := session.startThenPoll(t); got.status != exitTimeout || !strings.HasSuffix(got.errors, " took longer than 50ms to answer, so string stopped waiting.\n\nnext: "+signInPoll+"\n") {
 		t.Errorf("a token request that got no answer: %+v, want exit 7 and the next step %q", got, signInPoll)
 	}
 	if done := session.run("login", "--poll"); done.status != 0 {

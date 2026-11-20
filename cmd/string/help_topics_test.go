@@ -21,11 +21,11 @@ func TestHelpTopics(t *testing.T) {
 			t.Errorf("string help %s: exit %d:\n%s", topic, got.status, got.output)
 		}
 	}
-	if got := runOffline(t, "help", "exit-code"); got.status != exitUsage || got.errors != "No help on exit-code. Did you mean exit-codes?\nNext: run `string help exit-codes`\n" {
+	if got := runOffline(t, "help", "exit-code"); got.status != exitUsage || got.errors != "error: No help on exit-code. Did you mean exit-codes?\n\nnext: run `string help exit-codes`\n" {
 		t.Errorf("string help exit-code: %+v", got)
 	}
 	// A command's near miss still names the command.
-	if got := runOffline(t, "help", "fecth"); got.status != exitUsage || !strings.HasPrefix(got.errors, "Unknown command: fecth. Did you mean fetch?") {
+	if got := runOffline(t, "help", "fecth"); got.status != exitUsage || !strings.HasPrefix(got.errors, "error: Unknown command: fecth. Did you mean fetch?") {
 		t.Errorf("string help fecth: %+v", got)
 	}
 

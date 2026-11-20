@@ -54,10 +54,10 @@ func TestABareDomainIsFetchedOverHTTPS(t *testing.T) {
 		}
 	}
 	// A word with no dot is still a command, and another scheme is still refused.
-	if got := runOffline(t, "examplecom"); got.status != exitUsage || !strings.HasPrefix(got.errors, "Unknown command: examplecom") {
+	if got := runOffline(t, "examplecom"); got.status != exitUsage || !strings.HasPrefix(got.errors, "error: Unknown command: examplecom") {
 		t.Errorf("string examplecom: %+v", got)
 	}
-	if got := runOffline(t, "fetch", "ftp://example.com"); got.status != exitUsage || got.errors != "URL must use http or https\n" {
+	if got := runOffline(t, "fetch", "ftp://example.com"); got.status != exitUsage || got.errors != "error: URL must use http or https\n" {
 		t.Errorf("string fetch ftp://example.com: %+v", got)
 	}
 }

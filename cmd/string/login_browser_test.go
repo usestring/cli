@@ -169,7 +169,7 @@ func TestLoginBrowserEndsOnAFinalAnswer(t *testing.T) {
 	session := newSignInSession(t)
 	session.terminal = true
 	got := session.run("login", "--browser")
-	if got.status != exitAuth || got.output != "" || got.errors != "This String server does not offer string login --browser yet. Use string login.\n" {
+	if got.status != exitAuth || got.output != "" || got.errors != "error: This String server does not offer string login --browser yet. Use string login.\n" {
 		t.Errorf("a portal without the page: %+v", got)
 	}
 	if _, err := os.Stat(session.file("pending.json")); !os.IsNotExist(err) {
@@ -222,7 +222,7 @@ func TestLoginBrowserWaitsOutABusyPortalUntilItsDeadline(t *testing.T) {
 		waited += wait
 	}
 	beats := strings.Count(got.errors, "\nwaiting: not authorized yet · ")
-	if got.status != exitAuth || !strings.HasPrefix(got.errors, browserWaiting) || !strings.HasSuffix(got.errors, "\nwaiting: not authorized yet · 15m\nThe sign-in link expired; run string login --browser again\n") || beats != 60 || waited != 15*time.Minute || len(service.checks()) != 301 {
+	if got.status != exitAuth || !strings.HasPrefix(got.errors, browserWaiting) || !strings.HasSuffix(got.errors, "\nwaiting: not authorized yet · 15m\nerror: The sign-in link expired; run string login --browser again\n") || beats != 60 || waited != 15*time.Minute || len(service.checks()) != 301 {
 		t.Errorf("nobody acts: %+v after %v, %d checks and %d lines, want the expiry after 15m, 301 checks and 60 lines", got, waited, len(service.checks()), beats)
 	}
 	if _, err := os.Stat(session.file("pending.json")); !os.IsNotExist(err) {

@@ -165,7 +165,17 @@ string integrations run reddit post --post https://www.reddit.com/r/technology/c
 
 ## Errors and exit codes
 
-Errors go to stderr, followed by the `Retry-After`, keyless allowance and `x-request-id` headers when the API sends them, and the next step. Add `--json` to any command to get the error as one JSON object on stderr instead:
+An error goes to stderr as `error:` and one sentence. That's the API's own message, with the HTTP status, when the API sends one. It's never an HTML page, a raw answer or Go's words for a network failure. The details follow, indented: the `Retry-After`, keyless allowance and `x-request-id` headers when the API sends them. Then, after a blank line, `next:` gives the step out:
+
+```
+error: Keyless requests can't use mainContentOnly (HTTP 400)
+  X-Keyless-Requests-Remaining: 41
+  x-request-id: req_7f3a
+
+next: run `string login` or set STRING_API_KEY
+```
+
+Add `--json` to any command to get the error as one JSON object on stderr instead:
 
 ```json
 {"error":{"status":429,"code":"keyless_refused","exit_code":3,"message":"…","retryable":false,"retry_after_seconds":3600,"user_action_required":true,"request_id":"…","next_step":"run `string login` or set STRING_API_KEY","next_commands":[{"type":"login","command":"string login","argv":["string","login"]},{"type":"env","why":"set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys"}],"help_url":"https://usestring.ai/auth.md"}}

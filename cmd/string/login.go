@@ -269,7 +269,11 @@ func oauthCallHeader(rt runtime, request *http.Request, out any) (int, http.Head
 		return 0, nil, err
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return response.StatusCode, response.Header, fmt.Errorf("HTTP %d from %s: %s", response.StatusCode, request.URL.Host, truncateUTF16(decodeText(data), 2000))
+		said := fmt.Sprintf("HTTP %d from %s", response.StatusCode, request.URL.Host)
+		if detail := bodyText(data); detail != "" {
+			said += ": " + detail
+		}
+		return response.StatusCode, response.Header, errors.New(said)
 	}
 	return response.StatusCode, response.Header, nil
 }

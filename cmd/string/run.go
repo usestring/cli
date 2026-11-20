@@ -235,8 +235,10 @@ Ctrl-C says what keeps running, such as a crawl or a sign-in, and the command
 that picks it up, or that a request may already have been processed. string
 then ends as an interrupted program does, so a shell sees 130 and a script
 that runs it stops too.
-Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
-when the API sends them; --json prints them as {"error":{...}} instead.
+Errors go to stderr as error: and one sentence, the API's own message when it
+sends one, then the details under it, such as Retry-After, the keyless
+allowance and x-request-id, then next: and the step out. They never carry an
+HTML page or a raw answer. --json prints them as {"error":{...}} instead.
 
 Exit codes: 0 ok, 1 other failure, 2 bad input, 3 needs a key or the key was
 refused, 4 out of credit, 5 rate limited, 6 upstream failure, 7 timeout,
