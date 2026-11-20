@@ -47,7 +47,7 @@ func TestHelpTopics(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, match := range named.FindAllStringSubmatch(string(data), -1) {
-			if !strings.Contains(helpTopics["environment"], "\n  "+match[1]+" ") {
+			if !regexp.MustCompile(`\n  ` + match[1] + `[ \n]`).MatchString(helpTopics["environment"]) {
 				t.Errorf("%s reads %s, which string help environment doesn't list", file, match[1])
 			}
 		}

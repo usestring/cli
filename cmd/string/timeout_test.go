@@ -143,7 +143,7 @@ func TestARequestThatRunsOutOfTimeExits7(t *testing.T) {
 		t.Errorf("fetch: %+v, want exit 7 and %q", got, want)
 	}
 	got = invoke(t, []string{"--json", "--timeout=50ms", "fetch", "https://example.com"}, base, "test-key")
-	expectJSON(t, got.errors, `{"error":{"code":"timeout","message":"`+host+` took longer than 50ms to answer, so string stopped waiting.","next_step":"run it again with --timeout 100ms","retry_after_seconds":null,"exit_code":7,"retryable":true,"user_action_required":false,"next_commands":[{"type":"retry","why":"run it again with --timeout 100ms"}]}}`)
+	expectJSON(t, lastLine(got.errors), `{"error":{"code":"timeout","message":"`+host+` took longer than 50ms to answer, so string stopped waiting.","next_step":"run it again with --timeout 100ms","retry_after_seconds":null,"exit_code":7,"retryable":true,"user_action_required":false,"next_commands":[{"type":"retry","why":"run it again with --timeout 100ms"}]}}`)
 	if got.status != exitTimeout {
 		t.Errorf("fetch --json: %+v", got)
 	}

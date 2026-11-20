@@ -503,6 +503,11 @@ Learn more: https://github.com/usestring/cli#errors-and-exit-codes
   STRING_AUTO_UPDATE    0 turns off the daily update check, and the rewrite of
                         the skill after an update
   STRING_DOWNLOAD_URL   where string update takes releases from, for tests
+  STRING_NO_DEPRECATION_WARNINGS
+                        1 silences what string says ahead of a change, such as
+                        the notice for fetch --json
+  STRING_COMPAT         0.2 will keep 0.2's output and exit codes once 0.4
+                        changes them, and silences those notices now
   DO_NOT_TRACK          1 sends String only string's version
   CI                    set to anything but false or 0: a CI job, where
                         nobody approves a sign-in and nothing updates itself
@@ -541,7 +546,18 @@ keyless allowance, and errors.
   -o, --output FILE     the response goes to FILE instead of stdout
   --input FILE          more request fields, from a JSON object in FILE or -
                         for stdin; flags win over it
+  --errors json         errors as JSON, as --json gives them, with stdout as it
+                        is: Markdown from fetch stays Markdown
   --format              fetch's format: markdown, json or raw
+
+What changes in 0.4, each with its notice or warning in 0.3:
+  - fetch --json prints a JSON object: markdown, statusCode, finalUrl,
+    tokens. --errors json keeps Markdown on stdout with JSON errors;
+  - a fetch whose site answers 404 or 410 exits 8, and another error 6,
+    with the page still printed; --no-fail keeps exit 0;
+  - an API 404, such as an unknown job, exits 8, and a request that gets no
+    answer exits 6.
+STRING_COMPAT=0.2 will keep 0.2's behavior for all of them.
 
 Exit codes: string help exit-codes.
 
