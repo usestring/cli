@@ -284,6 +284,11 @@ type operation struct {
 	line []string
 	// siteStatus is the status the fetched site answered, from X-Status-Code.
 	siteStatus string
+	// maxTokens and offset are --max-tokens and --offset: the part of the
+	// page to print, in tokens. maxTokens is 0 for all of it.
+	maxTokens, offset int
+	// fromCopy says the page came from its local copy, not a request.
+	fromCopy bool
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -798,7 +803,7 @@ var sitemapFields = map[string]kind{
 }
 
 func fetchCommand(list []string, stdin io.Reader) (*operation, error) {
-	parsed, err := parse(list, spec{options: []string{"output"}, fields: fetchFields})
+	parsed, err := parse(list, spec{options: []string{"output", "max-tokens", "offset"}, fields: fetchFields})
 	if err != nil || parsed.help {
 		return nil, err
 	}
@@ -824,7 +829,38 @@ func fetchCommand(list []string, stdin io.Reader) (*operation, error) {
 		return nil, err
 	}
 	body["url"], body["method"], body["format"] = target, "GET", format
-	return &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed), note: note}, nil
+	op := &operation{method: "POST", path: "/fetch", body: body, binary: format == "raw", output: parsed.values["output"], flagged: flagged(parsed), note: note}
+	return op, pagesOf(op, parsed)
+}
+
+// pagesOf reads --max-tokens and --offset into op: a part of the page, the
+// size of an agent's reading, in place of all of it.
+func pagesOf(op *operation, parsed args) error {
+	tokens, paged := parsed.values["max-tokens"]
+	offset, hasOffset := parsed.values["offset"]
+	switch {
+	case !paged && hasOffset:
+		return errors.New("--offset needs --max-tokens, which sets the size of each part")
+	case !paged:
+		return nil
+	case op.binary:
+		return errors.New("--max-tokens pages text, not --format raw")
+	case op.output != "":
+		return errors.New("Use --max-tokens to read a page in parts, or -o to save all of it, not both")
+	}
+	n, err := boundedInteger(tokens, "--max-tokens", 1, "positive")
+	if err != nil {
+		return err
+	}
+	op.maxTokens = int(n)
+	if hasOffset {
+		n, err := boundedInteger(offset, "--offset", 0, "nonnegative")
+		if err != nil {
+			return err
+		}
+		op.offset = int(n)
+	}
+	return nil
 }
 
 func requestCommand(list []string, stdin io.Reader) (*operation, error) {
@@ -1207,9 +1243,19 @@ func execute(list []string, rt runtime) error {
 	}
 	caller := apiClient{rt: rt, base: base, key: key}
 	started := rt.clock()
-	data, err := caller.call(op)
-	if err != nil {
-		return err
+	// The parts of a page after the first come from the local copy the first
+	// part saved, so reading a long page in parts spends one fetch.
+	var data []byte
+	if op.maxTokens > 0 && op.offset > 0 {
+		data, op.fromCopy = readCopy(rt, op.body)
+	}
+	if !op.fromCopy {
+		if data, err = caller.call(op); err != nil {
+			return err
+		}
+		if op.maxTokens > 0 {
+			saveCopy(rt, op.body, data)
+		}
 	}
 	var ended error
 	if op.approve || op.wait {
@@ -1293,6 +1339,18 @@ func (c apiClient) emit(op *operation, data []byte) error {
 		data = []byte(text)
 	}
 	fetched := op.command == "fetch"
+	if op.maxTokens > 0 {
+		whole := decodeText(data)
+		part, start, end, next := page(whole, op.maxTokens, op.offset)
+		if !strings.HasSuffix(part, "\n") {
+			part += "\n"
+		}
+		if err := write(c.rt.stdout, []byte(part)); err != nil {
+			return err
+		}
+		fmt.Fprint(c.rt.stderr, pageFooter(op.line, len(whole), op.maxTokens, start, end, next, op.fromCopy))
+		return nil
+	}
 	if op.output == "" || op.output == "-" {
 		// Where no person reads stdout at a terminal, a large page's size
 		// comes first, before an agent's runner cuts the output.

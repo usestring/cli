@@ -159,8 +159,11 @@ var commandDocs = map[string]commandDoc{
 			"         only JSON carries: jsonSchema, screenshot, actions, captureXHR,",
 			"         captureIframes or captureCookies",
 		}, exitsOfARequest...),
-		cost:  "1 credit, 5 with --executeJS. Without a key: 50 requests and 100 credits a day\nper IP address, with --format and --executeJS only.",
-		flags: outputFlags,
+		cost: "1 credit, 5 with --executeJS. Without a key: 50 requests and 100 credits a day\nper IP address, with --format and --executeJS only. Parts after the first, with\n--offset, come from a local copy for 15 minutes and cost nothing.",
+		flags: `  --max-tokens N           print about N tokens of the page, cut at a line's end;
+                           stderr says which part it is and the next part's command
+  --offset N               start the part N tokens into the page
+` + outputFlags,
 		fields: `  --format json|markdown|raw       the response format
   --markdownMode readable|full     how much of the page the Markdown keeps
   --mainContentOnly                drop navigation, headers and footers
@@ -513,6 +516,8 @@ Learn more: https://github.com/usestring/cli#errors-and-exit-codes
                         nobody approves a sign-in and nothing updates itself
   XDG_CONFIG_HOME       where the saved key lives: $XDG_CONFIG_HOME/string, or
                         ~/.config/string without it
+  XDG_CACHE_HOME        where fetch keeps a page read in parts for 15 minutes:
+                        $XDG_CACHE_HOME/string/fetch, or ~/.cache/string/fetch
   CLAUDE_CONFIG_DIR     where init finds Claude Code's settings
   CODEX_HOME            where init finds Codex's settings
 
@@ -550,6 +555,9 @@ its runner cuts the output.
                         and host, and a Markdown page's outline. -o - is stdout
   -q, --quiet           no status lines on stderr: no notes, receipts or wait
                         lines. Errors and the keyless allowance stay
+  --max-tokens N        fetch prints about N tokens, and stderr says which part
+  --offset N            it is and the next part's command; parts after the
+                        first come from a local copy, at no cost
   --input FILE          more request fields, from a JSON object in FILE or -
                         for stdin; flags win over it
   --errors json         errors as JSON, as --json gives them, with stdout as it
