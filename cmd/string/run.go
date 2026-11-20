@@ -178,6 +178,9 @@ a new release in the background. A new release's first command also rewrites
 the skill wherever init installed it. STRING_AUTO_UPDATE=0 turns both off, and
 so does CI set to anything but false or 0.
 Set STRING_API_BASE_URL only when targeting a different API endpoint.
+string finds a coding agent that runs it from the variables agents set, and
+then shows no update notices. STRING_AGENT=NAME names the agent instead, and
+STRING_AGENT=human says a person runs string.
 Errors go to stderr, with Retry-After, the keyless allowance and x-request-id
 when the API sends them; --json prints them as {"error":{...}} instead.
 

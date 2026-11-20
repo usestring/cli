@@ -175,9 +175,15 @@ string update --check          # the version, the latest release, and whether th
 
 From 0.3.0, `string update` puts the latest release in place of the binary that runs it, once the release's signature and checksum check out. Homebrew, npm and Scoop keep track of the copies they installed, so for one of those `string update` changes nothing and prints the command that updates it, such as `brew upgrade usestring/cli/string`. `--check --json` gives the same report as one JSON object.
 
-A copy that the install script installed checks for a new release once a day and installs it in the background after a command has finished, without changing that command's output or exit code. The next command run at a terminal says it did. Any other copy only says, at a terminal, that a release is out and how to update. The daily check asks `https://cli.usestring.ai/stable` which release is the latest, and fetches a release's manifest, signature and archive from the same host only to install it. Each request carries the version of `string`, the system and the CPU type in its `User-Agent`, as in `string/0.3.0 (linux; amd64)`, and nothing else: no key, no account and nothing about the machine.
+A copy that the install script installed checks for a new release once a day and installs it in the background after a command has finished, without changing that command's output or exit code. The next command a person runs at a terminal says it did. Any other copy only tells a person at a terminal that a release is out and how to update. Notices need both stdout and stderr to be a terminal, and never show under a [coding agent](#coding-agents). The daily check asks `https://cli.usestring.ai/stable` which release is the latest, and fetches a release's manifest, signature and archive from the same host only to install it. Each request carries the version of `string`, the system and the CPU type in its `User-Agent`, as in `string/0.3.0 (linux; amd64)`, and nothing else: no key, no account and nothing about the machine.
 
 `STRING_AUTO_UPDATE=0` (or `false`, `off`, `no`) turns off everything `string` does by itself: the daily check, the background install, the notices and the [skill refresh](#agent-skills). `string update` still works when you run it, and `string init` refreshes the skill by hand. A `CI` variable turns them off too, unless it is `false` or `0`. The Docker image sets `STRING_AUTO_UPDATE=0`, since every run in a fresh container would otherwise look like the first of the day.
+
+## Coding agents
+
+`string` works out whether a coding agent runs it from the variables the agent sets for the commands it runs: `AI_AGENT`, or Claude Code's, Codex's, Gemini CLI's, Cursor's, OpenCode's, Goose's, Amp's, Cline's, GitHub Copilot's or Warp's own. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` count only when stdin is not a terminal, since IDE terminals set them for people too, and `AGENT` comes last. `string` never guesses from the terminal type or from the processes around it. `STRING_AGENT=NAME` names the agent instead, and `STRING_AGENT=human` says a person runs `string`.
+
+Under an agent, `string` shows no update notices. What it prints on stdout and its exit codes are the same for an agent, a script and a person.
 
 ## Agent skills
 
