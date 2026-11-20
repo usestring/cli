@@ -102,7 +102,8 @@ allowance per IP address. For more, and for request and sitemap, run string
 login, or set STRING_API_KEY to an API key from https://portal.usestring.ai/api-keys.
 
 Usage:
-  string URL [--FIELD VALUE ...]          the same as string fetch URL
+  string URL [--FIELD VALUE ...]          the same as string fetch URL; example.com
+                                          works too, as https://example.com
   string fetch URL [--FIELD VALUE ...]
   string search QUERY [--FIELD VALUE ...]
   string request METHOD URL [--body TEXT|--body-file FILE] [--FIELD VALUE ...]

@@ -113,6 +113,8 @@ string search "coffee grinders" --dateRange week --sortBy date
 string request POST https://example.com/api --body '{"name":"example"}' --headers '{"Content-Type":"application/json"}'
 ```
 
+A bare domain works too: `string example.com` fetches `https://example.com`. When `fetch`, `request` or `sitemap submit` gets a URL with no scheme, it uses `https://` and says so on stderr.
+
 **Every API field is a flag of the same name.** A field from the [API reference](https://docs.usestring.ai/api-reference/fetch) works on the command line as written: `executeJS` is `--executeJS`, and `countryCode` is `--countryCode DE`. A boolean flag alone is true, and `=false` turns it off (`--solveCaptcha=false`). An object or array field takes JSON, or `@` and a file path (`--jsonSchema @./schema.json`). `string fetch --help`, `string search --help` and `string sitemap --help` list each command's fields. Every flag of more than one word also takes its kebab-case and snake_case spellings, so `--main-content-only` and `--main_content_only` are `--mainContentOnly`, and `--envFile` is `--env-file`. A near miss of a flag, such as `--mainContentOnyl`, gets the right name back, and so does a near miss of a command, or a word other tools use for one: `string scrape URL` answers `Did you mean fetch?` with `string fetch URL` as the next step, and exits 2 without running it.
 
 `fetch` prints the page as Markdown. `--format json` gives the full response with the status, headers and final URL, and `--format raw` gives the response bytes. A field that only JSON carries, such as `--jsonSchema` or `--screenshot`, makes JSON the default. `request`, `search` and `sitemap` print JSON. `--output FILE`, or `-o FILE`, writes the response to a file instead.
