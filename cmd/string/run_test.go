@@ -156,7 +156,7 @@ func TestOutputWritesTheResponseToAFile(t *testing.T) {
 	got := invoke(t, []string{"https://example.com", "-o", path}, baseURL, "test-key")
 
 	saved, err := os.ReadFile(path)
-	if got.status != 0 || got.output != "" || err != nil || string(saved) != "# Example\n" || !strings.Contains(got.errors, "Saved 10 bytes to "+path) {
+	if got.status != 0 || got.output != "" || err != nil || string(saved) != "# Example\n" || got.errors != "saved "+path+" · 10 B · ~3 tokens · example.com\n  outline: 1 # Example\n" {
 		t.Errorf("%+v, saved %q, %v", got, saved, err)
 	}
 }

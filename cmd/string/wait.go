@@ -93,7 +93,7 @@ func (w *waiter) begin(line string) {
 		return
 	}
 	w.begun = true
-	if !w.rt.exec.redraws() {
+	if !w.rt.exec.redraws() && !w.rt.quiet {
 		fmt.Fprintln(w.rt.stderr, line)
 	}
 }
@@ -102,6 +102,9 @@ func (w *waiter) begin(line string) {
 // stderr at a terminal, unless redrawn is empty, and elsewhere as a plain
 // line every waitHeartbeat.
 func (w *waiter) progress(redrawn, plain string) {
+	if w.rt.quiet {
+		return
+	}
 	if w.rt.exec.redraws() {
 		if redrawn != "" {
 			fmt.Fprintf(w.rt.stderr, "\r\x1b[K%s", redrawn)
