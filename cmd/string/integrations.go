@@ -258,7 +258,7 @@ func runIntegration(caller apiClient, list []string) error {
 		if err != nil {
 			return usage(err)
 		}
-		op := &operation{method: "POST", path: "/integrations/" + encodeURIComponent(siteName) + "/" + encodeURIComponent(actionName), body: body, output: parsed.values["output"]}
+		op := &operation{method: "POST", path: "/integrations/" + encodeURIComponent(siteName) + "/" + encodeURIComponent(actionName), body: body, output: parsed.values["output"], changes: true}
 		// An action can drive a site through several pages, so it gets
 		// longer than one fetch.
 		long := caller

@@ -309,6 +309,7 @@ func refusalExit(status int) int {
 // wait's limit too, and then string login --poll goes on with the same code.
 func deviceToken(w *waiter, deviceCode string, interval time.Duration, expires time.Time) (string, error) {
 	defer w.end()
+	defer w.rt.interrupt.note("the sign-in stays open until its code expires", "string login --poll")()
 	lifetime := expires.Sub(w.rt.clock())
 	first := "sign-in · waiting for approval · the code expires in " + elapsed(lifetime) + " · resume: string login --poll"
 	for waited := time.Duration(0); waited < lifetime; waited += interval {

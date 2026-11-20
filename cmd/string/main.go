@@ -20,27 +20,23 @@ func main() {
 	// A closed pipe (string search ... | head) ends the command quietly with
 	// its status, as the Node CLI does, instead of dying on SIGPIPE.
 	signal.Ignore(syscall.SIGPIPE)
-	interrupts := make(chan os.Signal, 1)
-	signal.Notify(interrupts, os.Interrupt)
-	go func() {
-		<-interrupts
-		os.Exit(exitInterrupted)
-	}()
 	// The client has no time limits of its own: runtime.limited sets them on
 	// each request to String, and the updater sets its own on downloads.
 	rt := runtime{
-		env:      os.LookupEnv,
-		lookPath: exec.LookPath,
-		client:   &http.Client{},
-		stdin:    os.Stdin,
-		stdout:   os.Stdout,
-		stderr:   os.Stderr,
-		openURL:  openBrowser,
-		sleep:    time.Sleep,
-		program:  runProgram,
-		exec:     newExecCtx(os.LookupEnv, os.Stdin, os.Stdout, os.Stderr),
-		spawn:    spawnDetached,
+		env:       os.LookupEnv,
+		lookPath:  exec.LookPath,
+		client:    &http.Client{},
+		stdin:     os.Stdin,
+		stdout:    os.Stdout,
+		stderr:    os.Stderr,
+		openURL:   openBrowser,
+		sleep:     time.Sleep,
+		program:   runProgram,
+		exec:      newExecCtx(os.LookupEnv, os.Stdin, os.Stdout, os.Stderr),
+		spawn:     spawnDetached,
+		interrupt: &interruption{},
 	}
+	stopOnInterrupt(rt.interrupt, os.Stderr)
 	status := run(os.Args[1:], rt)
 	afterCommand(os.Args[1:], rt)
 	os.Exit(status)
