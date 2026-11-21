@@ -126,6 +126,7 @@ Usage:
                [--device-name NAME]
   string logout
   string whoami
+  string skill [--path]
   string trial
   string trial claim (--email ADDRESS [--no-wait] | --poll)
   string status
@@ -180,9 +181,14 @@ Without a key, fetch takes --format and --executeJS, and search takes
 --language, --dateRange, --sortBy, --safeSearch, --autocorrect and --verbatim.
 Other fields, request and sitemap need a key. What is left of the allowance is
 printed to stderr after each keyless call.
-init installs the string-cli skill for the coding agents found on this machine,
-adds String's MCP server to Claude Code and Codex unless --no-mcp is given,
-then signs in when no key is set; --browser picks login --browser's sign-in.
+init installs the string-cli skill in ~/.agents/skills, which Codex, Cursor,
+Gemini CLI and most other coding agents read, and in ~/.claude/skills when
+Claude Code is on this machine. An agent found here that reads neither gets a
+copy of its own, and --agent NAME puts it in NAME's own directory instead.
+init removes the copy releases before 0.3 put in ~/.gemini/skills, which made
+Gemini CLI warn of a skill conflict, and says so. init then adds String's MCP
+server to Claude Code and Codex unless --no-mcp is given, and signs in when no
+key is set; --browser picks login --browser's sign-in.
 A person at a terminal waits for the approval there. Under an agent, with
 --no-input, or when its output is captured outside CI, it prints the link and
 code as login does. --no-login skips the sign-in, and init exits 0 whether or
@@ -207,6 +213,9 @@ the new key's name, which your organization sees on its API keys page.
 --with-token send no name.
 STRING_API_KEY wins over a saved key. whoami says which one is in use and
 checks it with String, which costs nothing; whoami --offline doesn't check.
+skill prints the string-cli skill this release carries, the guide for coding
+agents, so an agent can read it without installing it; skill --path lists the
+copies installed in the agents' skills directories.
 trial registers an agent for a trial key with no account: after a few seconds'
 proof of work, it saves a key with a small balance that doesn't expire, and a
 claim token a person can use to adopt the agent onto their account.
@@ -1235,6 +1244,8 @@ func execute(list []string, rt runtime) error {
 		return logoutCommand(list[1:], rt)
 	case "whoami":
 		return whoamiCommand(list[1:], rt)
+	case "skill":
+		return skillCommand(list[1:], rt)
 	case "integrations":
 		return integrationsCommand(list[1:], rt)
 	case "trial":

@@ -311,12 +311,30 @@ var commandDocs = map[string]commandDoc{
 			"exit     0 ok, whether or not the sign-in finishes · 2 bad input",
 		},
 		cost: "Free.",
-		flags: `  --agent NAME[,NAME...]   only these agents: claude-code, codex, cursor,
-                           gemini-cli or opencode
+		flags: `  --agent NAME[,NAME...]   only these agents, each in its own skills directory,
+                           such as claude-code, codex, cursor or gemini-cli
   --no-mcp                 don't add String's MCP server to Claude Code and Codex
   --no-login               skip the sign-in
   --browser                sign in as string login --browser does
   --device-name NAME       the machine's name in the new key's name
+`,
+		more: "https://github.com/usestring/cli#agent-skills",
+	},
+	"skill": {
+		summary: "print the string-cli skill, the guide for coding agents",
+		usage:   []string{"string skill [--path]"},
+		examples: []string{
+			"string skill                         the guide, to read or to save anywhere",
+			"string skill --path                  where it is installed",
+		},
+		returns: []string{
+			"stdout   the skill's SKILL.md, the one this release carries; with --path,",
+			"         the SKILL.md of each copy in an agent's skills directory, one a line",
+			"exit     0 ok · 2 bad input",
+		},
+		cost: "Free, and it sends no request.",
+		flags: `  --path                   list the installed copies instead: the SKILL.md in
+                           each agent's skills directory that has the skill
 `,
 		more: "https://github.com/usestring/cli#agent-skills",
 	},
@@ -606,6 +624,8 @@ Ways that work well:
   --json                                errors as one JSON object
   string COMMAND --help                 one command's examples, output, exit
                                         codes, cost and flags
+  string skill                          the whole guide for agents, the skill
+                                        string init installs
 
 Learn more: https://github.com/usestring/cli#coding-agents
 `,
