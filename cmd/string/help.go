@@ -77,18 +77,96 @@ func versionCommand(list []string, rt runtime) error {
 // line and string help COMMAND all print it, and none of them touches the
 // network.
 type commandDoc struct {
-	summary  string
+	summary string
+	// usage are command lines, each perhaps with a note three spaces after
+	// it. A line that starts with a space goes on with the line before it.
 	usage    []string
 	examples []string
 	// returns are whole lines: what stdout holds, then the exit codes that
 	// matter.
 	returns []string
 	cost    string
-	// flags and fields are aligned lines: the command's own flags, then the
-	// API's request fields.
-	flags  string
-	fields string
-	more   string
+	// flags are the command's own flags, and fields the API's request fields
+	// it takes, spelled as the API spells them. fieldsAs names the command
+	// whose fields this one takes, so that its page points there.
+	flags    []flagDoc
+	fields   []flagDoc
+	fieldsAs string
+	more     string
+	// leaves are the commands the page covers, in the order string help
+	// --all lists them: the page's command itself, or each subcommand.
+	leaves []leaf
+}
+
+// flagDoc is one flag on a command's page.
+type flagDoc struct {
+	// name is the spelling help shows, without the dashes.
+	name string
+	// short is a one-letter spelling, such as o for -o.
+	short string
+	// value is what follows the flag, such as N, FILE or [JSON]. It is empty
+	// for a switch, and =false for a switch that is on unless turned off.
+	value string
+	// about says what the flag does, in one line or sentence that the page
+	// wraps.
+	about string
+}
+
+// spelled is the flag as its page shows it.
+func (f flagDoc) spelled() string {
+	spelled := "--" + f.name
+	if f.short != "" {
+		spelled = "-" + f.short + ", " + spelled
+	}
+	switch {
+	case strings.HasPrefix(f.value, "="):
+		spelled += f.value
+	case f.value != "":
+		spelled += " " + f.value
+	}
+	return spelled
+}
+
+// helpWidth is how wide a help line may be.
+const helpWidth = 80
+
+// termDoc is one row of an aligned list on a help page: a term, such as a
+// flag or a variable, and what it means.
+type termDoc struct{ term, about string }
+
+// flagLines lays flags out as help pages do.
+func flagLines(flags []flagDoc, at int) string {
+	terms := make([]termDoc, len(flags))
+	for i, f := range flags {
+		terms[i] = termDoc{f.spelled(), f.about}
+	}
+	return termLines(terms, at)
+}
+
+// termLines lays terms out as help pages do: each term from the third column,
+// and what it means from column at, wrapped to helpWidth.
+func termLines(terms []termDoc, at int) string {
+	var b strings.Builder
+	for _, t := range terms {
+		line := "  " + t.term
+		if len(line) >= at-1 {
+			b.WriteString(line + "\n")
+			line = ""
+		}
+		for _, word := range strings.Fields(t.about) {
+			switch {
+			case len(line) <= at:
+				line += strings.Repeat(" ", at-len(line)) + word
+			case len(line)+1+len(word) > helpWidth:
+				b.WriteString(line + "\n")
+				line = strings.Repeat(" ", at) + word
+			default:
+				line += " " + word
+			}
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
 }
 
 // page writes the help page of the command named name.
@@ -113,8 +191,14 @@ func (d commandDoc) page(name string) string {
 	section("Examples", d.examples)
 	section("Returns", d.returns)
 	section("Cost", strings.Split(d.cost, "\n"))
-	block("Flags", d.flags)
-	block("API fields, spelled as in the API", d.fields)
+	if len(d.flags) > 0 {
+		block("Flags", flagLines(d.flags, 27))
+	}
+	if d.fieldsAs != "" {
+		block("API fields, spelled as in the API", "  The same as string "+d.fieldsAs+": string "+d.fieldsAs+" --help.\n")
+	} else if len(d.fields) > 0 {
+		block("API fields, spelled as in the API", flagLines(d.fields, 35))
+	}
 	b.WriteString("\nLearn more: " + d.more + "\n")
 	return b.String()
 }
@@ -128,6 +212,13 @@ func helpFor(command string) string {
 	return help
 }
 
+// outputFlags are the flags of each command that sends one request and prints
+// its response.
+var outputFlags = []flagDoc{
+	{name: "output", short: "o", value: "FILE", about: "write the response to FILE instead of stdout"},
+	{name: "input", value: "FILE", about: "more request fields, from a JSON object in FILE or - for stdin"},
+}
+
 // exitsOfARequest are the exit codes of a command that sends one request.
 var exitsOfARequest = []string{
 	"exit     0 ok · 2 bad input · 3 needs a key · 4 out of credit · 5 rate limited",
@@ -135,9 +226,6 @@ var exitsOfARequest = []string{
 }
 
 const (
-	outputFlags = `  -o, --output FILE        write the response to FILE instead of stdout
-  --input FILE             more request fields, from a JSON object in FILE or - for stdin
-`
 	keysDocs = "https://github.com/usestring/cli#keys"
 )
 
@@ -160,31 +248,35 @@ var commandDocs = map[string]commandDoc{
 			"         captureIframes or captureCookies",
 		}, exitsOfARequest...),
 		cost: "1 credit, 5 with --executeJS. Without a key: 50 requests and 100 credits a day\nper IP address, with --format and --executeJS only. Parts after the first, with\n--offset, come from a local copy for 15 minutes and cost nothing.",
-		flags: `  --max-tokens N           print about N tokens of the page, cut at a line's end;
-                           stderr says which part it is and the next part's command
-  --offset N               start the part N tokens into the page
-` + outputFlags,
-		fields: `  --format json|markdown|raw       the response format
-  --markdownMode readable|full     how much of the page the Markdown keeps
-  --mainContentOnly                drop navigation, headers and footers
-  --executeJS                      render the page in a browser
-  --waitUntil STATE                load, domcontentloaded, networkidle0 or networkidle2
-  --countryCode CC                 the proxy country, such as DE
-  --headers JSON                   request headers as a JSON object
-  --jsonSchema JSON|@./FILE        extract into this JSON Schema (JSON output)
-  --screenshot                     capture a screenshot (JSON output)
-  --actions JSON|@./FILE           browser actions to run (JSON output)
-  --captureXHR [JSON]              return the page's XHR and fetch() calls (JSON output)
-  --captureIframes [JSON]          list the page's iframes (JSON output)
-  --includeIframes                 inline each iframe's content
-  --captureCookies                 return the page's cookies (JSON output)
-  --requireWSS                     require a browser WebSocket fetch path
-  --solveCaptcha=false             fail on a challenge instead of solving it
-  --ignoreCertificateErrors        skip TLS certificate checks
-  --maxRedirects N                 follow at most N redirects
-  --followRedirects=false          return the redirect response itself
-`,
+		flags: append([]flagDoc{
+			{name: "max-tokens", value: "N", about: "print about N tokens of the page, cut at a line's end; stderr says which part it is and the next part's command"},
+			{name: "offset", value: "N", about: "start the part N tokens into the page"},
+		}, outputFlags...),
+		fields: []flagDoc{
+			{name: "format", value: "json|markdown|raw", about: "the response format"},
+			{name: "markdownMode", value: "readable|full", about: "how much of the page the Markdown keeps"},
+			{name: "mainContentOnly", about: "drop navigation, headers and footers"},
+			{name: "executeJS", about: "render the page in a browser"},
+			{name: "waitUntil", value: "STATE", about: "load, domcontentloaded, networkidle0 or networkidle2"},
+			{name: "countryCode", value: "CC", about: "the proxy country, such as DE"},
+			{name: "headers", value: "JSON", about: "request headers as a JSON object"},
+			{name: "jsonSchema", value: "JSON|@./FILE", about: "extract into this JSON Schema (JSON output)"},
+			{name: "screenshot", about: "capture a screenshot (JSON output)"},
+			{name: "actions", value: "JSON|@./FILE", about: "browser actions to run (JSON output)"},
+			{name: "captureXHR", value: "[JSON]", about: "return the page's XHR and fetch() calls (JSON output)"},
+			{name: "captureIframes", value: "[JSON]", about: "list the page's iframes (JSON output)"},
+			{name: "includeIframes", about: "inline each iframe's content"},
+			{name: "captureCookies", about: "return the page's cookies (JSON output)"},
+			{name: "requireWSS", about: "require a browser WebSocket fetch path"},
+			{name: "solveCaptcha", value: "=false", about: "fail on a challenge instead of solving it"},
+			{name: "ignoreCertificateErrors", about: "skip TLS certificate checks"},
+			{name: "maxRedirects", value: "N", about: "follow at most N redirects"},
+			{name: "followRedirects", value: "=false", about: "return the redirect response itself"},
+		},
 		more: "https://docs.usestring.ai/api-reference/fetch",
+		leaves: []leaf{
+			{path: "fetch", args: []string{"URL"}, aliases: []string{"URL"}, line: "a page as Markdown; -o FILE; --max-tokens N", costs: "1 credit, keyless ok", keyless: true, effects: "read", exits: requestExits, stdout: "text/markdown"},
+		},
 	},
 	"request": {
 		summary: "send a POST, PUT or PATCH to a URL through String",
@@ -195,11 +287,15 @@ var commandDocs = map[string]commandDoc{
 		},
 		returns: append([]string{"stdout   the response as JSON"}, exitsOfARequest...),
 		cost:    "Needs a key. Prices: https://docs.usestring.ai/get-started/pricing",
-		flags: `  --body TEXT              the request body, as written, @ included
-  --body-file FILE         the request body, read from FILE, or - for stdin
-` + outputFlags,
-		fields: "  The same as string fetch: string fetch --help.\n",
-		more:   "https://docs.usestring.ai/api-reference/fetch",
+		flags: append([]flagDoc{
+			{name: "body", value: "TEXT", about: "the request body, as written, @ included"},
+			{name: "body-file", value: "FILE", about: "the request body, read from FILE, or - for stdin"},
+		}, outputFlags...),
+		fieldsAs: "fetch",
+		more:     "https://docs.usestring.ai/api-reference/fetch",
+		leaves: []leaf{
+			{path: "request", args: []string{"METHOD", "URL"}, line: "a POST, PUT or PATCH through String", costs: "key", effects: "write", exits: requestExits, stdout: "application/json", json: true},
+		},
 	},
 	"search": {
 		summary: "search the web",
@@ -215,26 +311,30 @@ var commandDocs = map[string]commandDoc{
 		}, exitsOfARequest...),
 		cost:  "Each results page, about ten results, is billed as one search. Without a key a\nsearch costs 5 of the 100 credits a day per IP address, and takes --language,\n--dateRange, --sortBy, --safeSearch, --autocorrect and --verbatim only.",
 		flags: outputFlags,
-		fields: `  --engine NAME                    google (the default), duckduckgo, brave or google_ai_mode
-  --searchType TYPE                web, images, videos, shopping, books, places or forums
-  --searchCount N                  how many results, 1 to 300 (--count works too)
-  --page N                         the results page to start from
-  --country CC                     the country to localize results for
-  --language CODE                  the result language, such as en or pt-br
-  --location PLACE                 where to search from, such as London
-  --coordinates JSON               {"latitude":…,"longitude":…,"radius":…}
-  --dateRange RANGE                hour, day, week, month, year, or {"from":…,"to":…}
-  --sortBy relevance|date          the result order
-  --safeSearch                     filter out explicit results
-  --verbatim                       match the query's words exactly
-  --autocorrect=false              search the query as typed
-  --includeOmittedResults          include results hidden as similar
-  --restrictCountry CC             only pages from this country
-  --aiOverview                     wait for the AI Overview too (costs 2x)
-  --format structured|raw          results as JSON, or the results page as HTML
-  --solveCaptcha=false             never solve a captcha for this search
-`,
+		fields: []flagDoc{
+			{name: "engine", value: "NAME", about: "google (the default), duckduckgo, brave or google_ai_mode"},
+			{name: "searchType", value: "TYPE", about: "web, images, videos, shopping, books, places or forums"},
+			{name: "searchCount", value: "N", about: "how many results, 1 to 300 (--count works too)"},
+			{name: "page", value: "N", about: "the results page to start from"},
+			{name: "country", value: "CC", about: "the country to localize results for"},
+			{name: "language", value: "CODE", about: "the result language, such as en or pt-br"},
+			{name: "location", value: "PLACE", about: "where to search from, such as London"},
+			{name: "coordinates", value: "JSON", about: "{\"latitude\":…,\"longitude\":…,\"radius\":…}"},
+			{name: "dateRange", value: "RANGE", about: "hour, day, week, month, year, or {\"from\":…,\"to\":…}"},
+			{name: "sortBy", value: "relevance|date", about: "the result order"},
+			{name: "safeSearch", about: "filter out explicit results"},
+			{name: "verbatim", about: "match the query's words exactly"},
+			{name: "autocorrect", value: "=false", about: "search the query as typed"},
+			{name: "includeOmittedResults", about: "include results hidden as similar"},
+			{name: "restrictCountry", value: "CC", about: "only pages from this country"},
+			{name: "aiOverview", about: "wait for the AI Overview too (costs 2x)"},
+			{name: "format", value: "structured|raw", about: "results as JSON, or the results page as HTML"},
+			{name: "solveCaptcha", value: "=false", about: "never solve a captcha for this search"},
+		},
 		more: "https://docs.usestring.ai/api-reference/search",
+		leaves: []leaf{
+			{path: "search", args: []string{"QUERY"}, line: "web results as JSON; --searchCount N", costs: "1 search, keyless ok", keyless: true, effects: "read", exits: requestExits, stdout: "application/json", json: true},
+		},
 	},
 	"sitemap": {
 		summary: "crawl one site: quote it, approve it, read its pages",
@@ -258,25 +358,38 @@ var commandDocs = map[string]commandDoc{
 			"         · 4 out of credit · 7 the wait stopped, and the crawl keeps running",
 		},
 		cost: "submit quotes the crawl for nothing. approve, or submit --approve, starts it at\nthe quoted cost, which --budgetUsd caps.",
-		flags: `  --approve                approve the quote at once (submit only)
-  --wait                   wait for the crawl to end: 90s at most under an agent
-  --limit N, --offset N    page through results and list
-  -o, --output FILE        write the response to FILE instead of stdout
-`,
-		fields: `  --maxPages N                     pages to crawl, 1 to 10,000 (10 by default)
-  --maxDepth N                     link depth from URL, 1 to 100 (2 by default)
-  --pathPrefix PATH                only URLs whose path starts with PATH
-  --budgetUsd USD                  the spend cap (the quote by default)
-  --useSitemap                     also start from the site's /sitemap.xml
-`,
+		flags: []flagDoc{
+			{name: "approve", about: "approve the quote at once (submit only)"},
+			{name: "wait", about: "wait for the crawl to end: 90s at most under an agent"},
+			{name: "limit", value: "N", about: "how many results or jobs to show, for results and list"},
+			{name: "offset", value: "N", about: "how many to skip first, for results and list"},
+			{name: "output", short: "o", value: "FILE", about: "write the response to FILE instead of stdout"},
+			{name: "input", value: "FILE", about: "more request fields, from a JSON object in FILE or - for stdin (submit only)"},
+		},
+		fields: []flagDoc{
+			{name: "maxPages", value: "N", about: "pages to crawl, 1 to 10,000 (10 by default)"},
+			{name: "maxDepth", value: "N", about: "link depth from URL, 1 to 100 (2 by default)"},
+			{name: "pathPrefix", value: "PATH", about: "only URLs whose path starts with PATH"},
+			{name: "budgetUsd", value: "USD", about: "the spend cap (the quote by default)"},
+			{name: "useSitemap", about: "also start from the site's /sitemap.xml"},
+		},
 		more: "https://docs.usestring.ai/api-reference/sitemap",
+		leaves: []leaf{
+			{path: "sitemap submit", args: []string{"URL"}, line: "quote a crawl; --approve starts it", costs: "key; spends on --approve", effects: "spend", flags: []string{"approve", "wait", "output", "input", "maxPages", "maxDepth", "pathPrefix", "budgetUsd", "useSitemap"}, exits: requestExits, stdout: "application/json", json: true},
+			{path: "sitemap approve", args: []string{"JOB_ID"}, line: "start a quoted crawl; --wait", costs: "key; spends the quote", effects: "spend", flags: jobFlags, exits: requestExits, stdout: "application/json", json: true},
+			{path: "sitemap status", args: []string{"JOB_ID"}, line: "a crawl's state; --wait follows it", costs: "key", effects: "read", flags: jobFlags, examples: []string{"string sitemap status JOB_ID --wait"}, exits: askExits, stdout: "application/json", json: true},
+			{path: "sitemap results", args: []string{"JOB_ID"}, line: "a crawl's pages; --limit N --offset N", costs: "key", effects: "read", flags: listFlags, exits: askExits, stdout: "application/json", json: true},
+			{path: "sitemap list", line: "your crawls; --limit N --offset N", costs: "key", effects: "read", flags: listFlags, examples: []string{"string sitemap list --limit 20"}, exits: askExits, stdout: "application/json", json: true},
+			{path: "sitemap cancel", args: []string{"JOB_ID"}, line: "stop a crawl", costs: "key", effects: "write", flags: []string{"output"}, examples: []string{"string sitemap cancel JOB_ID"}, exits: askExits, stdout: "application/json", json: true},
+		},
 	},
 	"integrations": {
 		summary: "run typed actions over one website, such as reddit post",
 		usage: []string{
-			"string integrations [list]               every site and its actions",
+			"string integrations list                 every site and its actions",
 			"string integrations list SITE            SITE's actions, each with its flags",
 			"string integrations run SITE ACTION [--FIELD VALUE ...]",
+			"string integrations                      the same as string integrations list",
 		},
 		examples: []string{
 			"string integrations list reddit",
@@ -289,11 +402,14 @@ var commandDocs = map[string]commandDoc{
 			"         String failed · 7 timed out",
 		},
 		cost: "list is free and needs no key. run needs one: most actions bill the requests\nthey make, some bill per row. Prices:\nhttps://docs.usestring.ai/get-started/pricing#site-integrations",
-		flags: `  --FIELD VALUE            a field of the action's input, spelled as the field: the
-                           post field is --post. A list field takes one item per
-                           flag, or a JSON array.
-` + outputFlags,
+		flags: append([]flagDoc{
+			{name: "FIELD", value: "VALUE", about: "a field of the action's input, spelled as the field: the post field is --post. A list field takes one item per flag, or a JSON array."},
+		}, outputFlags...),
 		more: "https://docs.usestring.ai/sites",
+		leaves: []leaf{
+			{path: "integrations list", args: []string{"[SITE]"}, aliases: []string{"integrations"}, line: "sites and their actions; SITE's flags", costs: "free, no key", keyless: true, effects: "read", flags: []string{}, exits: askExits, stdout: "text/plain", json: true},
+			{path: "integrations run", args: []string{"SITE", "ACTION"}, line: "one action; --FIELD VALUE per input field", costs: "key; per request or row", effects: "spend", exits: requestExits, stdout: "application/json", json: true},
+		},
 	},
 	"init": {
 		summary: "install the string-cli skill for the coding agents on this machine",
@@ -311,14 +427,17 @@ var commandDocs = map[string]commandDoc{
 			"exit     0 ok, whether or not the sign-in finishes · 2 bad input",
 		},
 		cost: "Free.",
-		flags: `  --agent NAME[,NAME...]   only these agents, each in its own skills directory,
-                           such as claude-code, codex, cursor or gemini-cli
-  --no-mcp                 don't add String's MCP server to Claude Code and Codex
-  --no-login               skip the sign-in
-  --browser                sign in as string login --browser does
-  --device-name NAME       the machine's name in the new key's name
-`,
+		flags: []flagDoc{
+			{name: "agent", value: "NAME[,NAME...]", about: "only these agents, each in its own skills directory, such as claude-code, codex, cursor or gemini-cli"},
+			{name: "no-mcp", about: "don't add String's MCP server to Claude Code and Codex"},
+			{name: "no-login", about: "skip the sign-in"},
+			{name: "browser", about: "sign in as string login --browser does"},
+			{name: "device-name", value: "NAME", about: "the machine's name in the new key's name"},
+		},
 		more: "https://github.com/usestring/cli#agent-skills",
+		leaves: []leaf{
+			{path: "init", line: "the skill for your agents, MCP and sign-in", costs: "free", keyless: true, effects: "write", exits: basicExits, stdout: "text/plain"},
+		},
 	},
 	"skill": {
 		summary: "print the string-cli skill, the guide for coding agents",
@@ -333,10 +452,13 @@ var commandDocs = map[string]commandDoc{
 			"exit     0 ok · 2 bad input",
 		},
 		cost: "Free, and it sends no request.",
-		flags: `  --path                   list the installed copies instead: the SKILL.md in
-                           each agent's skills directory that has the skill
-`,
+		flags: []flagDoc{
+			{name: "path", about: "list the installed copies instead: the SKILL.md in each agent's skills directory that has the skill"},
+		},
 		more: "https://github.com/usestring/cli#agent-skills",
+		leaves: []leaf{
+			{path: "skill", line: "the guide for coding agents; --path", costs: "free", keyless: true, effects: "local", exits: basicExits, stdout: "text/markdown"},
+		},
 	},
 	"login": {
 		summary: "sign in through your browser and save a new API key",
@@ -358,19 +480,19 @@ var commandDocs = map[string]commandDoc{
 			"         sign-in service failed · 7 the wait stopped, and the code still works",
 		},
 		cost: "Free.",
-		flags: `  --no-wait                print the link and code and exit; the default without
-                           a person at a terminal
-  --poll                   wait for the sign-in started earlier and save the key:
-                           90s at most under an agent, --timeout to change it
-  --with-token             read an API key from stdin, check it and save it
-  --browser                sign in on a String page, with no code; it works for a
-                           new account too
-  --env-file PATH          also write the key to PATH as its STRING_API_KEY line
-  --device-name NAME       the machine's name in the new key's name, up to 51
-                           characters
-  --no-open                never open a browser
-`,
+		flags: []flagDoc{
+			{name: "no-wait", about: "print the link and code and exit; the default without a person at a terminal"},
+			{name: "poll", about: "wait for the sign-in started earlier and save the key: 90s at most under an agent, --timeout to change it"},
+			{name: "with-token", about: "read an API key from stdin, check it and save it"},
+			{name: "browser", about: "sign in on a String page, with no code; it works for a new account too"},
+			{name: "env-file", value: "PATH", about: "also write the key to PATH as its STRING_API_KEY line"},
+			{name: "device-name", value: "NAME", about: "the machine's name in the new key's name, up to 51 characters"},
+			{name: "no-open", about: "never open a browser"},
+		},
 		more: keysDocs,
+		leaves: []leaf{
+			{path: "login", line: "sign in, save a key; --json, then --poll", costs: "free", keyless: true, effects: "write", exits: askExits, stdout: "text/plain", json: true},
+		},
 	},
 	"logout": {
 		summary:  "delete the key that string login saved",
@@ -383,6 +505,9 @@ var commandDocs = map[string]commandDoc{
 		},
 		cost: "Free.",
 		more: keysDocs,
+		leaves: []leaf{
+			{path: "logout", line: "delete the saved key", costs: "free", keyless: true, effects: "write", exits: basicExits, stdout: "text/plain"},
+		},
 	},
 	"whoami": {
 		summary:  "say which key string uses, and check it with String",
@@ -395,9 +520,14 @@ var commandDocs = map[string]commandDoc{
 			"exit     0 String accepts the key · 3 no key, or String refused it · 6 string",
 			"         couldn't ask String",
 		},
-		cost:  "Free: one request that spends no credit, or none with --offline.",
-		flags: "  --offline                say where the key comes from, without asking String\n",
-		more:  keysDocs,
+		cost: "Free: one request that spends no credit, or none with --offline.",
+		flags: []flagDoc{
+			{name: "offline", about: "say where the key comes from, without asking String"},
+		},
+		more: keysDocs,
+		leaves: []leaf{
+			{path: "whoami", line: "the key in use, checked; --offline", costs: "free", keyless: true, effects: "read", exits: []int{0, 1, 2, 3, 6}, stdout: "text/plain", json: true},
+		},
 	},
 	"trial": {
 		summary: "get a trial key for an agent, with no account",
@@ -419,13 +549,16 @@ var commandDocs = map[string]commandDoc{
 			"         claim's wait stopped, and the code still works",
 		},
 		cost: "Free: the trial key comes with a small balance.",
-		flags: `  --email ADDRESS          who claims the agent onto their String account
-  --no-wait                print the link and code and exit; the default without
-                           a person at a terminal
-  --poll                   wait for the claim started earlier and save the key:
-                           90s at most under an agent, --timeout to change it
-`,
+		flags: []flagDoc{
+			{name: "email", value: "ADDRESS", about: "who claims the agent onto their String account"},
+			{name: "no-wait", about: "print the link and code and exit; the default without a person at a terminal"},
+			{name: "poll", about: "wait for the claim started earlier and save the key: 90s at most under an agent, --timeout to change it"},
+		},
 		more: keysDocs,
+		leaves: []leaf{
+			{path: "trial", line: "a trial key when nobody can approve one", costs: "free", keyless: true, effects: "write", flags: []string{}, exits: askExits, stdout: "text/plain", json: true},
+			{path: "trial claim", line: "move a trial agent to an account", costs: "free", keyless: true, effects: "write", exits: askExits, stdout: "text/plain", json: true},
+		},
 	},
 	"status": {
 		summary:  "show the version, the key in use, and what you can spend",
@@ -435,10 +568,13 @@ var commandDocs = map[string]commandDoc{
 			"stdout   the version and the key. With a key, the balance, any amount held by",
 			"         running crawls, the plan and its request rate; without one, what is",
 			"         left of today's keyless allowance. --json gives one object",
-			"exit     0 ok, even when the API can't answer",
+			"exit     0 ok, even when the API can't answer · 3 String refused the key",
 		},
 		cost: "Free, and it spends none of the keyless allowance.",
 		more: "https://github.com/usestring/cli#commands",
+		leaves: []leaf{
+			{path: "status", line: "the key, balance or keyless allowance", costs: "free", keyless: true, effects: "read", exits: []int{0, 1, 2, 3}, stdout: "text/plain", json: true},
+		},
 	},
 	"balance": {
 		summary:  "print the balance, plan and auto top-up as JSON",
@@ -450,6 +586,9 @@ var commandDocs = map[string]commandDoc{
 		},
 		cost: "Free. Needs a key.",
 		more: "https://github.com/usestring/cli#commands",
+		leaves: []leaf{
+			{path: "balance", line: "the balance as JSON", costs: "key", effects: "read", exits: askExits, stdout: "application/json", json: true},
+		},
 	},
 	"update": {
 		summary: "replace this copy of string with the latest release",
@@ -464,12 +603,14 @@ var commandDocs = map[string]commandDoc{
 			"exit     0 ok · 1 the update failed",
 		},
 		cost: "Free.",
-		flags: `  --check                  show the version, the latest release, how this copy was
-                           installed and whether it updates itself
-  --version X.Y.Z          install that release, which then stays until a plain
-                           string update
-`,
+		flags: []flagDoc{
+			{name: "check", about: "show the version, the latest release, how this copy was installed and whether it updates itself"},
+			{name: "version", value: "X.Y.Z", about: "install that release, which then stays until a plain string update"},
+		},
 		more: "https://github.com/usestring/cli#updating",
+		leaves: []leaf{
+			{path: "update", line: "install the latest release; --check", costs: "free", keyless: true, effects: "write", exits: basicExits, stdout: "text/plain", json: true},
+		},
 	},
 	"version": {
 		summary: "print this copy's version and build",
@@ -477,7 +618,7 @@ var commandDocs = map[string]commandDoc{
 			"string version [--json]",
 			"string --version, string -v           the version alone",
 		},
-		examples: []string{"string version", "string -v"},
+		examples: []string{"string version", "string version --json"},
 		returns: []string{
 			"stdout   string VERSION, then the commit, its date, the system and the Go",
 			"         version. --json gives one object",
@@ -485,7 +626,30 @@ var commandDocs = map[string]commandDoc{
 		},
 		cost: "Free, and it sends no request.",
 		more: "https://github.com/usestring/cli#updating",
+		leaves: []leaf{
+			{path: "version", line: "the version and build; --json", costs: "free", keyless: true, effects: "local", exits: basicExits, stdout: "text/plain", json: true},
+		},
 	},
+}
+
+// envDocs are the variables string reads, as string help environment and
+// string help --json list them.
+var envDocs = []termDoc{
+	{"STRING_API_KEY", "the API key; it wins over the key string login saved"},
+	{"STRING_API_BASE_URL", "another API endpoint"},
+	{"STRING_AGENT", "NAME says the coding agent NAME runs string, and human says a person does; it wins over what string finds"},
+	{"AI_AGENT, AGENT", "an agent's name, as some agents set it"},
+	{"STRING_NO_INPUT", "1 makes string wait for no person, as --no-input does"},
+	{"STRING_AUTO_UPDATE", "0 turns off the daily update check, and the rewrite of the skill after an update"},
+	{"STRING_DOWNLOAD_URL", "where string update takes releases from, for tests"},
+	{"STRING_NO_DEPRECATION_WARNINGS", "1 silences what string says ahead of a change, such as the notice for fetch --json"},
+	{"STRING_COMPAT", "0.2 will keep 0.2's output and exit codes once 0.4 changes them, and silences those notices now"},
+	{"DO_NOT_TRACK", "1 sends String only string's version"},
+	{"CI", "set to anything but false or 0: a CI job, where nobody approves a sign-in and nothing updates itself"},
+	{"XDG_CONFIG_HOME", "where the saved key lives: $XDG_CONFIG_HOME/string, or ~/.config/string without it"},
+	{"XDG_CACHE_HOME", "where fetch keeps a page read in parts for 15 minutes: $XDG_CACHE_HOME/string/fetch, or ~/.cache/string/fetch"},
+	{"CLAUDE_CONFIG_DIR", "where init finds Claude Code's settings"},
+	{"CODEX_HOME", "where init finds Codex's settings"},
 }
 
 // helpTopics are the pages of string help TOPIC that no one command owns.
@@ -516,32 +680,7 @@ or tell_user, so an agent can take the steps that need no person.
 
 Learn more: https://github.com/usestring/cli#errors-and-exit-codes
 `,
-	"environment": `string help environment: the variables string reads, and what it sends
-
-  STRING_API_KEY        the API key; it wins over the key string login saved
-  STRING_API_BASE_URL   another API endpoint
-  STRING_AGENT          NAME says the coding agent NAME runs string, and human
-                        says a person does; it wins over what string finds
-  AI_AGENT, AGENT       an agent's name, as some agents set it
-  STRING_NO_INPUT       1 makes string wait for no person, as --no-input does
-  STRING_AUTO_UPDATE    0 turns off the daily update check, and the rewrite of
-                        the skill after an update
-  STRING_DOWNLOAD_URL   where string update takes releases from, for tests
-  STRING_NO_DEPRECATION_WARNINGS
-                        1 silences what string says ahead of a change, such as
-                        the notice for fetch --json
-  STRING_COMPAT         0.2 will keep 0.2's output and exit codes once 0.4
-                        changes them, and silences those notices now
-  DO_NOT_TRACK          1 sends String only string's version
-  CI                    set to anything but false or 0: a CI job, where
-                        nobody approves a sign-in and nothing updates itself
-  XDG_CONFIG_HOME       where the saved key lives: $XDG_CONFIG_HOME/string, or
-                        ~/.config/string without it
-  XDG_CACHE_HOME        where fetch keeps a page read in parts for 15 minutes:
-                        $XDG_CACHE_HOME/string/fetch, or ~/.cache/string/fetch
-  CLAUDE_CONFIG_DIR     where init finds Claude Code's settings
-  CODEX_HOME            where init finds Codex's settings
-
+	"environment": "string help environment: the variables string reads, and what it sends\n\n" + termLines(envDocs, 24) + `
 string finds Claude Code, Codex, Gemini CLI, Cursor, Copilot CLI, Cline, Amp,
 Goose and Warp from the variables each sets, and treats them as agents.
 
@@ -622,6 +761,8 @@ Ways that work well:
   string login --poll                   which saves the key once they approve
   string trial                          a key when nobody can approve one
   --json                                errors as one JSON object
+  string help --all                     every command on one page, and
+  string help --json                    each one's flags, output and exit codes
   string COMMAND --help                 one command's examples, output, exit
                                         codes, cost and flags
   string skill                          the whole guide for agents, the skill
@@ -631,10 +772,11 @@ Learn more: https://github.com/usestring/cli#coding-agents
 `,
 }
 
-// agentPreamble starts the help for all of string under an agent.
-const agentPreamble = `For agents: string COMMAND --help gives one command's examples, output, exit
-codes, cost and flags, and string help agents what changes under an agent.
-Pages curl or WebFetch can't read: string fetch URL. Big pages: add -o FILE.
+// agentPreamble starts the help for all of string under an agent. No command
+// in it is split across lines.
+const agentPreamble = `For agents: string help --all lists every command on one page, and
+string help --json adds the flags, output and exit codes. One call is enough.
+Pages that curl or WebFetch can't read: string fetch URL. Big pages: -o FILE.
 
 `
 
