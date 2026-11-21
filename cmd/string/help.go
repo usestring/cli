@@ -247,7 +247,7 @@ var commandDocs = map[string]commandDoc{
 			"         only JSON carries: jsonSchema, screenshot, actions, captureXHR,",
 			"         captureIframes or captureCookies",
 		}, exitsOfARequest...),
-		cost: "1 credit, 5 with --executeJS. Without a key: 50 requests and 100 credits a day\nper IP address, with --format and --executeJS only. Parts after the first, with\n--offset, come from a local copy for 15 minutes and cost nothing.",
+		cost: "1 credit, 5 with --executeJS. Without a key: 50 requests and 100 credits a day\nper IP address, with --format and --executeJS only. Parts after the first,\nwith --offset, come from a local copy for 15 minutes and cost nothing.",
 		flags: append([]flagDoc{
 			{name: "max-tokens", value: "N", about: "print about N tokens of the page, cut at a line's end; stderr says which part it is and the next part's command"},
 			{name: "offset", value: "N", about: "start the part N tokens into the page"},
@@ -352,12 +352,13 @@ var commandDocs = map[string]commandDoc{
 			"string sitemap results JOB_ID --limit 100",
 		},
 		returns: []string{
-			"stdout   JSON: the quote (jobId, estimatedCostUsd, estimatedPages), the job, or",
-			"         its pages",
-			"exit     0 ok · 1 the crawl failed or was canceled · 2 bad input · 3 needs a key",
-			"         · 4 out of credit · 7 the wait stopped, and the crawl keeps running",
+			"stdout   JSON: the quote (jobId, estimatedCostUsd, estimatedPages), the job,",
+			"         or its pages",
+			"exit     0 ok · 1 the crawl failed or was canceled · 2 bad input",
+			"         · 3 needs a key · 4 out of credit · 7 the wait stopped, and the crawl",
+			"         keeps running",
 		},
-		cost: "submit quotes the crawl for nothing. approve, or submit --approve, starts it at\nthe quoted cost, which --budgetUsd caps.",
+		cost: "submit quotes the crawl for nothing. approve, or submit --approve, starts it\nat the quoted cost, which --budgetUsd caps.",
 		flags: []flagDoc{
 			{name: "approve", about: "approve the quote at once (submit only)"},
 			{name: "wait", about: "wait for the crawl to end: 90s at most under an agent"},
@@ -396,8 +397,8 @@ var commandDocs = map[string]commandDoc{
 			"string integrations run reddit post --post https://www.reddit.com/r/technology/comments/1xapaw7/ --maxPages 2",
 		},
 		returns: []string{
-			"stdout   list: the sites and actions, or the JSON catalog with --json. run: JSON,",
-			"         with the rows in data and any input that gave none in failures",
+			"stdout   list: the sites and actions, or the JSON catalog with --json. run:",
+			"         JSON, with the rows in data and any input that gave none in failures",
 			"exit     0 ok · 2 bad input · 3 needs a key · 4 out of credit · 6 the site or",
 			"         String failed · 7 timed out",
 		},
@@ -412,7 +413,7 @@ var commandDocs = map[string]commandDoc{
 		},
 	},
 	"init": {
-		summary: "install the string-cli skill for the coding agents on this machine",
+		summary: "install the string-cli skill for your coding agents",
 		usage: []string{
 			"string init [--agent NAME[,NAME...]] [--no-mcp] [--no-login] [--browser]",
 			"            [--device-name NAME]",
@@ -422,8 +423,10 @@ var commandDocs = map[string]commandDoc{
 			"string init --agent claude-code --no-login",
 		},
 		returns: []string{
-			"stdout   what it installed and where, then the sign-in when no key is set: a",
-			"         person at a terminal waits for it, anyone else gets the link and code",
+			"stdout   where it installed the skill: ~/.agents/skills, which most agents",
+			"         read, ~/.claude/skills when Claude Code is here, and its own for any",
+			"         other agent here. Then, with no key set, the sign-in: a person at a",
+			"         terminal waits for it, anyone else gets the link and code",
 			"exit     0 ok, whether or not the sign-in finishes · 2 bad input",
 		},
 		cost: "Free.",
@@ -485,8 +488,8 @@ var commandDocs = map[string]commandDoc{
 			{name: "poll", about: "wait for the sign-in started earlier and save the key: 90s at most under an agent, --timeout to change it"},
 			{name: "with-token", about: "read an API key from stdin, check it and save it"},
 			{name: "browser", about: "sign in on a String page, with no code; it works for a new account too"},
-			{name: "env-file", value: "PATH", about: "also write the key to PATH as its STRING_API_KEY line"},
-			{name: "device-name", value: "NAME", about: "the machine's name in the new key's name, up to 51 characters"},
+			{name: "env-file", value: "PATH", about: "also write the key to PATH as its STRING_API_KEY line, keeping the file's other lines; a new file is readable only by you"},
+			{name: "device-name", value: "NAME", about: "the machine's name in the new key's name, which your organization sees; by default the system and short hostname, as in Mac · work-laptop. Up to 51 characters"},
 			{name: "no-open", about: "never open a browser"},
 		},
 		more: keysDocs,
@@ -545,10 +548,10 @@ var commandDocs = map[string]commandDoc{
 			"stdout   that the trial key is saved. claim: the link and code for the person,",
 			"         then that a key on their account replaced the trial key. --json gives",
 			"         each as JSON",
-			"exit     0 ok · 2 bad input · 3 no trial keys here, or the claim expired · 7 the",
-			"         claim's wait stopped, and the code still works",
+			"exit     0 ok · 2 bad input · 3 no trial keys here, or the claim expired",
+			"         · 7 the claim's wait stopped, and the code still works",
 		},
-		cost: "Free: the trial key comes with a small balance.",
+		cost: "Free, after a few seconds' proof of work: the key comes with a small balance.",
 		flags: []flagDoc{
 			{name: "email", value: "ADDRESS", about: "who claims the agent onto their String account"},
 			{name: "no-wait", about: "print the link and code and exit; the default without a person at a terminal"},
@@ -598,8 +601,9 @@ var commandDocs = map[string]commandDoc{
 		},
 		examples: []string{"string update --check", "string update"},
 		returns: []string{
-			"stdout   the version it installed; for a copy from Homebrew, npm or Scoop, the",
-			"         command that updates it",
+			"stdout   the version it installed, once the release's signature and checksum",
+			"         check out; for a copy from Homebrew, npm or Scoop, the command that",
+			"         updates it",
 			"exit     0 ok · 1 the update failed",
 		},
 		cost: "Free.",
@@ -779,6 +783,41 @@ string help --json adds the flags, output and exit codes. One call is enough.
 Pages that curl or WebFetch can't read: string fetch URL. Big pages: -o FILE.
 
 `
+
+// help is the help for all of string: how to start without a key, a line for
+// each command from its page, and where the rest is, in at most 25 lines.
+// Each command's page has its details, and string help --all every command.
+var help = func() string {
+	var b strings.Builder
+	b.WriteString(`String Web Access CLI: web pages, search and crawls for agents and people
+
+string fetch and string search work without a key, within a daily allowance per
+IP address. Past it, and for request, sitemap, integrations run and balance, use
+string login, or set STRING_API_KEY from https://portal.usestring.ai/api-keys.
+
+Usage: string COMMAND [ARGS] [--FLAG VALUE ...], or string URL to fetch a page
+`)
+	var terms []termDoc
+	at := 0
+	for _, name := range commands {
+		page, ok := commandDocs[name]
+		if !ok {
+			continue
+		}
+		term := name
+		if len(page.leaves) == 1 {
+			term = strings.TrimSpace(name + " " + strings.Join(page.leaves[0].args, " "))
+		}
+		terms = append(terms, termDoc{term, page.summary})
+		at = max(at, len(term)+4)
+	}
+	b.WriteString(termLines(terms, at))
+	b.WriteString(`
+API fields are flags, spelled as in the API: --mainContentOnly --countryCode DE
+One command: string COMMAND --help. Every command on one page: string help --all
+`)
+	return b.String()
+}()
 
 // rootHelp is the help for all of string, which starts with a few lines for
 // agents under one.

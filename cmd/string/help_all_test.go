@@ -16,8 +16,8 @@ import (
 )
 
 // string help --all is one line for each command, then the flags every
-// command takes, the exit codes and a line for each topic, on a page an agent
-// reads in one call.
+// command takes and what each does, the exit codes and a line for each topic,
+// on a page an agent reads in one call.
 func TestHelpAllListsEveryCommandOnOnePage(t *testing.T) {
 	got := runOffline(t, "help", "--all")
 	if got.status != 0 || got.errors != "" || got.output != helpAll() {
@@ -32,9 +32,10 @@ func TestHelpAllListsEveryCommandOnOnePage(t *testing.T) {
 			t.Errorf("string help --all has no line for %s", named)
 		}
 	}
+	flat := strings.Join(strings.Fields(got.output), " ")
 	for _, f := range globalFlagDocs {
-		if !strings.Contains(got.output, f.spelled()) {
-			t.Errorf("string help --all doesn't name %s", f.spelled())
+		if !strings.Contains(flat, f.spelled()+" "+f.about) {
+			t.Errorf("string help --all doesn't say what %s does", f.spelled())
 		}
 	}
 	for _, e := range exitCodeDocs {
