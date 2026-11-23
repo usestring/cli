@@ -294,3 +294,13 @@ The first command of a new release also rewrites the skill wherever it is alread
 ## Project and releases
 
 [usestring/cli](https://github.com/usestring/cli) is the canonical upstream for the native CLI, npm client, source releases, issues, the Homebrew formula and the Scoop manifest. CLI maintainers own release publication, and the release workflow updates the formula and the manifest; see [releasing the CLI](docs/releasing.md).
+
+### Mutation testing
+
+`scripts/mutation-test.sh` runs [gremlins](https://github.com/go-gremlins/gremlins) (pinned to v0.6.0) on one package. It plants small faults and reports which ones no test catches. It is opt-in and report-only: CI does not run it, and it never fails on a low score.
+
+```bash
+scripts/mutation-test.sh ./internal/release [--out report.json] [--workers 2]
+```
+
+Score only code where a missed fault does real damage, such as release signature checks, credentials and the output contract other tools read. Read each `LIVED` mutant there: either add an assertion to an existing test that kills it, or record why it is equivalent. A surviving mutant anywhere else is not a reason to write a test.
