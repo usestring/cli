@@ -1,0 +1,5 @@
+#!/bin/sh
+
+if ! ./scripts/mutation-test.sh ./internal/release </dev/null; then
+  printf '%s\n' 'Release mutation testing did not complete. Continuing with the push.' >&2
+fi

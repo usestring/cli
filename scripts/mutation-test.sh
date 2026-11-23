@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Mutation-test Go packages with gremlins. Opt-in and report-only: nothing in CI runs it, and it
-# never fails on a low score.
+# Mutation-test Go packages with gremlins. Scores are for review and carry no pass threshold.
+# The local pre-push hook checks the release package.
 #
 # Usage:
 #   scripts/mutation-test.sh <package-path> [--out <report.json>] [--workers <n>]
