@@ -110,7 +110,14 @@ type flagDoc struct {
 	// about says what the flag does, in one line or sentence that the page
 	// wraps.
 	about string
+	// scope says which of the page's commands take it, as " (submit only)",
+	// for the page to add after about. help --json, which gives each command
+	// its own flags, leaves it out.
+	scope string
 }
+
+// said is what the page says the flag does.
+func (f flagDoc) said() string { return f.about + f.scope }
 
 // spelled is the flag as its page shows it.
 func (f flagDoc) spelled() string {
@@ -138,7 +145,7 @@ type termDoc struct{ term, about string }
 func flagLines(flags []flagDoc, at int) string {
 	terms := make([]termDoc, len(flags))
 	for i, f := range flags {
-		terms[i] = termDoc{f.spelled(), f.about}
+		terms[i] = termDoc{f.spelled(), f.said()}
 	}
 	return termLines(terms, at)
 }
@@ -360,12 +367,12 @@ var commandDocs = map[string]commandDoc{
 		},
 		cost: "submit quotes the crawl for nothing. approve, or submit --approve, starts it\nat the quoted cost, which --budgetUsd caps.",
 		flags: []flagDoc{
-			{name: "approve", about: "approve the quote at once (submit only)"},
+			{name: "approve", about: "approve the quote at once", scope: " (submit only)"},
 			{name: "wait", about: "wait for the crawl to end: 90s at most under an agent"},
-			{name: "limit", value: "N", about: "how many results or jobs to show, for results and list"},
-			{name: "offset", value: "N", about: "how many to skip first, for results and list"},
+			{name: "limit", value: "N", about: "how many results or jobs to show", scope: ", for results and list"},
+			{name: "offset", value: "N", about: "how many to skip first", scope: ", for results and list"},
 			{name: "output", short: "o", value: "FILE", about: "write the response to FILE instead of stdout"},
-			{name: "input", value: "FILE", about: "more request fields, from a JSON object in FILE or - for stdin (submit only)"},
+			{name: "input", value: "FILE", about: "more request fields, from a JSON object in FILE or - for stdin", scope: " (submit only)"},
 		},
 		fields: []flagDoc{
 			{name: "maxPages", value: "N", about: "pages to crawl, 1 to 10,000 (10 by default)"},

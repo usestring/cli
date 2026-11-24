@@ -179,7 +179,7 @@ func suggestions(words []string) (found []candidate, files bool) {
 		switch {
 		case !ok:
 		case f.value == "=false":
-			found = []candidate{{name + "=false", f.about}}
+			found = []candidate{{name + "=false", f.said()}}
 		case takesValue(f):
 			found, files = valuesOf(f, value)
 			for i := range found {
@@ -380,9 +380,9 @@ func (line typedLine) flagCandidates(typed string) []candidate {
 		if f.value == "=false" {
 			value += "=false"
 		}
-		found = append(found, candidate{value, f.about})
+		found = append(found, candidate{value, f.said()})
 		if typed == "-" && f.short != "" {
-			found = append(found, candidate{"-" + f.short, f.about})
+			found = append(found, candidate{"-" + f.short, f.said()})
 		}
 	}
 	if line.command == "" {

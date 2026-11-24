@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -87,10 +88,14 @@ func describedBy(t *testing.T, list ...string) helpSchema {
 // exits, in under 8k tokens for the whole CLI.
 func TestHelpJSONDescribesEveryCommand(t *testing.T) {
 	got := runOffline(t, "help", "--json")
-	// 8k tokens, at the little over 3 bytes a token that JSON like this
-	// averages.
-	if len(got.output) >= 24500 {
-		t.Errorf("string help --json is %d bytes, want under 24,500 (8k tokens)", len(got.output))
+	// 8k tokens for Claude, which Claude Code agents read it with. Claude
+	// counted 6,970 tokens in its 16,894 bytes, 2.42 bytes a token, where
+	// tiktoken's o200k_base and cl100k_base count 4,359 and 4,237. The count
+	// is the rise in a session's input tokens from the request that ran cat
+	// on the file to the next one, less the first's output and about 5
+	// tokens of wrapper. 19,300 bytes is 8k tokens at that density.
+	if len(got.output) >= 19300 {
+		t.Errorf("string help --json is %d bytes, want under 19,300 (8k tokens)", len(got.output))
 	}
 	described := describedBy(t, "help", "--json")
 	exitCodes := map[int]bool{}
@@ -108,12 +113,15 @@ func TestHelpJSONDescribesEveryCommand(t *testing.T) {
 			return strings.HasPrefix(line+" ", "string "+path+" ") && !longer && !strings.Contains(line, "   ")
 		}
 		for line := range strings.SplitSeq(c.Usage, "\n") {
-			if !runs(line) {
+			if c.Usage != "" && !runs(line) {
 				t.Errorf("%s: usage %q", path, line)
 			}
 		}
-		if len(c.Examples) == 0 || slices.ContainsFunc(c.Examples, func(example string) bool { return !runs(example) }) {
-			t.Errorf("%s: examples %q", path, c.Examples)
+		// The examples are in the command's own help, not the whole CLI's.
+		alone := describedBy(t, append([]string{"help", "--json"}, c.Path...)...)
+		mine := alone.Commands[slices.IndexFunc(alone.Commands, func(o commandSchema) bool { return slices.Equal(o.Path, c.Path) })]
+		if len(c.Examples) > 0 || len(mine.Examples) == 0 || slices.ContainsFunc(mine.Examples, func(example string) bool { return !runs(example) }) {
+			t.Errorf("%s: examples %q, and alone %q", path, c.Examples, mine.Examples)
 		}
 		if c.Summary == "" || !slices.Contains([]string{"read", "spend", "write", "local"}, c.Effects) || !slices.Contains([]string{"text/markdown", "application/json", "text/plain"}, c.Returns.Stdout) {
 			t.Errorf("%s: summary %q, effects %q, stdout %q", path, c.Summary, c.Effects, c.Returns.Stdout)
@@ -122,9 +130,18 @@ func TestHelpJSONDescribesEveryCommand(t *testing.T) {
 		if !slices.IsSorted(c.ExitCodes) || len(slices.Compact(slices.Clone(c.ExitCodes))) != len(c.ExitCodes) || !slices.Contains(c.ExitCodes, 0) || !slices.Contains(c.ExitCodes, exitFailure) || !slices.Contains(c.ExitCodes, exitUsage) || slices.Contains(c.ExitCodes, exitInterrupted) || slices.ContainsFunc(c.ExitCodes, func(code int) bool { return !exitCodes[code] }) {
 			t.Errorf("%s exits %v", path, c.ExitCodes)
 		}
-		for _, f := range c.Flags {
+		for _, f := range flagsOf(described, c) {
 			if f.Name == "" || f.Type == "" || f.Description == "" || slices.ContainsFunc(globalFlagDocs, func(g flagDoc) bool { return g.name == f.Name }) {
 				t.Errorf("%s: flag %+v", path, f)
+			}
+		}
+		// A flag said once in sharedFlags is one that more than one command
+		// takes, and a command says its own flags itself.
+		for _, name := range c.SharedFlags {
+			if !slices.ContainsFunc(described.Commands, func(o commandSchema) bool {
+				return !slices.Equal(o.Path, c.Path) && slices.Contains(o.SharedFlags, name)
+			}) || slices.ContainsFunc(c.Flags, func(f flagSchema) bool { return f.Name == name }) {
+				t.Errorf("%s: shared flag %s", path, name)
 			}
 		}
 		if _, ok := described.APIFields[c.APIFields]; c.APIFields != "" && !ok {
@@ -137,9 +154,15 @@ func TestHelpJSONDescribesEveryCommand(t *testing.T) {
 	for name, page := range commandDocs {
 		var usages strings.Builder
 		var aliases []string
+		for _, g := range described.GlobalFlags {
+			usages.WriteString("--" + g.Name + "\n")
+		}
 		for _, c := range described.Commands {
 			if c.Path[0] == name {
 				usages.WriteString(c.Usage + "\n")
+				for _, f := range flagsOf(described, c) {
+					usages.WriteString("--" + f.Name + "\n")
+				}
 				for _, alias := range c.Aliases {
 					aliases = append(aliases, strings.Join(alias, " "))
 				}
@@ -157,14 +180,15 @@ func TestHelpJSONDescribesEveryCommand(t *testing.T) {
 			}
 			for _, flag := range regexp.MustCompile(`--[a-zA-Z-]+`).FindAllString(line, -1) {
 				if !regexp.MustCompile(regexp.QuoteMeta(flag) + `\b`).MatchString(usages.String()) {
-					t.Errorf("the %s page's usage names %s, which help --json's usage leaves out", name, flag)
+					t.Errorf("the %s page's usage names %s, which help --json's usage and flags leave out", name, flag)
 				}
 			}
 		}
 	}
 	// Each set of request fields is the one the command sends, the keyless
 	// fields are those the keyless tier takes, and a switch that is on unless
-	// turned off says so.
+	// turned off says so. What each field does is in the help of a command
+	// that sends it.
 	sets := map[string]map[string]kind{"fetch": fetchFields, "search": searchFields, "sitemap": sitemapFields}
 	if keys := slices.Sorted(maps.Keys(described.APIFields)); !slices.Equal(keys, slices.Sorted(maps.Keys(sets))) {
 		t.Errorf("apiFields has %v", keys)
@@ -175,8 +199,14 @@ func TestHelpJSONDescribesEveryCommand(t *testing.T) {
 			fields = append(fields, f.Name)
 			i := slices.IndexFunc(commandDocs[name].fields, func(doc flagDoc) bool { return doc.name == f.Name })
 			onUnlessOff := i >= 0 && commandDocs[name].fields[i].value == "=false"
-			if f.Type != kindTypes[sets[name][f.Name]] || f.Description == "" || (f.Default != nil) != onUnlessOff || onUnlessOff && !*f.Default || strings.HasPrefix(f.Value, "=") {
+			if f.Type != kindTypes[sets[name][f.Name]] || f.Description != "" || (f.Value == "=false") != onUnlessOff {
 				t.Errorf("%s field %+v", name, f)
+			}
+		}
+		alone := describedBy(t, "help", "--json", map[string]string{"fetch": "fetch", "search": "search", "sitemap": "sitemap"}[name])
+		for _, f := range alone.APIFields[name].Fields {
+			if f.Description == "" {
+				t.Errorf("help --json for %s: field %+v", name, f)
 			}
 		}
 		if slices.Sort(fields); !slices.Equal(fields, slices.Sorted(maps.Keys(sets[name]))) {
@@ -207,6 +237,53 @@ func TestHelpJSONDescribesEveryCommand(t *testing.T) {
 	if _, ok := described.Schemas["Error"]; !ok {
 		t.Errorf("schemas has no Error")
 	}
+}
+
+// What string help --json leaves out it says elsewhere: each command's
+// flags, its own and the shared ones it names, are those of its own help; a
+// usage goes only when the path, the args and the flags say it all; and the
+// sitemap page and completion still say which of its commands take a flag.
+func TestHelpJSONLeavesOutOnlyWhatItSaysElsewhere(t *testing.T) {
+	described := describedBy(t, "help", "--json")
+	named := func(path string) commandSchema {
+		return described.Commands[slices.IndexFunc(described.Commands, func(c commandSchema) bool { return strings.Join(c.Path, " ") == path })]
+	}
+	byName := func(a, b flagSchema) int { return strings.Compare(a.Name, b.Name) }
+	for _, l := range leaves {
+		got, want := flagsOf(described, named(l.path)), schemaOf(l).Flags
+		slices.SortFunc(got, byName)
+		slices.SortFunc(want, byName)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: flags %+v, want %+v", l.path, got, want)
+		}
+	}
+	if _, ok := described.SharedFlags["input"]; !ok {
+		t.Errorf("sharedFlags has no input: %v", described.SharedFlags)
+	}
+	if !strings.Contains(named("request").Usage, "--body TEXT | --body-file FILE") || !strings.Contains(named("login").Usage, "--no-wait | --poll | --with-token") || named("fetch").Usage != "" || named("sitemap approve").Usage != "" {
+		t.Errorf("usage: request %q, login %q, fetch %q, sitemap approve %q", named("request").Usage, named("login").Usage, named("fetch").Usage, named("sitemap approve").Usage)
+	}
+	if site, url := named("integrations list").Args, named("fetch").Args; len(site) != 1 || !site[0].Optional || len(url) != 1 || url[0].Optional {
+		t.Errorf("args: integrations list %+v, fetch %+v", site, url)
+	}
+	if page := helpFor("sitemap"); !strings.Contains(page, "approve the quote at once (submit only)") || !strings.Contains(page, "how many to skip first, for results and list") {
+		t.Errorf("the sitemap page:\n%s", page)
+	}
+	if got := runOffline(t, "__complete", "fish", "sitemap", "--app"); got.output != "--approve\tapprove the quote at once (submit only)\n" {
+		t.Errorf("__complete fish sitemap --app: %q", got.output)
+	}
+}
+
+// flagsOf are the flags that help --json gives c: its own, and the shared
+// flags it names, with their names.
+func flagsOf(described helpSchema, c commandSchema) []flagSchema {
+	flags := slices.Clone(c.Flags)
+	for _, name := range c.SharedFlags {
+		f := described.SharedFlags[name]
+		f.Name = name
+		flags = append(flags, f)
+	}
+	return flags
 }
 
 // unreachable is a network where every request fails.
@@ -329,11 +406,11 @@ func TestEveryDocumentedFlagParses(t *testing.T) {
 		}
 		line := slices.Clone(c.Path)
 		for _, arg := range c.Args {
-			if arg.Required {
+			if !arg.Optional {
 				line = append(line, samples[strings.ToUpper(arg.Name)])
 			}
 		}
-		flags := slices.Clone(c.Flags)
+		flags := flagsOf(described, c)
 		if c.APIFields != "" {
 			flags = append(flags, described.APIFields[c.APIFields].Fields...)
 		}
@@ -341,7 +418,7 @@ func TestEveryDocumentedFlagParses(t *testing.T) {
 			for _, spelling := range slices.Concat([]string{f.Name}, spelledEachWay(f.Name), f.Aliases) {
 				list := append(slices.Clone(line), "--"+spelling)
 				switch {
-				case f.Default != nil:
+				case f.Value == "=false":
 					list[len(list)-1] += "=false"
 				case valueOf[f.Type] != "":
 					list = append(list, valueOf[f.Type])
