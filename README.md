@@ -151,6 +151,8 @@ string sitemap status JOB_ID --fields status,pagesProcessed
 string integrations run reddit post --post URL --fields title,comments.score
 ```
 
+`string search QUERY --limit N` prints only the first N results. `string` cuts them once the answer comes, so `--limit` works without a key and costs nothing; `--searchCount` and `--page` still decide what the API returns and bills.
+
 `string help --json` names each command's list in `returns.records`. A name that no record has is left out, and stderr warns about it. When none of the names is there, the command prints nothing, exits 2 and lists the fields there are. A command that spends or writes, such as `integrations run`, has done so by then, so it prints its answer whole instead and says so on stderr: there is no need to run it again. `--fields` needs JSON on stdout, so before anything is sent it refuses a command that would print text: `fetch` needs `--format json`, and `status` or `login` need `--json`. Help is printed as it is.
 
 A sitemap crawl starts with a quote, which costs nothing. `--approve` starts the crawl at the quoted cost, and `--wait` waits for it to finish:

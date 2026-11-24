@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -439,10 +438,6 @@ func encodeArray(items []json.RawMessage) []byte {
 	return append(out, ']')
 }
 
-// searchRecords are the lists that search's answer holds its records in for
-// each searchType that doesn't answer in results.
-var searchRecords = map[string]string{"images": "images", "places": "places", "shopping": "products"}
-
 // allows is nil when what list runs prints JSON on stdout, which --fields
 // needs, and otherwise the failure that says so before anything is sent.
 // fetch, request and search are left to allowsOp, since their request's
@@ -485,10 +480,29 @@ func (f *fieldFilter) allowsOp(op *operation) error {
 		return notJSON("string request --format "+format+" prints no JSON", withSwitches(op.line, []string{"--format", "json"}))
 	case op.command == "search" && format == "raw":
 		return notJSON("string search --format raw prints the results page as HTML", withSwitches(op.line, []string{"--format", "structured"}))
-	case op.command == "search":
-		f.records = cmp.Or(searchRecords[jsString(field(op.body, "searchType"))], "results")
+	case op.records != "":
+		f.records = op.records
 	}
 	return nil
+}
+
+// firstRecords is data, a JSON object, with only the first n records of its
+// list named key, or data as it came when the list has no more than n.
+func firstRecords(data []byte, key string, n int) []byte {
+	fields, ok := members(data)
+	if !ok {
+		return data
+	}
+	at := slices.IndexFunc(fields, func(m member) bool { return m.key == key })
+	if at < 0 {
+		return data
+	}
+	items, ok := elements(fields[at].value)
+	if !ok || len(items) <= n {
+		return data
+	}
+	fields[at].value = encodeArray(items[:n])
+	return append(encodeObject(fields), '\n')
 }
 
 // notJSON is the failure for --fields on a command that prints no JSON,

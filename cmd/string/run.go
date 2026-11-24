@@ -142,6 +142,11 @@ type operation struct {
 	// contentType is the answer's Content-Type, the site's own for --format
 	// raw.
 	contentType string
+	// records is the key of the list in the answer that holds its records,
+	// such as search's results, and limit is search's --limit: how many of
+	// them to print, or 0 for all.
+	records string
+	limit   int
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -792,12 +797,16 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 // lists with each field.
 var searchAliases = map[string]string{"count": "searchCount"}
 
+// searchRecords are the lists that search's answer holds its records in for
+// each searchType that doesn't answer in results.
+var searchRecords = map[string]string{"images": "images", "places": "places", "shopping": "products"}
+
 func searchCommand(list []string, stdin io.Reader) (*operation, error) {
-	parsed, err := parse(list, spec{options: []string{"output"}, fields: searchFields, aliases: searchAliases})
+	parsed, err := parse(list, spec{options: []string{"output", "limit"}, fields: searchFields, aliases: searchAliases})
 	if err != nil || parsed.help {
 		return nil, err
 	}
-	if err := expectPositionals(parsed.positionals, 1, "string search QUERY [--FIELD VALUE ...] [--input FILE] [--output FILE]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 1, "string search QUERY [--FIELD VALUE ...] [--limit N] [--input FILE] [--output FILE]"); err != nil {
 		return nil, err
 	}
 	body, err := requestFields(parsed, stdin)
@@ -805,7 +814,21 @@ func searchCommand(list []string, stdin io.Reader) (*operation, error) {
 		return nil, err
 	}
 	body["query"] = parsed.positionals[0]
-	return &operation{method: "POST", path: "/search", body: body, output: parsed.values["output"], flagged: flagged(parsed)}, nil
+	op := &operation{method: "POST", path: "/search", body: body, output: parsed.values["output"], flagged: flagged(parsed),
+		records: cmp.Or(searchRecords[jsString(field(body, "searchType"))], "results")}
+	// --limit cuts the results here, after the API answers: it sends nothing,
+	// so it works without a key and costs nothing.
+	if limit, ok := parsed.value("limit"); ok {
+		n, err := boundedInteger(limit, "--limit", 1, "positive")
+		if err != nil {
+			return nil, err
+		}
+		if jsString(field(body, "format")) == "raw" {
+			return nil, errors.New("--limit cuts the results, and --format raw prints the results page as HTML; use one or the other")
+		}
+		op.limit = int(n)
+	}
+	return op, nil
 }
 
 func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
@@ -1341,6 +1364,9 @@ func (c apiClient) emit(op *operation, data []byte) error {
 		}
 		fmt.Fprint(c.rt.stderr, pageFooter(op.line, len(whole), op.maxTokens, start, end, next, op.fromCopy))
 		return nil
+	}
+	if op.limit > 0 {
+		data = firstRecords(data, op.records, op.limit)
 	}
 	// --fields keeps only the fields it names, so a size or a saved file is
 	// that of what it keeps. When none of them is there, the answer of a

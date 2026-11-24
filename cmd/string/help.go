@@ -309,6 +309,7 @@ var commandDocs = map[string]commandDoc{
 		usage:   []string{"string search QUERY [flags]"},
 		examples: []string{
 			`string search "postgres vacuum tuning"`,
+			`string search "postgres vacuum tuning" --limit 3 --fields title,url`,
 			`string search "coffee grinders" --dateRange week --searchCount 20`,
 			`string search "ramen" --searchType places --location Tokyo`,
 		},
@@ -316,8 +317,10 @@ var commandDocs = map[string]commandDoc{
 			"stdout   the results as JSON: results (title, url, snippet), entity, places,",
 			"         zeroResults",
 		}, exitsOfARequest...),
-		cost:  "Each results page, about ten results, is billed as one search. Without a key a\nsearch costs 5 of the 100 credits a day per IP address, and takes --language,\n--dateRange, --sortBy, --safeSearch, --autocorrect and --verbatim only.",
-		flags: outputFlags,
+		cost: "Each results page, about ten results, is billed as one search. Without a key a\nsearch costs 5 of the 100 credits a day per IP address, and takes --language,\n--dateRange, --sortBy, --safeSearch, --autocorrect and --verbatim only.",
+		flags: append([]flagDoc{
+			{name: "limit", value: "N", about: "print only the first N results; string cuts them, so it works without a key and costs nothing"},
+		}, outputFlags...),
 		fields: []flagDoc{
 			{name: "engine", value: "NAME", about: "google (the default), duckduckgo, brave or google_ai_mode"},
 			{name: "searchType", value: "TYPE", about: "web, images, videos, shopping, books, places or forums"},
@@ -340,7 +343,7 @@ var commandDocs = map[string]commandDoc{
 		},
 		more: "https://docs.usestring.ai/api-reference/search",
 		leaves: []leaf{
-			{path: "search", args: []string{"QUERY"}, line: "web results as JSON; --searchCount N", costs: "1 search, keyless ok", keyless: true, effects: "read", exits: requestExits, stdout: "application/json", json: true, records: "results"},
+			{path: "search", args: []string{"QUERY"}, line: "web results as JSON; --limit N --fields A,B", costs: "1 search, keyless ok", keyless: true, effects: "read", exits: requestExits, stdout: "application/json", json: true, records: "results"},
 		},
 	},
 	"sitemap": {
