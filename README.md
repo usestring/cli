@@ -246,6 +246,19 @@ A copy that the install script installed checks for a new release once a day and
 
 `STRING_AUTO_UPDATE=0` (or `false`, `off`, `no`) turns off everything `string` does by itself: the daily check, the background install, the notices and the [skill refresh](#agent-skills). `string update` still works when you run it, and `string init` refreshes the skill by hand. A `CI` variable turns them off too, unless it is `false` or `0`. The Docker image sets `STRING_AUTO_UPDATE=0`, since every run in a fresh container would otherwise look like the first of the day.
 
+## Shell completion
+
+```bash
+string completion bash >> ~/.bashrc
+string completion zsh >> ~/.zshrc                                  # after compinit runs
+command string completion fish > ~/.config/fish/conf.d/string-cli.fish
+string completion powershell | Out-String | Invoke-Expression      # a line for $PROFILE
+```
+
+Tab then completes commands, subcommands and flags, the values a flag names, such as `--format json` or `init --agent claude-code,cursor`, and file names after `-o`, `--input`, `--body-file` and `--env-file`. A flag completes in the spelling you started it in, so `--main-c` becomes `--main-content-only`. On each Tab the script asks the `string` you run what can come next, so it completes what that version has, and needs no new script when `string` updates. A Tab sends no request and starts no update check. zsh needs its completion system on, as `autoload -Uz compinit && compinit` turns it on, and the script also works saved as `_string` in a directory on `$fpath`.
+
+fish has a builtin of its own named `string`, which runs before any program of that name, so in fish run this CLI as `command string`. Tab completes it there, and at the first word it lists the builtin's subcommands beside the CLI's commands.
+
 ## Coding agents
 
 `string` works out whether a coding agent runs it from the variables the agent sets for the commands it runs: `AI_AGENT`, or Claude Code's, Codex's, Gemini CLI's, Cursor's, OpenCode's, Goose's, Amp's, Cline's, GitHub Copilot's or Warp's own. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` count only when stdin is not a terminal, since IDE terminals set them for people too, and `AGENT` comes last. `string` never guesses from the terminal type or from the processes around it. `STRING_AGENT=NAME` names the agent instead, and `STRING_AGENT=human` says a person runs `string`.
