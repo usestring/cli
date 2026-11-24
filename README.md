@@ -310,7 +310,15 @@ The first command of a new release also rewrites the skill wherever it is alread
 
 ### Mutation testing
 
-`scripts/mutation-test.sh` runs [gremlins](https://github.com/go-gremlins/gremlins) (pinned to v0.6.0) on one package. It plants small faults and reports which ones no test catches. It is opt-in and report-only: CI does not run it, and it never fails on a low score.
+`scripts/mutation-test.sh` runs [gremlins](https://github.com/go-gremlins/gremlins) (pinned to v0.6.0) on one package. It plants small faults and reports which ones no test catches. The report has no pass threshold.
+
+To run the release package check before every local push, enable the tracked Git hook once per clone.
+
+```bash
+git config --local core.hooksPath .githooks
+```
+
+If you already use custom hooks, call `scripts/mutation-test.sh ./internal/release` from your existing pre-push hook. The tracked hook prints the report or a warning and lets the push proceed. To check any package manually, run the script directly.
 
 ```bash
 scripts/mutation-test.sh ./internal/release [--out report.json] [--workers 2]
