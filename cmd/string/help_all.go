@@ -136,7 +136,8 @@ func helpAll() string {
 		topics[i] = termDoc{"string help " + name, about}
 	}
 	b.WriteString(termLines(topics, 27))
-	b.WriteString("\nOne command: string COMMAND --help. All of it as JSON: string help --json\n")
+	b.WriteString("\nAPI fields are flags, spelled as in the API: --mainContentOnly --countryCode DE\n")
+	b.WriteString("One command: string COMMAND --help. All of it as JSON: string help --json\n")
 	return b.String()
 }
 

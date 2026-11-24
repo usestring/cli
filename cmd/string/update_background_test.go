@@ -142,7 +142,8 @@ func TestUpdateTriggerStartsNoCheckItCannotRecord(t *testing.T) {
 
 // Install scripts, package managers' tests and the updater itself run
 // --version on a binary that may not be installed yet, and nothing may follow
-// that or any other look at the binary.
+// that or any other look at the binary. Nor may anything follow what a shell
+// runs as it starts or on each Tab.
 func TestUpdateTriggerLeavesProbesAlone(t *testing.T) {
 	setVersion(t, "0.3.0")
 	_, public := testKey(t)
@@ -157,7 +158,7 @@ func TestUpdateTriggerLeavesProbesAlone(t *testing.T) {
 		return c
 	}
 	// The global switches can come before the command, and it still counts.
-	for _, list := range [][]string{{}, {"--version"}, {"--json", "--version"}, {"-v"}, {"version"}, {"--json", "version"}, {"--help"}, {"-h"}, {"help"}, {"help", "fetch"}, {"search", "--help"}, {"fetch", "https://example.com", "-h"}, {"sitemap"}, {"integrations", "help"}, {"update"}, {"update", "--check"}, {"--no-open", "update"}, {"-y", "update"}, {"--timeout", "90s", "update"}} {
+	for _, list := range [][]string{{}, {"--version"}, {"--json", "--version"}, {"-v"}, {"version"}, {"--json", "version"}, {"--help"}, {"-h"}, {"help"}, {"help", "fetch"}, {"search", "--help"}, {"fetch", "https://example.com", "-h"}, {"sitemap"}, {"integrations", "help"}, {"update"}, {"update", "--check"}, {"--no-open", "update"}, {"-y", "update"}, {"--timeout", "90s", "update"}, {"completion", "zsh"}, {"__complete", "bash", "fe"}} {
 		c := newCopy()
 		before, _ := os.ReadFile(c.file("update.json"))
 		got := c.run(list...)

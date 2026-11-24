@@ -463,10 +463,30 @@ var commandDocs = map[string]commandDoc{
 			{path: "skill", line: "the guide for coding agents; --path", costs: "free", keyless: true, effects: "local", exits: basicExits, stdout: "text/markdown"},
 		},
 	},
+	"completion": {
+		summary: "print a script that completes string's commands and flags",
+		usage:   []string{"string completion bash|zsh|fish|powershell"},
+		examples: []string{
+			"string completion bash >> ~/.bashrc",
+			"string completion zsh >> ~/.zshrc",
+			"string completion fish > ~/.config/fish/conf.d/string-cli.fish",
+			"string completion powershell | Out-String | Invoke-Expression   in $PROFILE",
+		},
+		returns: []string{
+			"stdout   the script for that shell. On each Tab it asks string what can come",
+			"         next, so it completes what the string you run has",
+			"exit     0 ok · 2 bad input",
+		},
+		cost: "Free, and it sends no request, nor does a Tab.",
+		more: "https://github.com/usestring/cli#shell-completion",
+		leaves: []leaf{
+			{path: "completion", args: []string{"SHELL"}, line: "Tab completion: bash, zsh, fish, PowerShell", costs: "free", keyless: true, effects: "local", exits: basicExits, stdout: "text/plain"},
+		},
+	},
 	"login": {
 		summary: "sign in through your browser and save a new API key",
 		usage: []string{
-			"string login [--no-wait | --poll | --with-token] [--browser] [--env-file PATH]",
+			"string login [--no-wait | --poll | --with-token] [--browser] [--env-file FILE]",
 			"             [--device-name NAME]",
 		},
 		examples: []string{
@@ -488,7 +508,7 @@ var commandDocs = map[string]commandDoc{
 			{name: "poll", about: "wait for the sign-in started earlier and save the key: 90s at most under an agent, --timeout to change it"},
 			{name: "with-token", about: "read an API key from stdin, check it and save it"},
 			{name: "browser", about: "sign in on a String page, with no code; it works for a new account too"},
-			{name: "env-file", value: "PATH", about: "also write the key to PATH as its STRING_API_KEY line, keeping the file's other lines; a new file is readable only by you"},
+			{name: "env-file", value: "FILE", about: "also write the key to FILE as its STRING_API_KEY line, keeping the file's other lines; a new file is readable only by you"},
 			{name: "device-name", value: "NAME", about: "the machine's name in the new key's name, which your organization sees; by default the system and short hostname, as in Mac · work-laptop. Up to 51 characters"},
 			{name: "no-open", about: "never open a browser"},
 		},
@@ -813,7 +833,6 @@ Usage: string COMMAND [ARGS] [--FLAG VALUE ...], or string URL to fetch a page
 	}
 	b.WriteString(termLines(terms, at))
 	b.WriteString(`
-API fields are flags, spelled as in the API: --mainContentOnly --countryCode DE
 One command: string COMMAND --help. Every command on one page: string help --all
 `)
 	return b.String()

@@ -61,9 +61,11 @@ func spawnDetached(path string) error {
 // probeOrUpdate reports whether the command only prints the version or help,
 // or is string update itself. Install scripts, package managers' tests and
 // the updater run --version to look at a binary that may not be installed
-// yet, so nothing may follow it.
+// yet, so nothing may follow it. Shells run string completion as they start
+// and string __complete on each Tab, where a notice or a check would be in
+// the way.
 func probeOrUpdate(list []string) bool {
-	if len(list) == 0 || slices.Contains([]string{"", "--help", "-h", "help", "--version", "-v", "version", "update"}, list[0]) {
+	if len(list) == 0 || slices.Contains([]string{"", "--help", "-h", "help", "--version", "-v", "version", "update", "completion", "__complete"}, list[0]) {
 		return true
 	}
 	options := list
