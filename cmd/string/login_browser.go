@@ -72,7 +72,9 @@ func startBrowserSignIn(rt runtime, wait bool, envFile string) (pendingLogin, er
 	link := portalURL + "/agent-auth?" + url.Values{"code_challenge": {codeChallenge(pending.CodeVerifier)}, "source": {"cli"}}.Encode() + "#session_id=" + pending.SessionID
 	const open = "Open this link, sign in to String or create an account, and click Authorize:\n"
 	var shown []byte
-	poll := rt.suggested("login", "--poll")
+	// The poll prints the key it saves, not this link, so it leaves out
+	// --fields: see carried.
+	poll := commandLine(withSwitches([]string{"login", "--poll"}, carried(rt.switches)))
 	switch {
 	case rt.json:
 		var encoded bytes.Buffer

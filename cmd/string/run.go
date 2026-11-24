@@ -71,6 +71,9 @@ type runtime struct {
 	// switches are the global switches as given, such as --json, which a
 	// command string suggests repeats.
 	switches []string
+	// fields is --fields when it was given, which stands in for stdout and
+	// keeps only the fields it names of the JSON printed there.
+	fields *fieldFilter
 }
 
 func (rt runtime) binary() (string, error) {
@@ -966,6 +969,8 @@ type globalSwitches struct {
 	hasTimeout bool   // --timeout
 	timeout    string // --timeout's value
 	errors     string // --errors's value: json or text
+	hasFields  bool   // --fields
+	fields     string // --fields's value
 	quiet      bool   // -q or --quiet
 	// given are the switches as they were given, in order, which a command
 	// string suggests repeats.
@@ -979,7 +984,7 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 	kept := make([]string, 0, len(list))
 	for i := 0; i < len(list); i++ {
 		arg, from := list[i], i
-		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout", "--errors", "--quiet"}); ok {
+		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout", "--errors", "--fields", "--quiet"}); ok {
 			arg = global
 		}
 		switch {
@@ -1015,6 +1020,15 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 			}
 		case strings.HasPrefix(arg, "--errors="):
 			found.errors = strings.TrimPrefix(arg, "--errors=")
+		case arg == "--fields":
+			// Its value always follows, as --timeout's does.
+			found.hasFields, found.fields = true, ""
+			if i+1 < len(list) {
+				i++
+				found.fields = list[i]
+			}
+		case strings.HasPrefix(arg, "--fields="):
+			found.hasFields, found.fields = true, strings.TrimPrefix(arg, "--fields=")
 		default:
 			kept = append(kept, arg)
 			continue
@@ -1037,8 +1051,8 @@ func withSwitches(list, switches []string) []string {
 
 // suggested is the command string for args with the global switches given,
 // put back as withSwitches puts them: a command that carries this one on,
-// such as login --poll after login --no-wait, so that it runs as this one
-// did.
+// such as sitemap status JOB --wait after a wait stops, so that it runs as
+// this one did. One that prints other JSON takes carried's switches instead.
 func (rt runtime) suggested(args ...string) string {
 	return commandLine(withSwitches(args, rt.switches))
 }
@@ -1068,10 +1082,28 @@ func run(list []string, rt runtime) int {
 		}
 		rt.timeout = &limit
 	}
-	if err := execute(list, rt); err != nil {
+	if global.hasFields {
+		paths, err := parseFields(global.fields)
+		if err != nil {
+			return report(rt.stderr, usage(err), jsonErrors)
+		}
+		rt.fields = newFieldFilter(paths, rt.stdout)
+		rt.stdout = rt.fields
+	}
+	err := execute(list, rt)
+	if err == nil && rt.fields != nil {
+		err = rt.fields.end(rt.stderr, rt.quiet)
+	}
+	if err != nil {
 		return report(rt.stderr, err, jsonErrors)
 	}
 	return 0
+}
+
+// asksHelp says that list asks for help, which --fields leaves as it is
+// unless --json makes it JSON.
+func asksHelp(list []string) bool {
+	return len(list) == 0 || slices.Contains([]string{"", "--help", "help"}, list[0]) || slices.Contains(beforeDashes(list), "--help")
 }
 
 func execute(list []string, rt runtime) error {
@@ -1079,6 +1111,11 @@ func execute(list []string, rt runtime) error {
 	// --help before a command asks for that command's help.
 	if len(list) > 1 && list[0] == "--help" && !strings.HasPrefix(list[1], "-") {
 		list = append(slices.Clone(list[1:]), "--help")
+	}
+	if rt.fields != nil && !asksHelp(list) {
+		if err := rt.fields.allows(list, rt); err != nil {
+			return err
+		}
 	}
 	if len(list) == 0 || slices.Contains([]string{"", "--help"}, list[0]) {
 		if rt.json {
@@ -1152,6 +1189,11 @@ func execute(list []string, rt runtime) error {
 		return write(rt.stdout, []byte(helpFor(list[0])))
 	}
 	op.command, op.line = list[0], withSwitches(list, rt.switches)
+	if rt.fields != nil {
+		if err := rt.fields.allowsOp(op); err != nil {
+			return err
+		}
+	}
 	if op.output != "" && op.output != "-" {
 		if err := checkOutput(op.output); err != nil {
 			return err
@@ -1300,6 +1342,20 @@ func (c apiClient) emit(op *operation, data []byte) error {
 		fmt.Fprint(c.rt.stderr, pageFooter(op.line, len(whole), op.maxTokens, start, end, next, op.fromCopy))
 		return nil
 	}
+	// --fields keeps only the fields it names, so a size or a saved file is
+	// that of what it keeps. When none of them is there, the answer of a
+	// command that changed something stays whole.
+	stdout := c.rt.stdout
+	if f := c.rt.fields; f != nil && json.Valid(data) {
+		chosen := append(f.choose(data), '\n')
+		stdout = f.out
+		switch {
+		case !f.missedAll():
+			data = chosen
+		case !f.changes:
+			return f.missed()
+		}
+	}
 	if person {
 		data = []byte(forTerminal(string(data)))
 	}
@@ -1309,7 +1365,7 @@ func (c apiClient) emit(op *operation, data []byte) error {
 		if fetched && len(data) > largeBody && !c.rt.quiet && !(c.rt.exec.stdoutTTY && c.rt.exec.agent == "") {
 			fmt.Fprint(c.rt.stderr, sizeNotice(c.rt, jsString(op.body["url"]), len(data), op.line))
 		}
-		return write(c.rt.stdout, data)
+		return write(stdout, data)
 	}
 	if err := os.WriteFile(op.output, data, 0o644); err != nil {
 		return err

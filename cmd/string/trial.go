@@ -306,6 +306,9 @@ func loadTrialRegistration(env func(string) (string, bool)) (string, trialRegist
 // startClaim asks the portal for a code that the person at email enters on its
 // claim page, shows them both, and records the claim for --poll.
 func startClaim(rt runtime, registrationFile string, registration trialRegistration, email string, wait bool) (trialRegistration, error) {
+	// The poll prints the key it collects, not a claim's link, so it leaves
+	// out --fields: see carried.
+	poll := commandLine(withSwitches([]string{"trial", "claim", "--poll"}, carried(rt.switches)))
 	var answer struct {
 		portalRefusal
 		ClaimAttempt struct {
@@ -325,7 +328,7 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 	if status != http.StatusOK {
 		f := trialFailure(status, answer.portalRefusal, "Starting the claim")
 		if answer.Error == "claimed_or_in_flight" {
-			f.nextStep = "run `" + rt.suggested("trial", "claim", "--poll") + "` to collect the key"
+			f.nextStep = "run `" + poll + "` to collect the key"
 		}
 		return registration, f
 	}
@@ -349,7 +352,6 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 	}
 	// The person may be anywhere, so the link is shown rather than opened here.
 	var shown string
-	poll := rt.suggested("trial", "claim", "--poll")
 	if rt.json {
 		data, _ := json.Marshal(map[string]any{
 			"email":            email,

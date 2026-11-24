@@ -97,7 +97,7 @@ page inside a JSON object.
 
 ```bash
 string search "QUERY"
-string search "QUERY" --searchCount 30 | jq -r '.results[] | "\(.title)\t\(.url)"'
+string search "QUERY" --searchCount 30 --fields title,url   # each result's title and url
 ```
 
 The JSON has `results` (each with `title`, `url`, `snippet`), `entity`, `places` and

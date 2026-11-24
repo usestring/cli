@@ -142,6 +142,17 @@ A bare domain works too: `string example.com` fetches `https://example.com`. Whe
 
 `--input FILE` reads more fields from a JSON object, or `--input -` from stdin, and flags win over it. The command's URL, query and method win over both.
 
+`--fields` keeps only the fields it names of the JSON a command prints, so an agent reads only what it needs. Where the JSON holds a list of records, the names apply to each record and the rest of the answer stays as it came. The lists are search's `results` (or `images`, `places` or `products` for those search types), a crawl's `urls`, `sitemap list`'s `jobs`, and the `sites` and `data` of integrations. Elsewhere the names apply to the object itself, and a dotted name reaches inside one:
+
+```bash
+string search "postgres vacuum tuning" --fields title,url
+# {"results":[{"title":"…","url":"…"},…],"zeroResults":false}
+string sitemap status JOB_ID --fields status,pagesProcessed
+string integrations run reddit post --post URL --fields title,comments.score
+```
+
+`string help --json` names each command's list in `returns.records`. A name that no record has is left out, and stderr warns about it. When none of the names is there, the command prints nothing, exits 2 and lists the fields there are. A command that spends or writes, such as `integrations run`, has done so by then, so it prints its answer whole instead and says so on stderr: there is no need to run it again. `--fields` needs JSON on stdout, so before anything is sent it refuses a command that would print text: `fetch` needs `--format json`, and `status` or `login` need `--json`. Help is printed as it is.
+
 A sitemap crawl starts with a quote, which costs nothing. `--approve` starts the crawl at the quoted cost, and `--wait` waits for it to finish:
 
 ```bash

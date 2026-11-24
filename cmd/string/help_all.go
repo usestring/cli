@@ -42,6 +42,9 @@ type leaf struct {
 	// text/plain. json is true when, with --json, stdout is one JSON object.
 	stdout string
 	json   bool
+	// records is the key of the list of records in that JSON, such as
+	// results, whose records --fields chooses the fields of.
+	records string
 }
 
 var (
@@ -95,6 +98,7 @@ var exitCodeDocs = []exitCodeDoc{
 var globalFlagDocs = []flagDoc{
 	{name: "json", about: "JSON where the command has it, and errors as one JSON object on stderr"},
 	{name: "errors", value: "json|text", about: "errors as JSON, as --json gives them, with stdout as it is"},
+	{name: "fields", value: "A,B", about: "only these fields of the JSON on stdout: of each record in its list of records, such as search's results, or else of the object; a.b reaches inside a"},
 	{name: "quiet", short: "q", about: "no status lines on stderr; errors and the keyless allowance stay"},
 	{name: "timeout", value: "DURATION", about: "how long each request may take (120s, 300s for integrations run, 90s under an agent), and a whole --wait or --poll (90s under an agent); 0 for no limit"},
 	{name: "no-input", about: "wait for no person, as under an agent"},
@@ -226,8 +230,9 @@ type (
 		Description string   `json:"description,omitempty"`
 	}
 	returnsSchema struct {
-		Stdout string `json:"stdout"`
-		JSON   bool   `json:"json,omitempty"`
+		Stdout  string `json:"stdout"`
+		JSON    bool   `json:"json,omitempty"`
+		Records string `json:"records,omitempty"`
 	}
 	costSchema struct {
 		Summary string `json:"summary"`
@@ -357,7 +362,7 @@ func schemaOf(l leaf) commandSchema {
 	described := commandSchema{
 		Path:      words,
 		Summary:   page.summary,
-		Returns:   returnsSchema{Stdout: l.stdout, JSON: l.json},
+		Returns:   returnsSchema{Stdout: l.stdout, JSON: l.json, Records: l.records},
 		Cost:      costSchema{Summary: l.costs, Keyless: l.keyless},
 		Effects:   l.effects,
 		ExitCodes: l.exits,

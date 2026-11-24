@@ -340,7 +340,7 @@ var commandDocs = map[string]commandDoc{
 		},
 		more: "https://docs.usestring.ai/api-reference/search",
 		leaves: []leaf{
-			{path: "search", args: []string{"QUERY"}, line: "web results as JSON; --searchCount N", costs: "1 search, keyless ok", keyless: true, effects: "read", exits: requestExits, stdout: "application/json", json: true},
+			{path: "search", args: []string{"QUERY"}, line: "web results as JSON; --searchCount N", costs: "1 search, keyless ok", keyless: true, effects: "read", exits: requestExits, stdout: "application/json", json: true, records: "results"},
 		},
 	},
 	"sitemap": {
@@ -386,8 +386,8 @@ var commandDocs = map[string]commandDoc{
 			{path: "sitemap submit", args: []string{"URL"}, line: "quote a crawl; --approve starts it", costs: "key; spends on --approve", effects: "spend", flags: []string{"approve", "wait", "output", "input", "maxPages", "maxDepth", "pathPrefix", "budgetUsd", "useSitemap"}, exits: requestExits, stdout: "application/json", json: true},
 			{path: "sitemap approve", args: []string{"JOB_ID"}, line: "start a quoted crawl; --wait", costs: "key; spends the quote", effects: "spend", flags: jobFlags, exits: requestExits, stdout: "application/json", json: true},
 			{path: "sitemap status", args: []string{"JOB_ID"}, line: "a crawl's state; --wait follows it", costs: "key", effects: "read", flags: jobFlags, examples: []string{"string sitemap status JOB_ID --wait"}, exits: askExits, stdout: "application/json", json: true},
-			{path: "sitemap results", args: []string{"JOB_ID"}, line: "a crawl's pages; --limit N --offset N", costs: "key", effects: "read", flags: listFlags, exits: askExits, stdout: "application/json", json: true},
-			{path: "sitemap list", line: "your crawls; --limit N --offset N", costs: "key", effects: "read", flags: listFlags, examples: []string{"string sitemap list --limit 20"}, exits: askExits, stdout: "application/json", json: true},
+			{path: "sitemap results", args: []string{"JOB_ID"}, line: "a crawl's pages; --limit N --offset N", costs: "key", effects: "read", flags: listFlags, exits: askExits, stdout: "application/json", json: true, records: "urls"},
+			{path: "sitemap list", line: "your crawls; --limit N --offset N", costs: "key", effects: "read", flags: listFlags, examples: []string{"string sitemap list --limit 20"}, exits: askExits, stdout: "application/json", json: true, records: "jobs"},
 			{path: "sitemap cancel", args: []string{"JOB_ID"}, line: "stop a crawl", costs: "key", effects: "write", flags: []string{"output"}, examples: []string{"string sitemap cancel JOB_ID"}, exits: askExits, stdout: "application/json", json: true},
 		},
 	},
@@ -415,8 +415,8 @@ var commandDocs = map[string]commandDoc{
 		}, outputFlags...),
 		more: "https://docs.usestring.ai/sites",
 		leaves: []leaf{
-			{path: "integrations list", args: []string{"[SITE]"}, aliases: []string{"integrations"}, line: "sites and their actions; SITE's flags", costs: "free, no key", keyless: true, effects: "read", flags: []string{}, exits: askExits, stdout: "text/plain", json: true},
-			{path: "integrations run", args: []string{"SITE", "ACTION"}, line: "one action; --FIELD VALUE per input field", costs: "key; per request or row", effects: "spend", exits: requestExits, stdout: "application/json", json: true},
+			{path: "integrations list", args: []string{"[SITE]"}, aliases: []string{"integrations"}, line: "sites and their actions; SITE's flags", costs: "free, no key", keyless: true, effects: "read", flags: []string{}, exits: askExits, stdout: "text/plain", json: true, records: "sites"},
+			{path: "integrations run", args: []string{"SITE", "ACTION"}, line: "one action; --FIELD VALUE per input field", costs: "key; per request or row", effects: "spend", exits: requestExits, stdout: "application/json", json: true, records: "data"},
 		},
 	},
 	"init": {
@@ -746,6 +746,15 @@ its runner cuts the output.
 
   --json                JSON where the command has it, and errors as one
                         {"error":{...}} object, the last line of stderr
+  --fields A,B          only these fields of the JSON on stdout: of each record
+                        in its list, such as search's results, or else of the
+                        object; a.b reaches inside a. help --json names each
+                        command's list in returns.records. A name no record
+                        has is left out with a warning; with none there, it
+                        exits 2 and lists the fields there are, but a command
+                        that spends or writes prints its answer whole.
+                        Suggested commands keep --fields only where they
+                        print the same JSON
   -o, --output FILE     the response goes to FILE instead of stdout, and stderr
                         says what was saved: size, tokens, a fetch's status
                         and host, and a Markdown page's outline. -o - is stdout

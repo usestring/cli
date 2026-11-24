@@ -572,7 +572,9 @@ func startSignIn(rt runtime, browser, wait bool, envFile, deviceName string) (pe
 	}
 	link = approvalLink(link, device.UserCode)
 	var shown []byte
-	poll := rt.suggested("login", "--poll")
+	// The poll prints the key it saves, not this link, so it leaves out
+	// --fields: see carried.
+	poll := commandLine(withSwitches([]string{"login", "--poll"}, carried(rt.switches)))
 	switch {
 	case rt.json:
 		shown, _ = json.Marshal(map[string]any{

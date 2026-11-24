@@ -437,7 +437,7 @@ func TestEveryDocumentedFlagParses(t *testing.T) {
 		for _, spelling := range append([]string{f.name}, spelledEachWay(f.name)...) {
 			list := []string{"search", "coffee", "--" + spelling}
 			if f.value != "" {
-				list = append(list, map[string]string{"errors": "json", "timeout": "5s"}[f.name])
+				list = append(list, map[string]string{"errors": "json", "timeout": "5s", "fields": "title"}[f.name])
 			}
 			if got := runOffline(t, append(list, "--help")...); got.status != 0 || got.output != helpFor("search") {
 				t.Errorf("string %s --help: exit %d, stderr %q", strings.Join(list, " "), got.status, got.errors)
