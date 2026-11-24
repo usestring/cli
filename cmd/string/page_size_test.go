@@ -104,11 +104,11 @@ func TestSavingAPageSaysWhatWasSaved(t *testing.T) {
 }
 
 // -q leaves a wait's first line and its heartbeat out, and only the error is
-// said.
+// said, with the -q kept in the command that resumes the wait.
 func TestQuietWaitsSayOnlyHowTheyEnded(t *testing.T) {
 	crawl := &crawlAPI{statuses: []string{crawlRunning}}
 	got := runCrawl(crawl.start(t), execCtx{agent: "claude-code"}, "sitemap", "status", "job-1", "--wait", "-q")
-	if want := "error: Stopped waiting after 90s; the crawl keeps running.\n\nnext: run `string sitemap status job-1 --wait`\n"; got.status != exitTimeout || got.errors != want {
+	if want := "error: Stopped waiting after 90s; the crawl keeps running.\n\nnext: run `string sitemap status job-1 --wait -q`\n"; got.status != exitTimeout || got.errors != want {
 		t.Errorf("--wait -q: exit %d, stderr %q, want %q", got.status, got.errors, want)
 	}
 }

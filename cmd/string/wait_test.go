@@ -81,11 +81,12 @@ func TestSitemapWaitUnderAnAgentStopsAfter90s(t *testing.T) {
 	}
 	expectJSON(t, got.output, crawlRunning)
 
+	// With --json, the command that resumes the wait keeps it.
 	crawl.polls = 0
 	got = runCrawl(base, execCtx{agent: "claude-code"}, "sitemap", "status", "job-1", "--wait", "--json")
 	lines := strings.Split(strings.TrimSpace(got.errors), "\n")
-	expectJSON(t, lines[len(lines)-1], "{\"error\":{\"code\":\"wait_timeout\",\"message\":\"Stopped waiting after 90s; the crawl keeps running.\",\"next_step\":\"run `string sitemap status job-1 --wait`\",\"retry_after_seconds\":null,\"exit_code\":7,\"retryable\":true,\"user_action_required\":false,\"next_commands\":[{\"type\":\"wait\",\"command\":\"string sitemap status job-1 --wait\",\"argv\":[\"string\",\"sitemap\",\"status\",\"job-1\",\"--wait\"]}]}}")
-	if got.status != exitTimeout || lines[0] != "job job-1 · running · resume: string sitemap status job-1 --wait" {
+	expectJSON(t, lines[len(lines)-1], "{\"error\":{\"code\":\"wait_timeout\",\"message\":\"Stopped waiting after 90s; the crawl keeps running.\",\"next_step\":\"run `string sitemap status job-1 --wait --json`\",\"retry_after_seconds\":null,\"exit_code\":7,\"retryable\":true,\"user_action_required\":false,\"next_commands\":[{\"type\":\"wait\",\"command\":\"string sitemap status job-1 --wait --json\",\"argv\":[\"string\",\"sitemap\",\"status\",\"job-1\",\"--wait\",\"--json\"]}]}}")
+	if got.status != exitTimeout || lines[0] != "job job-1 · running · resume: string sitemap status job-1 --wait --json" {
 		t.Errorf("status --wait --json: %+v", got)
 	}
 }
@@ -117,7 +118,7 @@ func TestSitemapWaitLastsAsLongAsItsLimit(t *testing.T) {
 		switch {
 		case c.stopped == "" && (got.status != 0 || crawl.polls != 41):
 			t.Errorf("%s: exit %d after %d polls, want 0 after 41: %s", c.about, got.status, crawl.polls, got.errors)
-		case c.stopped != "" && (got.status != exitTimeout || !strings.Contains(got.errors, c.stopped+"\n\nnext: run `string sitemap status job-1 --wait`\n")):
+		case c.stopped != "" && (got.status != exitTimeout || !strings.Contains(got.errors, c.stopped+"\n\nnext: run `"+strings.Join(append([]string{"string", "sitemap", "status", "job-1", "--wait"}, c.flags...), " ")+"`\n")):
 			t.Errorf("%s: exit %d: %s", c.about, got.status, got.errors)
 		}
 	}
@@ -140,7 +141,8 @@ func TestSitemapWaitRedrawsOnlyForAPerson(t *testing.T) {
 }
 
 // A status string doesn't know ends the wait with exit 7 and names the
-// status, where the wait used to go on forever.
+// status, where the wait used to go on forever. The command that resumes the
+// wait keeps the switches given.
 func TestSitemapWaitStopsOnAStatusItDoesNotKnow(t *testing.T) {
 	for status, message := range map[string]string{
 		`{"jobId":"job-1","status":"paused","pending":1,"processed":2}`: `Stopped waiting: the crawl's status is "paused", which string doesn't know.`,
@@ -148,10 +150,20 @@ func TestSitemapWaitStopsOnAStatusItDoesNotKnow(t *testing.T) {
 		`not json`:          "Stopped waiting: the answer gave the crawl no status.",
 	} {
 		crawl := &crawlAPI{statuses: []string{crawlRunning, status}}
-		got := runCrawl(crawl.start(t), execCtx{}, "sitemap", "status", "job-1", "--wait")
-		if want := message + "\n\nnext: run `string sitemap status job-1 --wait`\n"; got.status != exitTimeout || !strings.HasSuffix(got.errors, want) || crawl.polls != 2 {
+		got := runCrawl(crawl.start(t), execCtx{}, "sitemap", "status", "job-1", "--wait", "-q")
+		if want := message + "\n\nnext: run `string sitemap status job-1 --wait -q`\n"; got.status != exitTimeout || !strings.HasSuffix(got.errors, want) || crawl.polls != 2 {
 			t.Errorf("%s: exit %d after %d polls: %s", status, got.status, crawl.polls, got.errors)
 		}
+	}
+}
+
+// A crawl found waiting for approval ends the wait with the step that
+// approves it, which keeps the switches given.
+func TestAWaitForApprovalNamesTheApprovalWithTheGlobalSwitches(t *testing.T) {
+	crawl := &crawlAPI{statuses: []string{`{"jobId":"job-1","status":"awaiting_approval"}`}}
+	got := runCrawl(crawl.start(t), execCtx{}, "sitemap", "status", "job-1", "--wait", "--timeout", "5m")
+	if want := "error: The crawl is waiting for approval.\n\nnext: run `string sitemap approve job-1 --wait --timeout 5m`\n"; got.status != exitUsage || !strings.HasSuffix(got.errors, want) {
+		t.Errorf("exit %d, stderr %q, want it to end %q", got.status, got.errors, want)
 	}
 }
 
@@ -181,7 +193,7 @@ func TestSitemapWaitEndsAPollAtItsLimit(t *testing.T) {
 		stderr: &stderr,
 		sleep:  func(time.Duration) {},
 	})
-	if want := "Stopped waiting after 200ms; the crawl keeps running.\n\nnext: run `string sitemap status job-1 --wait`\n"; status != exitTimeout || !strings.HasSuffix(stderr.String(), want) {
+	if want := "Stopped waiting after 200ms; the crawl keeps running.\n\nnext: run `string sitemap status job-1 --wait --timeout 200ms`\n"; status != exitTimeout || !strings.HasSuffix(stderr.String(), want) {
 		t.Errorf("exit %d: %s", status, stderr.String())
 	}
 }

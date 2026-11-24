@@ -63,6 +63,10 @@ func TestWhoamiChecksTheKeyWithString(t *testing.T) {
 	if got := whoami(http.DefaultClient, envKey, false); got.status != exitUpstream || !strings.HasPrefix(got.errors, "error: Using STRING_API_KEY from the environment (env-key-…), but string couldn't check it with String.\n  ") {
 		t.Errorf("String failing: %+v", got)
 	}
+	// The --offline it names keeps the switches given.
+	if got := whoami(http.DefaultClient, envKey, false, "--timeout", "5s"); got.status != exitUpstream || !strings.HasSuffix(got.errors, "\n\nnext: run it again, or `string whoami --offline --timeout 5s` to see the key without checking it\n") {
+		t.Errorf("String failing, with --timeout 5s: %+v", got)
+	}
 	unreachable := &http.Client{Transport: failingTransport{errors.New("no route")}}
 	if got := whoami(unreachable, envKey, false); got.status != exitUpstream || !strings.Contains(got.errors, "but string couldn't check it with String.\n  string lost the connection to ") {
 		t.Errorf("no network: %+v", got)

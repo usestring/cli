@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,24 +14,28 @@ import (
 )
 
 // The global switches come out wherever they are before "--", and nothing
-// after it is touched.
+// after it is touched. What came out is kept as it was given.
 func TestGlobalSwitchesComeOutAnywhereBeforeTheDoubleDash(t *testing.T) {
 	for _, c := range []struct {
 		list, kept []string
 		want       globalSwitches
 	}{
-		{[]string{"login", "--no-input"}, []string{"login"}, globalSwitches{noInput: true}},
-		{[]string{"--json", "--no-open", "login", "--no-wait"}, []string{"login", "--no-wait"}, globalSwitches{json: true, noOpen: true}},
-		{[]string{"-y", "fetch", "https://example.com", "--yes"}, []string{"fetch", "https://example.com"}, globalSwitches{}},
-		{[]string{"--timeout", "90s", "fetch", "https://example.com"}, []string{"fetch", "https://example.com"}, globalSwitches{hasTimeout: true, timeout: "90s"}},
-		{[]string{"search", "golang", "--timeout=5m", "--json"}, []string{"search", "golang"}, globalSwitches{json: true, hasTimeout: true, timeout: "5m"}},
-		{[]string{"login", "--poll", "--timeout"}, []string{"login", "--poll"}, globalSwitches{hasTimeout: true}},
+		{[]string{"login", "--no-input"}, []string{"login"}, globalSwitches{noInput: true, given: []string{"--no-input"}}},
+		{[]string{"--json", "--no-open", "login", "--no-wait"}, []string{"login", "--no-wait"}, globalSwitches{json: true, noOpen: true, given: []string{"--json", "--no-open"}}},
+		{[]string{"-y", "fetch", "https://example.com", "--yes"}, []string{"fetch", "https://example.com"}, globalSwitches{given: []string{"-y", "--yes"}}},
+		{[]string{"--timeout", "90s", "fetch", "https://example.com"}, []string{"fetch", "https://example.com"}, globalSwitches{hasTimeout: true, timeout: "90s", given: []string{"--timeout", "90s"}}},
+		{[]string{"search", "golang", "--timeout=5m", "--JSON"}, []string{"search", "golang"}, globalSwitches{json: true, hasTimeout: true, timeout: "5m", given: []string{"--timeout=5m", "--JSON"}}},
+		{[]string{"login", "--poll", "--timeout"}, []string{"login", "--poll"}, globalSwitches{hasTimeout: true, given: []string{"--timeout"}}},
 		{[]string{"search", "--", "--no-input", "-y", "--json", "--timeout", "5"}, []string{"search", "--", "--no-input", "-y", "--json", "--timeout", "5"}, globalSwitches{}},
 	} {
 		kept, got := takeGlobalSwitches(c.list)
-		if !slices.Equal(kept, c.kept) || got != c.want {
+		if !slices.Equal(kept, c.kept) || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%q: kept %q and %+v, want %q and %+v", c.list, kept, got, c.kept, c.want)
 		}
+	}
+	// They go back before any "--" for a command string suggests.
+	if got := withSwitches([]string{"search", "a", "--", "-b"}, []string{"-q", "--errors", "json"}); !slices.Equal(got, []string{"search", "a", "-q", "--errors", "json", "--", "-b"}) {
+		t.Errorf("withSwitches: %q", got)
 	}
 	// No command asks anything yet, so -y and --yes change nothing.
 	for _, list := range [][]string{{"-y", "--version"}, {"--version", "--yes"}} {
@@ -44,9 +49,9 @@ func TestGlobalSwitchesComeOutAnywhereBeforeTheDoubleDash(t *testing.T) {
 // login and init wait for an approval only for a person at a terminal. Under
 // an agent, in CI, or with --no-input or STRING_NO_INPUT, login prints the link
 // and code and returns at once, and init hands them back the same way, except
-// in CI, where nobody could approve and it stays keyless.
+// in CI, where nobody could approve and it stays keyless. The login --poll
+// they name keeps the --no-input given.
 func TestSignInWaitsOnlyForAPersonAtATerminal(t *testing.T) {
-	const handedBack = "Then run string login --poll to save the key. The code expires in 10 minutes.\n"
 	for _, c := range []struct {
 		about string
 		env   map[string]string
@@ -62,6 +67,7 @@ func TestSignInWaitsOnlyForAPersonAtATerminal(t *testing.T) {
 		{about: "--no-input at a terminal", flags: []string{"--no-input"}, init: "hand back"},
 		{about: "STRING_NO_INPUT=1 at a terminal", env: map[string]string{"STRING_NO_INPUT": "1"}, init: "hand back"},
 	} {
+		handedBack := "Then run " + strings.Join(append([]string{"string", "login", "--poll"}, c.flags...), " ") + " to save the key. The code expires in 10 minutes.\n"
 		for _, command := range []string{"login", "init"} {
 			service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
 			service.start(t)

@@ -274,7 +274,10 @@ func flagOrder(properties map[string]schemaProperty, required []string) []string
 	return names
 }
 
-var plainWord = regexp.MustCompile(`^[A-Za-z0-9_./:%+=,-]+$`)
+// plainWord is a word every shell takes as it is. An @ is plain after the
+// first character, as in an email address; a leading one means something to
+// PowerShell.
+var plainWord = regexp.MustCompile(`^[A-Za-z0-9_./:%+=,-][A-Za-z0-9_./:%+=,@-]*$`)
 
 // exampleFlags writes an example input as the flags that send it.
 func exampleFlags(input map[string]any, order []string) string {

@@ -829,8 +829,9 @@ func rootHelp(rt runtime) string {
 }
 
 // unknownTopic is the failure for string help WORD when WORD is no command
-// but a near miss of a topic, which it names.
-func unknownTopic(word string) error {
+// but a near miss of a topic, which it names with switches, the global
+// switches given.
+func unknownTopic(word string, switches []string) error {
 	if slices.Contains(commands, word) {
 		return nil
 	}
@@ -838,5 +839,5 @@ func unknownTopic(word string) error {
 	if !near {
 		return nil
 	}
-	return &failure{exit: exitUsage, code: "unknown_command", message: "No help on " + word + ". Did you mean " + topic + "?", nextStep: "run `string help " + topic + "`"}
+	return &failure{exit: exitUsage, code: "unknown_command", message: "No help on " + word + ". Did you mean " + topic + "?", nextStep: "run `" + commandLine(withSwitches([]string{"help", topic}, switches)) + "`"}
 }

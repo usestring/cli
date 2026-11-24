@@ -253,6 +253,16 @@ const (
 	signInWaiting = "sign-in · waiting for approval · the code expires in 10m · resume: string login --poll\n"
 )
 
+// signInPollWith and signInWaitingWith are signInPoll and signInWaiting for a
+// sign-in given switches, which the login --poll that finishes it repeats.
+func signInPollWith(switches ...string) string {
+	return strings.Replace(signInPoll, "login --poll", strings.Join(append([]string{"login", "--poll"}, switches...), " "), 1)
+}
+
+func signInWaitingWith(switches ...string) string {
+	return strings.Replace(signInWaiting, "login --poll", strings.Join(append([]string{"login", "--poll"}, switches...), " "), 1)
+}
+
 func TestAPortalRefusalAfterApprovalEndsLoginWithItsExitCodeAndANextStep(t *testing.T) {
 	refusals := []struct {
 		answer   signInAnswer
@@ -291,10 +301,12 @@ func TestAPortalRefusalAfterApprovalEndsLoginWithItsExitCodeAndANextStep(t *test
 				t.Errorf("%s: want exit %d and nothing on stdout", said, refusal.exit)
 			}
 			if asJSON {
+				// The sign-in it says to run again keeps the --json.
+				next := strings.Replace(refusal.next, "`string login`", "`string login --json`", 1)
 				envelope := decode(t, lastLine(got.errors)).(map[string]any)["error"].(map[string]any)
 				message, _ := envelope["message"].(string)
-				if envelope["code"] != "key_release_failed" || envelope["status"] != float64(refusal.answer.status) || !strings.HasPrefix(message, refusal.message) || envelope["next_step"] != refusal.next {
-					t.Errorf("%s: want the message %q and the next step %q", said, refusal.message, refusal.next)
+				if envelope["code"] != "key_release_failed" || envelope["status"] != float64(refusal.answer.status) || !strings.HasPrefix(message, refusal.message) || envelope["next_step"] != next {
+					t.Errorf("%s: want the message %q and the next step %q", said, refusal.message, next)
 				}
 			} else if !strings.HasPrefix(got.errors, signInWaiting+"error: "+refusal.message) || !strings.HasSuffix(got.errors, "\n\nnext: "+refusal.next+"\n") {
 				t.Errorf("%s: want the message %q and the next step %q", said, refusal.message, refusal.next)
@@ -346,7 +358,7 @@ func TestLoginAsksAgainForTheKeyWhileThePortalIsBusy(t *testing.T) {
 	service.start(t)
 	session = newSignInSession(t)
 	got = session.startThenPoll(t, "--json")
-	if got.status != 0 || got.errors != signInWaiting || decode(t, got.output).(map[string]any)["status"] != "logged_in" {
+	if got.status != 0 || got.errors != signInWaitingWith("--json") || decode(t, got.output).(map[string]any)["status"] != "logged_in" {
 		t.Errorf("with --json: %+v", got)
 	}
 	if requests := service.requests("/api/oauth/api-key"); requests != 3 {
@@ -458,8 +470,8 @@ func TestABusySignInServerLeavesTheCodeForLoginPollToFinish(t *testing.T) {
 			message := fmt.Sprintf("Sign-in failed: HTTP %d", c.answer.status)
 			if way.asJSON {
 				envelope := decode(t, lastLine(busy.errors)).(map[string]any)["error"].(map[string]any)
-				if busy.status != c.exit || envelope["code"] != "login_failed" || envelope["message"] != message || envelope["next_step"] != signInPoll {
-					t.Errorf("%s: %+v, want exit %d, the message %q and the next step %q", said, busy, c.exit, message, signInPoll)
+				if busy.status != c.exit || envelope["code"] != "login_failed" || envelope["message"] != message || envelope["next_step"] != signInPollWith("--json") {
+					t.Errorf("%s: %+v, want exit %d, the message %q and the next step %q", said, busy, c.exit, message, signInPollWith("--json"))
 				}
 			} else if want := signInWaiting + "error: " + message + "\n\nnext: " + signInPoll + "\n"; busy.status != c.exit || busy.errors != want {
 				t.Errorf("%s: %+v, want exit %d and %q", said, busy, c.exit, want)
@@ -753,7 +765,7 @@ func TestLoginSaysWhenSTRINGAPIKEYStillWinsOverTheKeyItSaved(t *testing.T) {
 	}
 	// With --json, stdout stays one JSON object and the note goes to stderr.
 	got := session.startThenPoll(t, "--json")
-	if got.status != 0 || got.errors != signInWaiting+stillWins {
+	if got.status != 0 || got.errors != signInWaitingWith("--json")+stillWins {
 		t.Errorf("with STRING_API_KEY and --json: %+v", got)
 	}
 	expectJSON(t, got.output, `{"status":"logged_in","email":"dev@localhost","credentials":"`+session.file("credentials.json")+`"}`)

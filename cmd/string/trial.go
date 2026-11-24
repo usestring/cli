@@ -295,7 +295,7 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 	if status != http.StatusOK {
 		f := trialFailure(status, answer.portalRefusal, "Starting the claim")
 		if answer.Error == "claimed_or_in_flight" {
-			f.nextStep = "run `string trial claim --poll` to collect the key"
+			f.nextStep = "run `" + rt.suggested("trial", "claim", "--poll") + "` to collect the key"
 		}
 		return registration, f
 	}
@@ -319,6 +319,7 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 	}
 	// The person may be anywhere, so the link is shown rather than opened here.
 	var shown string
+	poll := rt.suggested("trial", "claim", "--poll")
 	if rt.json {
 		data, _ := json.Marshal(map[string]any{
 			"email":            email,
@@ -326,13 +327,13 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 			"user_code":        attempt.UserCode,
 			"expires_in":       attempt.ExpiresIn,
 			"interval":         attempt.Interval,
-			"next":             "string trial claim --poll",
+			"next":             poll,
 		})
 		shown = string(data) + "\n"
 	} else {
 		shown = fmt.Sprintf("Ask %[1]s to open %[2]s, sign in to String as %[1]s and enter the code %[3]s.\n", email, attempt.VerificationURI, attempt.UserCode)
 		if !wait {
-			shown += fmt.Sprintf("Then run string trial claim --poll to collect the key. The code expires in %d minutes.\n", attempt.ExpiresIn/60)
+			shown += fmt.Sprintf("Then run %s to collect the key. The code expires in %d minutes.\n", poll, attempt.ExpiresIn/60)
 		}
 	}
 	return registration, write(rt.stdout, []byte(shown))
@@ -351,17 +352,18 @@ func collectClaimedKey(rt runtime, registrationFile string, registration trialRe
 			code:     "claim_expired",
 			status:   status,
 			message:  "The claim code expired, or was entered wrong too many times.",
-			nextStep: fmt.Sprintf("run `string trial claim --email %s` for a new code", registration.ClaimEmail),
+			nextStep: "run `" + rt.suggested("trial", "claim", "--email", registration.ClaimEmail) + "` for a new code",
 		}
 	}
 	w := newWaiter(rt, started)
 	defer w.end()
-	defer rt.interrupt.note("the claim stays open until its code expires", "string trial claim --poll")()
-	first := fmt.Sprintf("claim · waiting for %s to enter the code · the code expires in %s · resume: string trial claim --poll", registration.ClaimEmail, elapsed(max(expires.Sub(rt.clock()), 0)))
+	resume := rt.suggested("trial", "claim", "--poll")
+	defer rt.interrupt.note("the claim stays open until its code expires", resume)()
+	first := fmt.Sprintf("claim · waiting for %s to enter the code · the code expires in %s · resume: %s", registration.ClaimEmail, elapsed(max(expires.Sub(rt.clock()), 0)), resume)
 	for {
 		poll, ok := w.next()
 		if !ok {
-			return w.stoppedBefore(expires, "the code", "string trial claim --poll", expired(0))
+			return w.stoppedBefore(expires, "the code", resume, expired(0))
 		}
 		var answer struct {
 			portalRefusal
@@ -376,7 +378,7 @@ func collectClaimedKey(rt runtime, registrationFile string, registration trialRe
 		}
 		if err != nil {
 			if w.over() {
-				return w.stoppedBefore(expires, "the code", "string trial claim --poll", expired(0))
+				return w.stoppedBefore(expires, "the code", resume, expired(0))
 			}
 			return err
 		}

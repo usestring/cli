@@ -29,10 +29,13 @@ const (
 	browserInterval = 3 * time.Second
 )
 
-var (
-	errBrowserUnavailable = &failure{exit: exitAuth, code: "login_unavailable", message: "This String server does not offer string login --browser yet. Use string login."}
-	errBrowserExpired     = &failure{exit: exitAuth, code: "login_expired", message: "The sign-in link expired; run string login --browser again"}
-)
+var errBrowserUnavailable = &failure{exit: exitAuth, code: "login_unavailable", message: "This String server does not offer string login --browser yet. Use string login."}
+
+// browserExpired is the failure for a sign-in link that expired, which a new
+// sign-in replaces: string login --browser, with the global switches given.
+func browserExpired(rt runtime) *failure {
+	return &failure{exit: exitAuth, code: "login_expired", message: "The sign-in link expired; run " + rt.suggested("login", "--browser") + " again"}
+}
 
 // codeChallenge is the PKCE S256 challenge for verifier (RFC 7636).
 func codeChallenge(verifier string) string {
@@ -69,6 +72,7 @@ func startBrowserSignIn(rt runtime, wait bool, envFile string) (pendingLogin, er
 	link := portalURL + "/agent-auth?" + url.Values{"code_challenge": {codeChallenge(pending.CodeVerifier)}, "source": {"cli"}}.Encode() + "#session_id=" + pending.SessionID
 	const open = "Open this link, sign in to String or create an account, and click Authorize:\n"
 	var shown []byte
+	poll := rt.suggested("login", "--poll")
 	switch {
 	case rt.json:
 		var encoded bytes.Buffer
@@ -79,13 +83,13 @@ func startBrowserSignIn(rt runtime, wait bool, envFile string) (pendingLogin, er
 			"verification_uri_complete": link,
 			"expires_in":                int(browserWindow / time.Second),
 			"interval":                  pending.Interval,
-			"next":                      "string login --poll",
+			"next":                      poll,
 		})
 		shown = encoded.Bytes()
 	case wait:
 		shown = []byte(open + link + "\n")
 	default:
-		shown = []byte(fmt.Sprintf("%s%s\nThen run string login --poll to save the key. The link expires in %d minutes.\n", open, link, int(browserWindow/time.Minute)))
+		shown = []byte(fmt.Sprintf("%s%s\nThen run %s to save the key. The link expires in %d minutes.\n", open, link, poll, int(browserWindow/time.Minute)))
 	}
 	if err := write(rt.stdout, shown); err != nil {
 		return pendingLogin{}, err
@@ -124,18 +128,19 @@ func askPortal(rt runtime, pending pendingLogin) (int, http.Header, agentAuthAns
 // no sooner than its Retry-After says.
 func browserKey(w *waiter, pending pendingLogin) (agentAuthAnswer, error) {
 	defer w.end()
-	defer w.rt.interrupt.note("the sign-in stays open until its link expires", "string login --poll")()
-	first := "sign-in · waiting for authorization · the link expires in " + elapsed(pending.ExpiresAt.Sub(w.rt.clock())) + " · resume: string login --poll"
+	resume, expired := w.rt.suggested("login", "--poll"), browserExpired(w.rt)
+	defer w.rt.interrupt.note("the sign-in stays open until its link expires", resume)()
+	first := "sign-in · waiting for authorization · the link expires in " + elapsed(pending.ExpiresAt.Sub(w.rt.clock())) + " · resume: " + resume
 	for wait := browserInterval; ; {
 		if w.rt.clock().Add(wait).After(pending.ExpiresAt) {
-			return agentAuthAnswer{}, errBrowserExpired
+			return agentAuthAnswer{}, expired
 		}
 		w.begin(first)
 		w.pause(wait)
 		wait = browserInterval
 		rt, ok := w.next()
 		if !ok {
-			return agentAuthAnswer{}, w.stoppedBefore(pending.ExpiresAt, "the link", "string login --poll", errBrowserExpired)
+			return agentAuthAnswer{}, w.stoppedBefore(pending.ExpiresAt, "the link", resume, expired)
 		}
 		status, header, answer, err := askPortal(rt, pending)
 		switch {
@@ -166,17 +171,18 @@ func browserKey(w *waiter, pending pendingLogin) (agentAuthAnswer, error) {
 		case "denied":
 			return answer, errLoginDenied
 		case "expired":
-			return answer, errBrowserExpired
+			return answer, expired
 		default:
-			return answer, browserRefusal(status, answer)
+			return answer, browserRefusal(w.rt, status, answer)
 		}
 	}
 }
 
 // browserRefusal is a final answer other than denied or expired. One this CLI
-// doesn't know ends the sign-in with what the portal said.
-func browserRefusal(status int, answer agentAuthAnswer) *failure {
-	again := "run `string login --browser` again"
+// doesn't know ends the sign-in with what the portal said. One that a new
+// sign-in can get past names it, with the global switches given.
+func browserRefusal(rt runtime, status int, answer agentAuthAnswer) *failure {
+	again := "run `" + rt.suggested("login", "--browser") + "` again"
 	switch answer.Error {
 	case "invalid_verifier", "invalid_request":
 		return &failure{exit: exitAuth, status: status, code: answer.Error, message: "String did not accept this sign-in (" + answer.Error + ")", nextStep: again}

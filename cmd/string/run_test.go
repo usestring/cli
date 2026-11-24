@@ -608,7 +608,7 @@ func TestLoginSavesTheReleasedKeyForLaterCommands(t *testing.T) {
 		t.Fatalf("login status %d: %s", status, stderr.String())
 	}
 	started := decode(t, stdout.String()).(map[string]any)
-	if started["user_code"] != "ABCD-EFGH" || started["next"] != "string login --poll" || len(opened) > 0 {
+	if started["user_code"] != "ABCD-EFGH" || started["next"] != "string login --poll --json" || len(opened) > 0 {
 		t.Errorf("output %q, opened %v", stdout.String(), opened)
 	}
 	pendingFile := filepath.Join(home, ".config", "string", "pending.json")

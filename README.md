@@ -56,8 +56,8 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 - `string login` prints a code and, for a person at a terminal, opens String in the browser; `--no-open` stops that. Once you approve, String creates a new API key for that sign-in and the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when no key is set, unless you pass `--no-login`: a person at a terminal waits for the approval there, and under a coding agent, with `--no-input`, or when its output is captured outside CI, it prints the link and code as `string login` does there. If that sign-in doesn't finish, init still succeeds and says how to sign in later. Under a coding agent, in CI, in a pipe, or with `--no-input` or `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
 
   ```bash
-  string login --json   # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll"}
-  string login --poll   # after the person approves
+  string login --json          # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll --json"}
+  string login --poll --json   # after the person approves
   ```
 
   Where no person watches stderr at a terminal, `string login --poll` first prints what it waits for and the command that resumes it, then a line every 15 seconds:
