@@ -49,9 +49,9 @@ func TestGlobalSwitchesComeOutAnywhereBeforeTheDoubleDash(t *testing.T) {
 // login and init wait for an approval only for a person at a terminal. Under
 // an agent, in CI, or with --no-input or STRING_NO_INPUT, login prints the link
 // and code and returns at once, and init hands them back the same way, except
-// in CI, where nobody could approve and it stays keyless.
+// in CI, where nobody could approve and it stays keyless. The login --poll
+// they name keeps the --no-input given.
 func TestSignInWaitsOnlyForAPersonAtATerminal(t *testing.T) {
-	const handedBack = "Then run string login --poll to save the key. The code expires in 10 minutes.\n"
 	for _, c := range []struct {
 		about string
 		env   map[string]string
@@ -67,6 +67,7 @@ func TestSignInWaitsOnlyForAPersonAtATerminal(t *testing.T) {
 		{about: "--no-input at a terminal", flags: []string{"--no-input"}, init: "hand back"},
 		{about: "STRING_NO_INPUT=1 at a terminal", env: map[string]string{"STRING_NO_INPUT": "1"}, init: "hand back"},
 	} {
+		handedBack := "Then run " + strings.Join(append([]string{"string", "login", "--poll"}, c.flags...), " ") + " to save the key. The code expires in 10 minutes.\n"
 		for _, command := range []string{"login", "init"} {
 			service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
 			service.start(t)

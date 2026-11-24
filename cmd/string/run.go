@@ -1035,6 +1035,14 @@ func withSwitches(list, switches []string) []string {
 	return slices.Concat(list[:end], switches, list[end:])
 }
 
+// suggested is the command string for args with the global switches given,
+// put back as withSwitches puts them: a command that carries this one on,
+// such as login --poll after login --no-wait, so that it runs as this one
+// did.
+func (rt runtime) suggested(args ...string) string {
+	return commandLine(withSwitches(args, rt.switches))
+}
+
 func run(list []string, rt runtime) int {
 	list, global := takeGlobalSwitches(list)
 	rt.json, rt.exec.noOpen = global.json, global.noOpen
@@ -1087,7 +1095,7 @@ func execute(list []string, rt runtime) error {
 		if topic, ok := helpTopics[list[1]]; ok {
 			return write(rt.stdout, []byte(topic))
 		}
-		if err := unknownTopic(list[1]); err != nil {
+		if err := unknownTopic(list[1], rt.switches); err != nil {
 			return err
 		}
 		// string help COMMAND is string COMMAND --help.
@@ -1355,7 +1363,7 @@ func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([
 	}
 	// The job and the command that resumes the wait come first, so an agent
 	// or a person stopped partway can pick the crawl up again.
-	resume := "string sitemap status " + job + " --wait"
+	resume := c.rt.suggested("sitemap", "status", job, "--wait")
 	first := "job " + job
 	var now struct {
 		Status string `json:"status"`
@@ -1403,9 +1411,10 @@ func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([
 		case "canceled":
 			return status, &failure{exit: exitFailure, code: "crawl_canceled", message: "The crawl was canceled."}
 		case "awaiting_approval":
-			approve := "string sitemap approve " + job + " --wait"
-			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `" + approve + "`",
-				next: []nextCommand{{Type: stepFix, Command: approve, Argv: strings.Fields(approve), Why: "starts the crawl at its quoted cost, which needs the user's go"}}}
+			approve := withSwitches([]string{"sitemap", "approve", job, "--wait"}, c.rt.switches)
+			line := commandLine(approve)
+			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `" + line + "`",
+				next: []nextCommand{{Type: stepFix, Command: line, Argv: append([]string{"string"}, approve...), Why: "starts the crawl at its quoted cost, which needs the user's go"}}}
 		case "running":
 		default:
 			// Waiting on a status string doesn't know could last forever.

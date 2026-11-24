@@ -34,7 +34,7 @@ func TestCtrlCSaysWhatKeepsRunningOrMayHaveHappened(t *testing.T) {
 	}{
 		{"a crawl's wait", execCtx{}, []string{"sitemap", "status", "job-1", "--wait"}, "GET /v1/sitemap/job-1 2", crawlGoesOn},
 		{"a crawl's wait for a person", person, []string{"sitemap", "status", "job-1", "--wait"}, "GET /v1/sitemap/job-1 2", "\r\x1b[K" + crawlGoesOn},
-		{"a crawl's wait under --json", execCtx{agent: "codex"}, []string{"sitemap", "status", "job-1", "--wait", "--json"}, "GET /v1/sitemap/job-1 2", `{"error":{"code":"interrupted","exit_code":130,"message":"Interrupted; the crawl job-1 keeps running.","next_commands":[{"type":"wait","command":"string sitemap status job-1 --wait","argv":["string","sitemap","status","job-1","--wait"]}],"next_step":"run ` + "`string sitemap status job-1 --wait`" + `","retry_after_seconds":null,"retryable":false,"user_action_required":false}}` + "\n"},
+		{"a crawl's wait under --json", execCtx{agent: "codex"}, []string{"sitemap", "status", "job-1", "--wait", "--json"}, "GET /v1/sitemap/job-1 2", `{"error":{"code":"interrupted","exit_code":130,"message":"Interrupted; the crawl job-1 keeps running.","next_commands":[{"type":"wait","command":"string sitemap status job-1 --wait --json","argv":["string","sitemap","status","job-1","--wait","--json"]}],"next_step":"run ` + "`string sitemap status job-1 --wait --json`" + `","retry_after_seconds":null,"retryable":false,"user_action_required":false}}` + "\n"},
 		{"a submit", execCtx{}, []string{"sitemap", "submit", "https://example.com"}, "POST /v1/sitemap 1", mayBeDone},
 		{"an approval", execCtx{}, []string{"sitemap", "submit", "https://example.com", "--approve", "--wait"}, "POST /v1/sitemap/job-1/approve 1", mayBeDone},
 		{"a cancel", execCtx{}, []string{"sitemap", "cancel", "job-1"}, "DELETE /v1/sitemap/job-1 1", mayBeDone},
@@ -98,14 +98,17 @@ func TestCtrlCSaysWhatKeepsRunningOrMayHaveHappened(t *testing.T) {
 }
 
 // A Ctrl-C during a sign-in's or a claim's wait says that it stays open, and
-// how to finish it.
+// how to finish it, with the global switches given.
 func TestCtrlCSaysASignInOrClaimStaysOpen(t *testing.T) {
 	for _, c := range []struct {
 		about, at, said string
 		browser         bool
+		switches        []string
 	}{
-		{"a device code", "/oauth/token", "error: Interrupted; the sign-in stays open until its code expires.\n\nnext: run `string login --poll`\n", false},
-		{"a browser sign-in", "/api/agent-auth/status", "error: Interrupted; the sign-in stays open until its link expires.\n\nnext: run `string login --poll`\n", true},
+		{"a device code", "/oauth/token", "error: Interrupted; the sign-in stays open until its code expires.\n\nnext: run `string login --poll`\n", false, nil},
+		{"a browser sign-in", "/api/agent-auth/status", "error: Interrupted; the sign-in stays open until its link expires.\n\nnext: run `string login --poll`\n", true, nil},
+		{"a device code with --timeout", "/oauth/token", "error: Interrupted; the sign-in stays open until its code expires.\n\nnext: run `string login --poll --timeout 5m`\n", false, []string{"--timeout", "5m"}},
+		{"a browser sign-in with -q", "/api/agent-auth/status", "error: Interrupted; the sign-in stays open until its link expires.\n\nnext: run `string login --poll -q`\n", true, []string{"-q"}},
 	} {
 		// A browser sign-in is checked once before its link is shown.
 		service := &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}, status: []signInAnswer{browserPending, browserComplete}}
@@ -128,29 +131,35 @@ func TestCtrlCSaysASignInOrClaimStaysOpen(t *testing.T) {
 		}
 		service.mu.Unlock()
 
-		if got := session.run("login", "--poll"); got.status != 0 || said.String() != c.said {
+		if got := session.run(append([]string{"login", "--poll"}, c.switches...)...); got.status != 0 || said.String() != c.said {
 			t.Errorf("%s: %+v, and a Ctrl-C would say %q, want %q", c.about, got, said.String(), c.said)
 		}
 	}
 
-	var said bytes.Buffer
-	interrupted := &interruption{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		interrupted.report(&said)
-		io.WriteString(w, `{"access_token":"claimed-key","token_type":"Bearer","organization_id":9}`)
-	}))
-	t.Cleanup(server.Close)
 	defer func(p string) { portalURL = p }(portalURL)
-	portalURL = server.URL
-	home, dir := claimHome(t)
-	registration := trialRegistration{RegistrationID: "reg_7", ClaimToken: "clm_7_secret", ClaimEmail: "dev@localhost", ClaimCodeExpires: time.Now().Add(10 * time.Minute), ClaimInterval: 5}
-	if err := writePrivate(filepath.Join(dir, "trial.json"), registration); err != nil {
-		t.Fatal(err)
-	}
-	var stdout, stderr bytes.Buffer
-	status := run([]string{"trial", "claim", "--poll"}, runtime{env: envOf(map[string]string{"HOME": home}), client: http.DefaultClient, stdout: &stdout, stderr: &stderr, interrupt: interrupted})
-	if want := "error: Interrupted; the claim stays open until its code expires.\n\nnext: run `string trial claim --poll`\n"; status != 0 || said.String() != want {
-		t.Errorf("a claim: exit %d (%s), and a Ctrl-C would say %q, want %q", status, stderr.String(), said.String(), want)
+	for switches, want := range map[string]string{
+		"":              "error: Interrupted; the claim stays open until its code expires.\n\nnext: run `string trial claim --poll`\n",
+		"--timeout=5m":  "error: Interrupted; the claim stays open until its code expires.\n\nnext: run `string trial claim --poll --timeout=5m`\n",
+		"--no-input -q": "error: Interrupted; the claim stays open until its code expires.\n\nnext: run `string trial claim --poll --no-input -q`\n",
+	} {
+		var said bytes.Buffer
+		interrupted := &interruption{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			interrupted.report(&said)
+			io.WriteString(w, `{"access_token":"claimed-key","token_type":"Bearer","organization_id":9}`)
+		}))
+		t.Cleanup(server.Close)
+		portalURL = server.URL
+		home, dir := claimHome(t)
+		registration := trialRegistration{RegistrationID: "reg_7", ClaimToken: "clm_7_secret", ClaimEmail: "dev@localhost", ClaimCodeExpires: time.Now().Add(10 * time.Minute), ClaimInterval: 5}
+		if err := writePrivate(filepath.Join(dir, "trial.json"), registration); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		status := run(append([]string{"trial", "claim", "--poll"}, strings.Fields(switches)...), runtime{env: envOf(map[string]string{"HOME": home}), client: http.DefaultClient, stdout: &stdout, stderr: &stderr, interrupt: interrupted})
+		if status != 0 || said.String() != want {
+			t.Errorf("a claim with %q: exit %d (%s), and a Ctrl-C would say %q, want %q", switches, status, stderr.String(), said.String(), want)
+		}
 	}
 }
 

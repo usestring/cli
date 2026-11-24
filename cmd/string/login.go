@@ -313,15 +313,16 @@ func refusalExit(status int) int {
 // wait's limit too, and then string login --poll goes on with the same code.
 func deviceToken(w *waiter, deviceCode string, interval time.Duration, expires time.Time) (string, error) {
 	defer w.end()
-	defer w.rt.interrupt.note("the sign-in stays open until its code expires", "string login --poll")()
+	resume, expired := w.rt.suggested("login", "--poll"), loginExpired(w.rt)
+	defer w.rt.interrupt.note("the sign-in stays open until its code expires", resume)()
 	lifetime := expires.Sub(w.rt.clock())
-	first := "sign-in · waiting for approval · the code expires in " + elapsed(lifetime) + " · resume: string login --poll"
+	first := "sign-in · waiting for approval · the code expires in " + elapsed(lifetime) + " · resume: " + resume
 	for waited := time.Duration(0); waited < lifetime; waited += interval {
 		w.begin(first)
 		w.pause(interval)
 		rt, ok := w.next()
 		if !ok {
-			return "", w.stoppedBefore(expires, "the code", "string login --poll", errLoginExpired)
+			return "", w.stoppedBefore(expires, "the code", resume, expired)
 		}
 		var answer struct {
 			AccessToken string `json:"access_token"`
@@ -334,7 +335,7 @@ func deviceToken(w *waiter, deviceCode string, interval time.Duration, expires t
 		}, &answer)
 		if err != nil {
 			if w.over() {
-				return "", w.stoppedBefore(expires, "the code", "string login --poll", errLoginExpired)
+				return "", w.stoppedBefore(expires, "the code", resume, expired)
 			}
 			return "", err
 		}
@@ -350,19 +351,22 @@ func deviceToken(w *waiter, deviceCode string, interval time.Duration, expires t
 		case "access_denied":
 			return "", errLoginDenied
 		case "expired_token":
-			return "", errLoginExpired
+			return "", expired
 		default:
 			return "", &failure{exit: exitAuth, code: "login_failed", message: "Sign-in failed: " + answer.Error}
 		}
 		w.progress("", "not approved yet")
 	}
-	return "", errLoginExpired
+	return "", expired
 }
 
-var (
-	errLoginExpired = &failure{exit: exitAuth, code: "login_expired", message: "The code expired; run string login again"}
-	errLoginDenied  = &failure{exit: exitAuth, code: "login_denied", message: "Sign-in was denied"}
-)
+var errLoginDenied = &failure{exit: exitAuth, code: "login_denied", message: "Sign-in was denied"}
+
+// loginExpired is the failure for a device code that expired, which a new
+// sign-in replaces: string login, with the global switches given.
+func loginExpired(rt runtime) *failure {
+	return &failure{exit: exitAuth, code: "login_expired", message: "The code expired; run " + rt.suggested("login") + " again"}
+}
 
 func loginCommand(list []string, rt runtime) error {
 	modes := []string{"--with-token", "--no-wait", "--poll"}
@@ -568,6 +572,7 @@ func startSignIn(rt runtime, browser, wait bool, envFile, deviceName string) (pe
 	}
 	link = approvalLink(link, device.UserCode)
 	var shown []byte
+	poll := rt.suggested("login", "--poll")
 	switch {
 	case rt.json:
 		shown, _ = json.Marshal(map[string]any{
@@ -575,13 +580,13 @@ func startSignIn(rt runtime, browser, wait bool, envFile, deviceName string) (pe
 			"user_code":                 device.UserCode,
 			"expires_in":                device.ExpiresIn,
 			"interval":                  device.Interval,
-			"next":                      "string login --poll",
+			"next":                      poll,
 		})
 		shown = append(shown, '\n')
 	case wait:
 		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s.\n", link, device.UserCode))
 	default:
-		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s.\nThen run string login --poll to save the key. The code expires in %d minutes.\n", link, device.UserCode, device.ExpiresIn/60))
+		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s.\nThen run %s to save the key. The code expires in %d minutes.\n", link, device.UserCode, poll, device.ExpiresIn/60))
 	}
 	if err := write(rt.stdout, shown); err != nil {
 		return pendingLogin{}, err
@@ -649,7 +654,7 @@ func finishSignIn(rt runtime, pending pendingLogin, started time.Time) error {
 	if err == nil || (errors.As(err, &refused) && refused.exit != exitRateLimit && refused.exit != exitUpstream && refused.exit != exitTimeout) {
 		os.Remove(pendingFile)
 	} else if refused != nil {
-		refused.nextStep = "run `string login --poll` to finish this sign-in with the same code"
+		refused.nextStep = "run `" + rt.suggested("login", "--poll") + "` to finish this sign-in with the same code"
 	}
 	if err != nil {
 		return err
@@ -753,7 +758,7 @@ func releasedKey(rt runtime, token, deviceName string) (string, error) {
 			refusal.message = err.Error()
 		}
 		if busy {
-			refusal.nextStep = "run `string login` again later, or " + keyByHand
+			refusal.nextStep = "run `" + rt.suggested("login") + "` again later, or " + keyByHand
 		}
 		if seconds, ok := retryAfterSeconds(header); ok {
 			refusal.retryAfter = &seconds
@@ -880,7 +885,7 @@ func whoamiCommand(list []string, rt runtime) error {
 			return &failure{exit: exitAuth, code: "key_refused", status: refused.status, requestID: refused.requestID, message: "String refused " + from + " (" + keyPrefix(key) + ").", nextStep: next}
 		}
 		yes := true
-		return &failure{exit: exitUpstream, code: "unverified", retryable: &yes, message: said + " (" + keyPrefix(key) + "), but string couldn't check it with String.", notes: []string{strings.TrimPrefix(asFailure(err).Error(), "error: ")}, nextStep: "run it again, or `string whoami --offline` to see the key without checking it"}
+		return &failure{exit: exitUpstream, code: "unverified", retryable: &yes, message: said + " (" + keyPrefix(key) + "), but string couldn't check it with String.", notes: []string{strings.TrimPrefix(asFailure(err).Error(), "error: ")}, nextStep: "run it again, or `" + rt.suggested("whoami", "--offline") + "` to see the key without checking it"}
 	}
 	if rt.json {
 		shown["accepted"] = true

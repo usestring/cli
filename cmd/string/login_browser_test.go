@@ -98,7 +98,7 @@ func TestLoginBrowserSavesTheKeyOnceThePersonAuthorizes(t *testing.T) {
 	started := session.run("login", "--browser", "--json")
 	shown := decode(t, started.output).(map[string]any)
 	link = browserLink(t, started.output, service.checks())
-	if want := map[string]any{"verification_uri_complete": link, "expires_in": 900.0, "interval": 3.0, "next": "string login --poll"}; started.status != 0 || !reflect.DeepEqual(shown, want) {
+	if want := map[string]any{"verification_uri_complete": link, "expires_in": 900.0, "interval": 3.0, "next": "string login --poll --json"}; started.status != 0 || !reflect.DeepEqual(shown, want) {
 		t.Errorf("login --browser --json: %+v, want %v", started, want)
 	}
 	var pending pendingLogin
@@ -108,7 +108,7 @@ func TestLoginBrowserSavesTheKeyOnceThePersonAuthorizes(t *testing.T) {
 		t.Errorf("pending.json is not a 0600 file with the session id and verifier that were sent: %v, %v", err, statErr)
 	}
 	done := session.run("login", "--poll", "--json")
-	if want := map[string]any{"status": "logged_in", "team": "Acme", "credentials": session.file("credentials.json")}; done.status != 0 || done.errors != browserWaiting || !reflect.DeepEqual(decode(t, done.output), want) {
+	if want := map[string]any{"status": "logged_in", "team": "Acme", "credentials": session.file("credentials.json")}; done.status != 0 || done.errors != "sign-in · waiting for authorization · the link expires in 15m · resume: string login --poll --json\n" || !reflect.DeepEqual(decode(t, done.output), want) {
 		t.Errorf("login --poll --json: %+v, want %v", done, want)
 	}
 	if _, err := os.Stat(session.file("pending.json")); !os.IsNotExist(err) || strings.Contains(started.output+started.errors+done.output+done.errors, "authorized-key") {
@@ -129,19 +129,21 @@ func TestLoginBrowserSavesTheKeyOnceThePersonAuthorizes(t *testing.T) {
 	}
 }
 
-// Every final answer ends the sign-in and removes pending.json.
+// Every final answer ends the sign-in and removes pending.json. One that a
+// new sign-in can get past names it with the --json given.
 func TestLoginBrowserEndsOnAFinalAnswer(t *testing.T) {
 	for _, c := range []struct {
 		answer  signInAnswer
 		code    string
 		message string
+		next    any
 	}{
-		{signInAnswer{http.StatusOK, `{"status":"denied"}`, ""}, "login_denied", "Sign-in was denied"},
-		{signInAnswer{http.StatusOK, `{"status":"expired"}`, ""}, "login_expired", "The sign-in link expired; run string login --browser again"},
-		{signInAnswer{http.StatusBadRequest, `{"status":"error","error":"invalid_verifier"}`, ""}, "invalid_verifier", "String did not accept this sign-in (invalid_verifier)"},
-		{signInAnswer{http.StatusConflict, `{"status":"error","error":"key_limit"}`, ""}, "key_limit", "Your organization already has as many API keys as it may have"},
+		{signInAnswer{http.StatusOK, `{"status":"denied"}`, ""}, "login_denied", "Sign-in was denied", nil},
+		{signInAnswer{http.StatusOK, `{"status":"expired"}`, ""}, "login_expired", "The sign-in link expired; run string login --browser --json again", nil},
+		{signInAnswer{http.StatusBadRequest, `{"status":"error","error":"invalid_verifier"}`, ""}, "invalid_verifier", "String did not accept this sign-in (invalid_verifier)", "run `string login --browser --json` again"},
+		{signInAnswer{http.StatusConflict, `{"status":"error","error":"key_limit"}`, ""}, "key_limit", "Your organization already has as many API keys as it may have", "delete one at https://portal.usestring.ai/api-keys, then run `string login --browser --json` again"},
 		// An answer this CLI doesn't know ends it with what the portal said.
-		{signInAnswer{http.StatusOK, `{"status":"withdrawn","message":"The request was withdrawn."}`, ""}, "login_failed", "Sign-in failed: The request was withdrawn."},
+		{signInAnswer{http.StatusOK, `{"status":"withdrawn","message":"The request was withdrawn."}`, ""}, "login_failed", "Sign-in failed: The request was withdrawn.", nil},
 	} {
 		service := &signInService{status: []signInAnswer{browserPending, c.answer}}
 		service.start(t)
@@ -153,8 +155,8 @@ func TestLoginBrowserEndsOnAFinalAnswer(t *testing.T) {
 		got := session.run("login", "--poll", "--json")
 
 		envelope := decode(t, lastLine(got.errors)).(map[string]any)["error"].(map[string]any)
-		if got.status != exitAuth || got.output != "" || envelope["code"] != c.code || envelope["message"] != c.message {
-			t.Errorf("%s: %+v, want exit %d, %s and %q", c.answer.body, got, exitAuth, c.code, c.message)
+		if got.status != exitAuth || got.output != "" || envelope["code"] != c.code || envelope["message"] != c.message || envelope["next_step"] != c.next {
+			t.Errorf("%s: %+v, want exit %d, %s, %q and the next step %v", c.answer.body, got, exitAuth, c.code, c.message, c.next)
 		}
 		for _, name := range []string{"credentials.json", "pending.json"} {
 			if _, err := os.Stat(session.file(name)); !os.IsNotExist(err) {

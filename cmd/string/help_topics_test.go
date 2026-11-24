@@ -25,6 +25,10 @@ func TestHelpTopics(t *testing.T) {
 	if got := runOffline(t, "help", "exit-code"); got.status != exitUsage || got.errors != "error: No help on exit-code. Did you mean exit-codes?\n\nnext: run `string help exit-codes`\n" {
 		t.Errorf("string help exit-code: %+v", got)
 	}
+	// The topic it names keeps the switches given.
+	if got := runOffline(t, "help", "exit-code", "-q"); got.status != exitUsage || got.errors != "error: No help on exit-code. Did you mean exit-codes?\n\nnext: run `string help exit-codes -q`\n" {
+		t.Errorf("string help exit-code -q: %+v", got)
+	}
 	// A command's near miss still names the command.
 	if got := runOffline(t, "help", "fecth"); got.status != exitUsage || !strings.HasPrefix(got.errors, "error: Unknown command: fecth. Did you mean fetch?") {
 		t.Errorf("string help fecth: %+v", got)

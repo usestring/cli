@@ -79,26 +79,28 @@ func TestLoginPollUnderAnAgentStopsAfter90sAndKeepsTheCode(t *testing.T) {
 		t.Errorf("the token endpoint was asked about %v, and %d codes were issued; want the one code 18 times", codes, issued)
 	}
 
-	// With --json, the error is the last line on stderr.
+	// With --json, the error is the last line on stderr, and the poll it names
+	// keeps --json.
 	service = &signInService{token: []signInAnswer{signInPending}}
 	service.start(t)
 	session = newSignInSession(t)
 	session.env["STRING_AGENT"] = "codex"
 	got = session.startThenPoll(t, "--json")
-	if got.status != exitTimeout || got.output != "" || !strings.HasPrefix(got.errors, signInWaiting) {
+	if got.status != exitTimeout || got.output != "" || !strings.HasPrefix(got.errors, signInWaitingWith("--json")) {
 		t.Errorf("login --poll --json: %+v", got)
 	}
-	expectJSON(t, lastLine(got.errors), "{\"error\":{\"code\":\"wait_timeout\",\"message\":\"Stopped waiting after 90s; the code expires in 8m30s.\",\"next_step\":\""+signInPoll+"\",\"retry_after_seconds\":null,\"exit_code\":7,\"retryable\":true,\"user_action_required\":false,\"next_commands\":[{\"type\":\"wait\",\"command\":\"string login --poll\",\"argv\":[\"string\",\"login\",\"--poll\"]}]}}")
+	expectJSON(t, lastLine(got.errors), "{\"error\":{\"code\":\"wait_timeout\",\"message\":\"Stopped waiting after 90s; the code expires in 8m30s.\",\"next_step\":\""+signInPollWith("--json")+"\",\"retry_after_seconds\":null,\"exit_code\":7,\"retryable\":true,\"user_action_required\":false,\"next_commands\":[{\"type\":\"wait\",\"command\":\"string login --poll --json\",\"argv\":[\"string\",\"login\",\"--poll\",\"--json\"]}]}}")
 
-	// A code that has expired ends login --poll at once, with nothing to resume.
+	// A code that has expired ends login --poll at once, with nothing to resume,
+	// and the new sign-in it names keeps the switches given.
 	session = newSignInSession(t)
 	session.env["STRING_AGENT"] = "codex"
 	if got := session.run("login", "--no-wait"); got.status != 0 {
 		t.Fatalf("login --no-wait: %+v", got)
 	}
 	session.now = session.now.Add(11 * time.Minute)
-	if got := session.run("login", "--poll"); got.status != exitAuth || got.errors != "error: The code expired; run string login again\n" {
-		t.Errorf("login --poll after the code expired: %+v", got)
+	if got := session.run("login", "--poll", "--timeout", "5m"); got.status != exitAuth || got.errors != "error: The code expired; run string login --timeout 5m again\n" {
+		t.Errorf("login --poll --timeout 5m after the code expired: %+v", got)
 	}
 
 	// A code that runs out as the wait reaches its limit has expired too, and
@@ -153,9 +155,10 @@ func TestSignInWaitLastsAsLongAsItsLimit(t *testing.T) {
 		} else {
 			got = session.startThenPoll(t, c.flags...)
 		}
+		// The command that resumes the wait keeps the --timeout given.
 		ended := ""
 		if c.stopped != "" {
-			ended = "error: " + c.stopped + "\n\nnext: " + signInPoll + "\n"
+			ended = "error: " + c.stopped + "\n\nnext: " + signInPollWith(c.flags...) + "\n"
 		}
 		polls := len(service.codes())
 		switch {
@@ -165,8 +168,8 @@ func TestSignInWaitLastsAsLongAsItsLimit(t *testing.T) {
 			t.Errorf("%s: exit %d: %s", c.about, got.status, got.errors)
 		case c.person && got.errors != ended:
 			t.Errorf("%s: stderr %q, want only %q", c.about, got.errors, ended)
-		case !c.person && !strings.HasPrefix(got.errors, signInWaiting):
-			t.Errorf("%s: stderr %q, want it to start with %q", c.about, got.errors, signInWaiting)
+		case !c.person && !strings.HasPrefix(got.errors, signInWaitingWith(c.flags...)):
+			t.Errorf("%s: stderr %q, want it to start with %q", c.about, got.errors, signInWaitingWith(c.flags...))
 		}
 	}
 }
@@ -306,7 +309,7 @@ func TestASignInPollThatRunsIntoTheLimitStopsTheWait(t *testing.T) {
 
 	got := session.startThenPoll(t, "--timeout", "300ms")
 
-	if got.status != exitTimeout || !strings.Contains(got.errors, "\nerror: Stopped waiting after 300ms; the code expires in ") || !strings.HasSuffix(got.errors, "\n\nnext: "+signInPoll+"\n") || service.requests("/oauth/token") != 1 {
+	if got.status != exitTimeout || !strings.Contains(got.errors, "\nerror: Stopped waiting after 300ms; the code expires in ") || !strings.HasSuffix(got.errors, "\n\nnext: "+signInPollWith("--timeout", "300ms")+"\n") || service.requests("/oauth/token") != 1 {
 		t.Errorf("a poll that ran into the limit: %+v after %d polls, want exit 7, the wait stopped, and 1 poll", got, service.requests("/oauth/token"))
 	}
 	if done := session.run("login", "--poll"); done.status != 0 {
@@ -340,10 +343,120 @@ func TestASignInPollThatRunsIntoTheLimitStopsTheWait(t *testing.T) {
 		sleep:  func(time.Duration) {},
 		exec:   execCtxFor(env, false, false, false),
 	})
-	if status != exitTimeout || !strings.HasPrefix(stderr.String(), "error: Stopped waiting after 300ms; the code expires in ") || !strings.HasSuffix(stderr.String(), "\n\nnext: run `string trial claim --poll`\n") {
+	if status != exitTimeout || !strings.HasPrefix(stderr.String(), "error: Stopped waiting after 300ms; the code expires in ") || !strings.HasSuffix(stderr.String(), "\n\nnext: run `string trial claim --poll --timeout 300ms`\n") {
 		t.Errorf("a claim poll that ran into the limit: exit %d: %s", status, stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, "trial.json")); err != nil {
 		t.Errorf("trial.json is gone after the wait stopped: %v", err)
+	}
+}
+
+// The poll that finishes a sign-in or a claim keeps the global switches
+// given, wherever string names it: with the link, in a refusal, on the line
+// that starts the wait and in the error that stops it. The poll named runs
+// as the command given did.
+func TestASignInOrClaimNamesItsPollWithTheGlobalSwitches(t *testing.T) {
+	service := &signInService{status: thenExpired(browserPending)}
+	service.start(t)
+	session := newSignInSession(t)
+	session.env["STRING_AGENT"] = "claude-code"
+	if got := session.run("login", "--browser", "--timeout", "5m"); got.status != 0 || !strings.HasSuffix(got.output, "\nThen run string login --poll --timeout 5m to save the key. The link expires in 15 minutes.\n") {
+		t.Errorf("login --browser --timeout 5m: %+v", got)
+	}
+	if got := session.run("login", "--poll", "--timeout", "30s"); got.status != exitTimeout ||
+		!strings.HasPrefix(got.errors, "sign-in · waiting for authorization · the link expires in 15m · resume: string login --poll --timeout 30s\n") ||
+		!strings.HasSuffix(got.errors, "error: Stopped waiting after 30s; the link expires in 14m30s.\n\nnext: run `string login --poll --timeout 30s`\n") {
+		t.Errorf("login --poll --timeout 30s on a browser sign-in: %+v", got)
+	}
+
+	service = &signInService{token: []signInAnswer{signInApproved}, key: []signInAnswer{signInKey}}
+	service.start(t)
+	session = newSignInSession(t)
+	session.env["STRING_AGENT"] = "claude-code"
+	started := session.run("login", "--json", "--timeout", "5m")
+	poll, _ := decode(t, started.output).(map[string]any)["next"].(string)
+	if started.status != 0 || poll != "string login --poll --json --timeout 5m" {
+		t.Fatalf("login --json --timeout 5m: %+v", started)
+	}
+	if done := session.run(strings.Fields(poll)[1:]...); done.status != 0 || decode(t, done.output).(map[string]any)["status"] != "logged_in" {
+		t.Errorf("%s: %+v", poll, done)
+	}
+
+	type answer struct {
+		status int
+		body   string
+	}
+	var mu sync.Mutex
+	start, token := answer{http.StatusOK, claimAttemptAnswer}, answer{http.StatusBadRequest, `{"error":"authorization_pending","error_description":"Not yet."}`}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reply := start
+		if r.URL.Path == "/api/agent-signup/token" {
+			reply = token
+		}
+		mu.Unlock()
+		w.WriteHeader(reply.status)
+		io.WriteString(w, reply.body)
+	}))
+	t.Cleanup(server.Close)
+	defer func(p string) { portalURL = p }(portalURL)
+	portalURL = server.URL
+	home, _ := claimHome(t)
+	clock := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	claim := func(list ...string) result {
+		var stdout, stderr bytes.Buffer
+		env := envOf(map[string]string{"HOME": home, "STRING_AGENT": "claude-code"})
+		status := run(list, runtime{
+			env:    env,
+			client: http.DefaultClient,
+			stdout: &stdout,
+			stderr: &stderr,
+			sleep:  func(d time.Duration) { clock = clock.Add(d) },
+			now:    func() time.Time { return clock },
+			exec:   execCtxFor(env, false, false, false),
+		})
+		return result{status, stdout.String(), stderr.String()}
+	}
+	if got := claim("trial", "claim", "--email", "dev@localhost", "--no-wait", "-q"); got.status != 0 || !strings.HasSuffix(got.output, "\nThen run string trial claim --poll -q to collect the key. The code expires in 10 minutes.\n") {
+		t.Errorf("trial claim --no-wait -q: %+v", got)
+	}
+	shown := claim("trial", "claim", "--email", "dev@localhost", "--json", "--timeout", "5m")
+	poll, _ = decode(t, shown.output).(map[string]any)["next"].(string)
+	if shown.status != 0 || poll != "string trial claim --poll --json --timeout 5m" {
+		t.Fatalf("trial claim --json --timeout 5m: %+v", shown)
+	}
+	mu.Lock()
+	start = answer{http.StatusBadRequest, `{"error":"claimed_or_in_flight","error_description":"This registration has already been claimed."}`}
+	mu.Unlock()
+	refused := claim("trial", "claim", "--email", "dev@localhost", "--errors", "json")
+	if envelope := decode(t, lastLine(refused.errors)).(map[string]any)["error"].(map[string]any); refused.status != exitFailure || envelope["next_step"] != "run `string trial claim --poll --errors json` to collect the key" {
+		t.Errorf("a claim already in flight, with --errors json: %+v", refused)
+	}
+	if got := claim("trial", "claim", "--poll", "--timeout", "30s"); got.status != exitTimeout ||
+		!strings.HasPrefix(got.errors, "claim · waiting for dev@localhost to enter the code · the code expires in 10m · resume: string trial claim --poll --timeout 30s\n") ||
+		!strings.HasSuffix(got.errors, "error: Stopped waiting after 30s; the code expires in 9m30s.\n\nnext: run `string trial claim --poll --timeout 30s`\n") {
+		t.Errorf("trial claim --poll --timeout 30s: %+v", got)
+	}
+	// A code that expired leads to a new claim for the same address, which
+	// keeps the switches, and the address as typed.
+	mu.Lock()
+	token = answer{http.StatusBadRequest, `{"error":"expired_token","error_description":"No claim code is live."}`}
+	mu.Unlock()
+	expired := claim("trial", "claim", "--poll", "--errors", "json")
+	if envelope := decode(t, lastLine(expired.errors)).(map[string]any)["error"].(map[string]any); expired.status != exitAuth || envelope["next_step"] != "run `string trial claim --email dev@localhost --errors json` for a new code" {
+		t.Errorf("a claim code that expired, with --errors json: %+v", expired)
+	}
+	if got := commandLine([]string{"fetch", "@notes", "dev@localhost"}); got != "string fetch '@notes' dev@localhost" {
+		t.Errorf("an @ quoted as %s, want it quoted only at the start of a word", got)
+	}
+
+	mu.Lock()
+	start, token = answer{http.StatusOK, claimAttemptAnswer}, answer{http.StatusOK, `{"access_token":"claimed-key","token_type":"Bearer","organization_id":9}`}
+	mu.Unlock()
+	if again := claim("trial", "claim", "--email", "dev@localhost", "--json", "--timeout", "5m"); again.status != 0 {
+		t.Fatalf("a new claim: %+v", again)
+	}
+	if done := claim(strings.Fields(poll)[1:]...); done.status != 0 || decode(t, done.output).(map[string]any)["status"] != "claimed" {
+		t.Errorf("%s: %+v", poll, done)
 	}
 }
