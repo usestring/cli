@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -161,39 +162,48 @@ func wrapItems(lead string, items []string) string {
 	return b.String()
 }
 
-// The shapes of string help --json.
+// The shapes of string help --json. Every token of it costs an agent that
+// reads it, so what is empty, false or the same as elsewhere is left out:
+// a flag that several commands take is said once, in sharedFlags.
 type (
 	helpSchema struct {
-		Name          string                    `json:"name"`
-		Version       string                    `json:"version"`
-		SchemaVersion int                       `json:"schemaVersion"`
-		Spellings     string                    `json:"spellings"`
-		GlobalFlags   []flagSchema              `json:"globalFlags"`
-		Commands      []commandSchema           `json:"commands"`
-		APIFields     map[string]fieldSetSchema `json:"apiFields"`
-		ExitCodes     []exitCodeSchema          `json:"exitCodes"`
-		Env           []envSchema               `json:"env"`
-		Topics        []string                  `json:"topics"`
-		Schemas       map[string]any            `json:"schemas"`
+		Name          string       `json:"name"`
+		Version       string       `json:"version"`
+		SchemaVersion int          `json:"schemaVersion"`
+		Spellings     string       `json:"spellings"`
+		GlobalFlags   []flagSchema `json:"globalFlags"`
+		// SharedFlags are the flags more than one command takes, by name.
+		SharedFlags map[string]flagSchema     `json:"sharedFlags,omitempty"`
+		Commands    []commandSchema           `json:"commands"`
+		APIFields   map[string]fieldSetSchema `json:"apiFields"`
+		ExitCodes   []exitCodeSchema          `json:"exitCodes"`
+		Env         []envSchema               `json:"env"`
+		Topics      []string                  `json:"topics"`
+		Schemas     map[string]any            `json:"schemas"`
 	}
 	commandSchema struct {
-		Path    []string    `json:"path"`
-		Aliases [][]string  `json:"aliases,omitempty"`
-		Summary string      `json:"summary"`
-		Usage   string      `json:"usage"`
-		Args    []argSchema `json:"args"`
-		// Flags are the command's own; APIFields names the set in apiFields
-		// whose request fields it takes as flags too.
-		Flags     []flagSchema  `json:"flags"`
-		APIFields string        `json:"apiFields,omitempty"`
-		Returns   returnsSchema `json:"returns"`
-		Cost      costSchema    `json:"cost"`
-		Effects   string        `json:"effects"`
-		ExitCodes []int         `json:"exitCodes"`
-		Examples  []string      `json:"examples"`
+		Path    []string   `json:"path"`
+		Aliases [][]string `json:"aliases,omitempty"`
+		Summary string     `json:"summary"`
+		// Usage is left out when it says only the path and the args.
+		Usage string      `json:"usage,omitempty"`
+		Args  []argSchema `json:"args,omitempty"`
+		// Flags are the command's own, SharedFlags name those of sharedFlags
+		// it takes, and APIFields names the set in apiFields whose request
+		// fields it takes as flags too.
+		Flags       []flagSchema  `json:"flags,omitempty"`
+		SharedFlags []string      `json:"sharedFlags,omitempty"`
+		APIFields   string        `json:"apiFields,omitempty"`
+		Returns     returnsSchema `json:"returns"`
+		Cost        costSchema    `json:"cost"`
+		Effects     string        `json:"effects"`
+		ExitCodes   []int         `json:"exitCodes"`
+		// Examples are in the help of the commands named, not of all of them.
+		Examples []string `json:"examples,omitempty"`
 	}
 	// fieldSetSchema is one API endpoint's request fields, which every
 	// command that sends to it takes as flags, spelled as the API spells them.
+	// Each field's description is in the help of the commands named.
 	fieldSetSchema struct {
 		Docs string `json:"docs"`
 		// Keyless are the fields a keyless call takes; any other needs a key.
@@ -203,29 +213,30 @@ type (
 	argSchema struct {
 		Name     string `json:"name"`
 		Type     string `json:"type"`
-		Required bool   `json:"required"`
+		Optional bool   `json:"optional,omitempty"`
 	}
+	// flagSchema is a flag. Its value is what follows it, such as N or FILE,
+	// or =false for a switch that is on unless turned off.
 	flagSchema struct {
-		Name        string   `json:"name"`
+		Name        string   `json:"name,omitempty"`
 		Short       string   `json:"short,omitempty"`
 		Aliases     []string `json:"aliases,omitempty"`
 		Type        string   `json:"type"`
 		Value       string   `json:"value,omitempty"`
-		Default     *bool    `json:"default,omitempty"`
-		Description string   `json:"description"`
+		Description string   `json:"description,omitempty"`
 	}
 	returnsSchema struct {
 		Stdout string `json:"stdout"`
-		JSON   bool   `json:"json"`
+		JSON   bool   `json:"json,omitempty"`
 	}
 	costSchema struct {
 		Summary string `json:"summary"`
-		Keyless bool   `json:"keyless"`
+		Keyless bool   `json:"keyless,omitempty"`
 	}
 	exitCodeSchema struct {
 		Code    int    `json:"code"`
 		Meaning string `json:"meaning"`
-		Retry   bool   `json:"retry"`
+		Retry   bool   `json:"retry,omitempty"`
 	}
 	envSchema struct {
 		Name        string `json:"name"`
@@ -257,12 +268,7 @@ var valueTypes = map[string]string{"": "bool", "=false": "bool", "N": "int", "US
 // set named set.
 func flagSchemaOf(f flagDoc, set string) flagSchema {
 	described := flagSchema{Name: f.name, Short: f.short, Type: cmp.Or(valueTypes[f.value], "string"), Value: f.value, Description: f.about}
-	switch {
-	case f.value == "=false":
-		// A switch that is on unless turned off.
-		on := true
-		described.Value, described.Default = "", &on
-	case f.name == strings.ToUpper(f.name):
+	if f.name == strings.ToUpper(f.name) {
 		// It stands for every field of an action's input.
 		described.Type = "any"
 	}
@@ -278,17 +284,22 @@ func flagSchemaOf(f flagDoc, set string) flagSchema {
 	return described
 }
 
-// fieldSetOf describes the request fields of the page named set.
-func fieldSetOf(set string) fieldSetSchema {
+// fieldSetOf describes the request fields of the page named set, with what
+// each does when described is set.
+func fieldSetOf(set string, described bool) fieldSetSchema {
 	page := commandDocs[set]
-	described := fieldSetSchema{Docs: page.more, Fields: []flagSchema{}}
+	fields := fieldSetSchema{Docs: page.more, Fields: []flagSchema{}}
 	for _, f := range page.fields {
-		described.Fields = append(described.Fields, flagSchemaOf(f, set))
+		field := flagSchemaOf(f, set)
+		if !described {
+			field.Description = ""
+		}
+		fields.Fields = append(fields.Fields, field)
 		if slices.Contains(keylessFields[set], f.name) {
-			described.Keyless = append(described.Keyless, f.name)
+			fields.Keyless = append(fields.Keyless, f.name)
 		}
 	}
-	return described
+	return fields
 }
 
 // fieldSet names the set of request fields that l takes, or is empty when it
@@ -346,13 +357,10 @@ func schemaOf(l leaf) commandSchema {
 	described := commandSchema{
 		Path:      words,
 		Summary:   page.summary,
-		Args:      []argSchema{},
-		Flags:     []flagSchema{},
 		Returns:   returnsSchema{Stdout: l.stdout, JSON: l.json},
 		Cost:      costSchema{Summary: l.costs, Keyless: l.keyless},
 		Effects:   l.effects,
 		ExitCodes: l.exits,
-		Examples:  []string{},
 		APIFields: l.fieldSet(),
 	}
 	if len(words) > 1 {
@@ -368,13 +376,14 @@ func schemaOf(l leaf) commandSchema {
 			usages = append(usages, line)
 		}
 	}
-	described.Usage = strings.Join(usages, "\n")
-	if described.Usage == "" {
-		described.Usage = strings.TrimSpace("string " + l.path + " " + strings.Join(l.args, " "))
+	// A usage is left out when the path, the args and the flags say it all:
+	// one line that offers no choice, as between --poll and --no-wait.
+	if described.Usage = strings.Join(usages, "\n"); !strings.ContainsAny(described.Usage, "|\n") {
+		described.Usage = ""
 	}
 	for _, arg := range l.args {
 		name := strings.Trim(arg, "[]")
-		described.Args = append(described.Args, argSchema{Name: strings.ToLower(name), Type: cmp.Or(argTypes[name], "string"), Required: !strings.HasPrefix(arg, "[")})
+		described.Args = append(described.Args, argSchema{Name: strings.ToLower(name), Type: cmp.Or(argTypes[name], "string"), Optional: strings.HasPrefix(arg, "[")})
 	}
 	for _, f := range page.flags {
 		global := slices.ContainsFunc(globalFlagDocs, func(g flagDoc) bool { return g.name == f.name })
@@ -390,6 +399,26 @@ func schemaOf(l leaf) commandSchema {
 	}
 	described.Examples = append(described.Examples, l.examples...)
 	return described
+}
+
+// sharedFlagsOf are the flags that more than one of every command takes,
+// each the same in all of them, by name and without it.
+func sharedFlagsOf() map[string]flagSchema {
+	takers := map[string][]flagSchema{}
+	for _, l := range leaves {
+		for _, f := range schemaOf(l).Flags {
+			takers[f.Name] = append(takers[f.Name], f)
+		}
+	}
+	shared := map[string]flagSchema{}
+	for name, all := range takers {
+		if len(all) > 1 && !slices.ContainsFunc(all[1:], func(f flagSchema) bool { return !reflect.DeepEqual(f, all[0]) }) {
+			f := all[0]
+			f.Name = ""
+			shared[name] = f
+		}
+	}
+	return shared
 }
 
 // beforeDashes is list up to its first --, after which every word is an
@@ -475,10 +504,11 @@ var errorSchema = map[string]any{
 }
 
 // helpJSON is string help --json, for the commands that words name, or every
-// command when words is empty.
+// command when words is empty. The help of the commands named adds their
+// examples and what each request field does.
 func helpJSON(rt runtime, words []string) error {
-	chosen := leaves
-	if len(words) > 0 && words[0] != "help" {
+	chosen, named := leaves, len(words) > 0 && words[0] != "help"
+	if named {
 		if chosen = leavesNamed(words); len(chosen) == 0 {
 			// Its next step asks for the schema of the command meant.
 			return unknownCommand(words[0], append(slices.Clone(words[1:]), "--help", "--json"))
@@ -486,18 +516,31 @@ func helpJSON(rt runtime, words []string) error {
 	}
 	described := helpSchema{
 		Name: "string", Version: version, SchemaVersion: 1, Spellings: spellings,
-		GlobalFlags: []flagSchema{}, Commands: []commandSchema{}, APIFields: map[string]fieldSetSchema{}, ExitCodes: []exitCodeSchema{}, Env: []envSchema{},
+		GlobalFlags: []flagSchema{}, SharedFlags: map[string]flagSchema{}, Commands: []commandSchema{}, APIFields: map[string]fieldSetSchema{}, ExitCodes: []exitCodeSchema{}, Env: []envSchema{},
 		Topics:  helpTopicNames,
 		Schemas: map[string]any{"Error": errorSchema},
 	}
 	for _, f := range globalFlagDocs {
 		described.GlobalFlags = append(described.GlobalFlags, flagSchemaOf(f, ""))
 	}
+	shared := sharedFlagsOf()
 	for _, l := range chosen {
 		command := schemaOf(l)
+		// A shared flag is named here and said once, in sharedFlags.
+		command.Flags = slices.DeleteFunc(command.Flags, func(f flagSchema) bool {
+			if s, ok := shared[f.Name]; ok {
+				command.SharedFlags = append(command.SharedFlags, f.Name)
+				described.SharedFlags[f.Name] = s
+				return true
+			}
+			return false
+		})
+		if !named {
+			command.Examples = nil
+		}
 		described.Commands = append(described.Commands, command)
 		if set := command.APIFields; set != "" {
-			described.APIFields[set] = fieldSetOf(set)
+			described.APIFields[set] = fieldSetOf(set, named)
 		}
 	}
 	for _, e := range exitCodeDocs {
