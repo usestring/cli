@@ -118,7 +118,7 @@ page, about ten results, is billed as one search, so ask `--searchCount` for onl
   `estimatedPages`) and charges nothing. Show the user the quote and get their approval before
   `string sitemap approve JOB_ID --wait`, which starts the crawl and the charge; `submit --approve`
   skips the quote, so use it only when they already agreed to the spend. Then read
-  `string sitemap results JOB_ID --limit 100 --offset 0`.
+  `string sitemap results JOB_ID --limit 100`, or every page with `--all -o urls.ndjson`.
 - `--wait` first prints the command that resumes it. Under an agent it stops after 90 seconds with
   exit 7 and the crawl keeps running: run the `next` command. A `409` with `partial_state` from
   `approve` or `status` means the approval didn't complete: run the approve command again.

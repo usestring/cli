@@ -55,7 +55,7 @@ var (
 	// basicExits are those of a command that can only fail or be misused.
 	basicExits = []int{0, 1, 2}
 	jobFlags   = []string{"wait", "output"}
-	listFlags  = []string{"limit", "offset", "output"}
+	listFlags  = []string{"limit", "offset", "all", "output"}
 )
 
 // leaves are every command, in the order help --all lists them: the leaves of

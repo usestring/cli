@@ -172,6 +172,8 @@ string sitemap list
 string sitemap cancel JOB_ID
 ```
 
+`--all` prints every record of every page from `--offset` on, one JSON object a line, so `string sitemap results JOB_ID --all --fields url,statusCode` lists a whole crawl. When a page after the first fails, the error gives the `--offset` that reads on from it. With `-o FILE`, the file is written once every page is read.
+
 `--wait` first prints the job and the command that resumes the wait to stderr:
 
 ```

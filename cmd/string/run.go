@@ -147,6 +147,10 @@ type operation struct {
 	// them to print, or 0 for all.
 	records string
 	limit   int
+	// all is sitemap's --all: every record of the list, page by page from
+	// start, its --offset.
+	all   bool
+	start int
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -836,14 +840,17 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 		return nil, nil
 	}
 	action := list[0]
-	parsed, err := parse(list[1:], spec{options: []string{"limit", "offset", "output"}, switches: []string{"approve", "wait"}, fields: sitemapFields})
+	parsed, err := parse(list[1:], spec{options: []string{"limit", "offset", "output"}, switches: []string{"approve", "wait", "all"}, fields: sitemapFields})
 	if err != nil || parsed.help {
 		return nil, err
 	}
 	limit, hasLimit := parsed.value("limit")
 	offset, hasOffset := parsed.value("offset")
-	approve, wait := parsed.switches["approve"], parsed.switches["wait"]
+	approve, wait, all := parsed.switches["approve"], parsed.switches["wait"], parsed.switches["all"]
 	errPaging := errors.New("--limit and --offset apply to list or results")
+	if all && action != "results" && action != "list" {
+		return nil, errors.New("--all applies to sitemap results or list")
+	}
 	if action != "submit" {
 		if fields := flagged(parsed); len(fields) > 0 {
 			return nil, fmt.Errorf("--%s applies only to sitemap submit", fields[0])
@@ -903,6 +910,13 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 		}
 		return &operation{method: methods[action], path: path, output: output, wait: wait, job: parsed.positionals[0], changes: action != "status"}, nil
 	case "results", "list":
+		if all && hasLimit {
+			return nil, errors.New("--all reads every page, and --limit one page of N; use one or the other")
+		}
+		op := &operation{method: "GET", path: "/sitemap" + id, output: output, records: "jobs", all: all}
+		if action == "results" {
+			op.path, op.records = op.path+"/urls", "urls"
+		}
 		var query []string
 		if hasLimit {
 			n, err := boundedInteger(limit, "--limit", 1, "positive")
@@ -917,15 +931,13 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 				return nil, err
 			}
 			query = append(query, "offset="+strconv.FormatInt(n, 10))
+			op.start = int(n)
 		}
-		path := "/sitemap" + id
-		if action == "results" {
-			path += "/urls"
+		// --all asks for each page itself.
+		if len(query) > 0 && !all {
+			op.path += "?" + strings.Join(query, "&")
 		}
-		if len(query) > 0 {
-			path += "?" + strings.Join(query, "&")
-		}
-		return &operation{method: "GET", path: path, output: output}, nil
+		return op, nil
 	}
 	return nil, fmt.Errorf("Unknown sitemap command: %s", action)
 }
@@ -1242,6 +1254,9 @@ func execute(list []string, rt runtime) error {
 		return usage(err)
 	}
 	caller := apiClient{rt: rt, base: base, key: key}
+	if op.all {
+		return caller.everyPage(op)
+	}
 	started := rt.clock()
 	// The parts of a page after the first come from the local copy the first
 	// part saved, so reading a long page in parts spends one fetch.

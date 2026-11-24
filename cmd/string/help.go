@@ -352,18 +352,19 @@ var commandDocs = map[string]commandDoc{
 			"string sitemap submit URL [flags] [--approve] [--wait]",
 			"string sitemap approve JOB_ID [--wait]",
 			"string sitemap status JOB_ID [--wait]",
-			"string sitemap results JOB_ID [--limit N] [--offset N]",
-			"string sitemap list [--limit N] [--offset N]",
+			"string sitemap results JOB_ID [--limit N] [--offset N] [--all]",
+			"string sitemap list [--limit N] [--offset N] [--all]",
 			"string sitemap cancel JOB_ID",
 		},
 		examples: []string{
 			"string sitemap submit https://docs.example.com --maxPages 200",
 			"string sitemap approve JOB_ID --wait",
 			"string sitemap results JOB_ID --limit 100",
+			"string sitemap results JOB_ID --all --fields url,statusCode",
 		},
 		returns: []string{
 			"stdout   JSON: the quote (jobId, estimatedCostUsd, estimatedPages), the job,",
-			"         or its pages",
+			"         or its pages; with --all, each record of every page on its own line",
 			"exit     0 ok · 1 the crawl failed or was canceled · 2 bad input",
 			"         · 3 needs a key · 4 out of credit · 7 the wait stopped, and the crawl",
 			"         keeps running",
@@ -374,6 +375,7 @@ var commandDocs = map[string]commandDoc{
 			{name: "wait", about: "wait for the crawl to end: 90s at most under an agent"},
 			{name: "limit", value: "N", about: "how many results or jobs to show", scope: ", for results and list"},
 			{name: "offset", value: "N", about: "how many to skip first", scope: ", for results and list"},
+			{name: "all", about: "every record of every page from --offset on, one JSON object a line, in place of --limit's one page", scope: ", for results and list"},
 			{name: "output", short: "o", value: "FILE", about: "write the response to FILE instead of stdout"},
 			{name: "input", value: "FILE", about: "more request fields, from a JSON object in FILE or - for stdin", scope: " (submit only)"},
 		},
@@ -389,8 +391,8 @@ var commandDocs = map[string]commandDoc{
 			{path: "sitemap submit", args: []string{"URL"}, line: "quote a crawl; --approve starts it", costs: "key; spends on --approve", effects: "spend", flags: []string{"approve", "wait", "output", "input", "maxPages", "maxDepth", "pathPrefix", "budgetUsd", "useSitemap"}, exits: requestExits, stdout: "application/json", json: true},
 			{path: "sitemap approve", args: []string{"JOB_ID"}, line: "start a quoted crawl; --wait", costs: "key; spends the quote", effects: "spend", flags: jobFlags, exits: requestExits, stdout: "application/json", json: true},
 			{path: "sitemap status", args: []string{"JOB_ID"}, line: "a crawl's state; --wait follows it", costs: "key", effects: "read", flags: jobFlags, examples: []string{"string sitemap status JOB_ID --wait"}, exits: askExits, stdout: "application/json", json: true},
-			{path: "sitemap results", args: []string{"JOB_ID"}, line: "a crawl's pages; --limit N --offset N", costs: "key", effects: "read", flags: listFlags, exits: askExits, stdout: "application/json", json: true, records: "urls"},
-			{path: "sitemap list", line: "your crawls; --limit N --offset N", costs: "key", effects: "read", flags: listFlags, examples: []string{"string sitemap list --limit 20"}, exits: askExits, stdout: "application/json", json: true, records: "jobs"},
+			{path: "sitemap results", args: []string{"JOB_ID"}, line: "a crawl's pages; --limit N --offset N --all", costs: "key", effects: "read", flags: listFlags, exits: askExits, stdout: "application/json", json: true, records: "urls"},
+			{path: "sitemap list", line: "your crawls; --limit N --offset N --all", costs: "key", effects: "read", flags: listFlags, examples: []string{"string sitemap list --limit 20"}, exits: askExits, stdout: "application/json", json: true, records: "jobs"},
 			{path: "sitemap cancel", args: []string{"JOB_ID"}, line: "stop a crawl", costs: "key", effects: "write", flags: []string{"output"}, examples: []string{"string sitemap cancel JOB_ID"}, exits: askExits, stdout: "application/json", json: true},
 		},
 	},
@@ -763,6 +765,8 @@ its runner cuts the output.
                         and host, and a Markdown page's outline. -o - is stdout
   -q, --quiet           no status lines on stderr: no notes, receipts or wait
                         lines. Errors and the keyless allowance stay
+  --all                 sitemap results and list print every record of every
+                        page, one JSON object a line (NDJSON)
   --max-tokens N        fetch prints about N tokens, and stderr says which part
   --offset N            it is and the next part's command; parts after the
                         first come from a local copy, at no cost
