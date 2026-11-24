@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,24 +14,28 @@ import (
 )
 
 // The global switches come out wherever they are before "--", and nothing
-// after it is touched.
+// after it is touched. What came out is kept as it was given.
 func TestGlobalSwitchesComeOutAnywhereBeforeTheDoubleDash(t *testing.T) {
 	for _, c := range []struct {
 		list, kept []string
 		want       globalSwitches
 	}{
-		{[]string{"login", "--no-input"}, []string{"login"}, globalSwitches{noInput: true}},
-		{[]string{"--json", "--no-open", "login", "--no-wait"}, []string{"login", "--no-wait"}, globalSwitches{json: true, noOpen: true}},
-		{[]string{"-y", "fetch", "https://example.com", "--yes"}, []string{"fetch", "https://example.com"}, globalSwitches{}},
-		{[]string{"--timeout", "90s", "fetch", "https://example.com"}, []string{"fetch", "https://example.com"}, globalSwitches{hasTimeout: true, timeout: "90s"}},
-		{[]string{"search", "golang", "--timeout=5m", "--json"}, []string{"search", "golang"}, globalSwitches{json: true, hasTimeout: true, timeout: "5m"}},
-		{[]string{"login", "--poll", "--timeout"}, []string{"login", "--poll"}, globalSwitches{hasTimeout: true}},
+		{[]string{"login", "--no-input"}, []string{"login"}, globalSwitches{noInput: true, given: []string{"--no-input"}}},
+		{[]string{"--json", "--no-open", "login", "--no-wait"}, []string{"login", "--no-wait"}, globalSwitches{json: true, noOpen: true, given: []string{"--json", "--no-open"}}},
+		{[]string{"-y", "fetch", "https://example.com", "--yes"}, []string{"fetch", "https://example.com"}, globalSwitches{given: []string{"-y", "--yes"}}},
+		{[]string{"--timeout", "90s", "fetch", "https://example.com"}, []string{"fetch", "https://example.com"}, globalSwitches{hasTimeout: true, timeout: "90s", given: []string{"--timeout", "90s"}}},
+		{[]string{"search", "golang", "--timeout=5m", "--JSON"}, []string{"search", "golang"}, globalSwitches{json: true, hasTimeout: true, timeout: "5m", given: []string{"--timeout=5m", "--JSON"}}},
+		{[]string{"login", "--poll", "--timeout"}, []string{"login", "--poll"}, globalSwitches{hasTimeout: true, given: []string{"--timeout"}}},
 		{[]string{"search", "--", "--no-input", "-y", "--json", "--timeout", "5"}, []string{"search", "--", "--no-input", "-y", "--json", "--timeout", "5"}, globalSwitches{}},
 	} {
 		kept, got := takeGlobalSwitches(c.list)
-		if !slices.Equal(kept, c.kept) || got != c.want {
+		if !slices.Equal(kept, c.kept) || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%q: kept %q and %+v, want %q and %+v", c.list, kept, got, c.kept, c.want)
 		}
+	}
+	// They go back before any "--" for a command string suggests.
+	if got := withSwitches([]string{"search", "a", "--", "-b"}, []string{"-q", "--errors", "json"}); !slices.Equal(got, []string{"search", "a", "-q", "--errors", "json", "--", "-b"}) {
+		t.Errorf("withSwitches: %q", got)
 	}
 	// No command asks anything yet, so -y and --yes change nothing.
 	for _, list := range [][]string{{"-y", "--version"}, {"--version", "--yes"}} {

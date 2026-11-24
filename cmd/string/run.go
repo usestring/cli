@@ -68,6 +68,9 @@ type runtime struct {
 	// quiet is -q: no status lines on stderr, only errors and the keyless
 	// allowance.
 	quiet bool
+	// switches are the global switches as given, such as --json, which a
+	// command string suggests repeats.
+	switches []string
 }
 
 func (rt runtime) binary() (string, error) {
@@ -123,7 +126,8 @@ type operation struct {
 	changes bool
 	// note goes to stderr before the call, as when https:// was added to a URL.
 	note string
-	// line is the command as it was given, which a suggestion repeats.
+	// line is the command as it was given, global switches included, which a
+	// suggestion repeats.
 	line []string
 	// siteStatus is the status the fetched site answered, from X-Status-Code.
 	siteStatus string
@@ -913,7 +917,10 @@ func encodeURIComponent(value string) string {
 	return out.String()
 }
 
-func operationFor(command string, list []string, stdin io.Reader) (*operation, error) {
+// operationFor is the request command makes with the arguments in list. For
+// a command string doesn't have, the command meant is suggested with list
+// and switches, the global switches given.
+func operationFor(command string, list, switches []string, stdin io.Reader) (*operation, error) {
 	switch command {
 	case "fetch":
 		return fetchCommand(list, stdin)
@@ -924,7 +931,7 @@ func operationFor(command string, list []string, stdin io.Reader) (*operation, e
 	case "sitemap":
 		return sitemapCommand(list, stdin)
 	}
-	return nil, unknownCommand(command, list)
+	return nil, unknownCommand(command, withSwitches(list, switches))
 }
 
 // decodeText decodes a response body as fetch's Response.text() does:
@@ -960,6 +967,9 @@ type globalSwitches struct {
 	timeout    string // --timeout's value
 	errors     string // --errors's value: json or text
 	quiet      bool   // -q or --quiet
+	// given are the switches as they were given, in order, which a command
+	// string suggests repeats.
+	given []string
 }
 
 // takeGlobalSwitches removes the global switches from the arguments before
@@ -968,7 +978,7 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 	var found globalSwitches
 	kept := make([]string, 0, len(list))
 	for i := 0; i < len(list); i++ {
-		arg := list[i]
+		arg, from := list[i], i
 		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout", "--errors", "--quiet"}); ok {
 			arg = global
 		}
@@ -1007,16 +1017,29 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 			found.errors = strings.TrimPrefix(arg, "--errors=")
 		default:
 			kept = append(kept, arg)
+			continue
 		}
+		found.given = append(found.given, list[from:i+1]...)
 	}
 	return kept, found
+}
+
+// withSwitches is list with switches, the global switches given, put back
+// before any "--": the command as it was given, for a suggestion to repeat
+// so that it runs as this one did.
+func withSwitches(list, switches []string) []string {
+	end := slices.Index(list, "--")
+	if end < 0 {
+		end = len(list)
+	}
+	return slices.Concat(list[:end], switches, list[end:])
 }
 
 func run(list []string, rt runtime) int {
 	list, global := takeGlobalSwitches(list)
 	rt.json, rt.exec.noOpen = global.json, global.noOpen
 	rt.exec.noInput = rt.exec.noInput || global.noInput
-	rt.quiet = global.quiet
+	rt.quiet, rt.switches = global.quiet, global.given
 	// --errors json gives JSON errors, as --json does, and leaves stdout as
 	// it is.
 	jsonErrors := rt.json || global.errors == "json"
@@ -1105,14 +1128,14 @@ func execute(list []string, rt runtime) error {
 	case "update":
 		return updateCommand(list[1:], rt)
 	}
-	op, err := operationFor(list[0], list[1:], rt.stdin)
+	op, err := operationFor(list[0], list[1:], rt.switches, rt.stdin)
 	if err != nil {
 		return usage(err)
 	}
 	if op == nil {
 		return write(rt.stdout, []byte(helpFor(list[0])))
 	}
-	op.command, op.line = list[0], list
+	op.command, op.line = list[0], withSwitches(list, rt.switches)
 	if op.output != "" && op.output != "-" {
 		if err := checkOutput(op.output); err != nil {
 			return err

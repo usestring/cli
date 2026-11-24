@@ -128,3 +128,26 @@ func TestAPageReadInPartsSpendsOneFetch(t *testing.T) {
 		t.Errorf("withOffset: %v", got)
 	}
 }
+
+// A command string suggests repeats the global switches given, wherever
+// they were, so that it runs as the one given did: the next part's command,
+// and the size notice's.
+func TestASuggestedCommandRepeatsTheGlobalSwitches(t *testing.T) {
+	body := "# Example Domain\n\nThis domain is for use in examples.\n"
+	base := api(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, body)
+	})
+	for list, next := range map[string]string{
+		"fetch https://example.com --max-tokens 5 --errors json":    "string fetch https://example.com --max-tokens 5 --errors json --offset 5",
+		"--json fetch https://example.com --max-tokens 5":           "string fetch https://example.com --max-tokens 5 --json --offset 5",
+		"fetch https://example.com --max-tokens 5 --timeout=30s -q": "string fetch https://example.com --max-tokens 5 --timeout=30s -q --offset 5",
+	} {
+		if got := runFetching(base, map[string]string{"HOME": t.TempDir()}, strings.Fields(list)...); got.status != 0 || !strings.HasSuffix(got.errors, ". next: "+next+"\n") {
+			t.Errorf("string %s: %+v, want next: %s", list, got, next)
+		}
+	}
+	body = strings.Repeat("Example text.\n", 1500)
+	if got := runFetching(base, map[string]string{"HOME": t.TempDir()}, "fetch", "https://example.com", "--errors", "json"); !strings.Contains(got.errors, "Save it and read parts: string fetch https://example.com --errors json -o page.md\nOr page it: string fetch https://example.com --errors json --max-tokens 6000\n") {
+		t.Errorf("a big page: stderr %q", got.errors)
+	}
+}
