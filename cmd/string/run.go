@@ -148,9 +148,11 @@ type operation struct {
 	records string
 	limit   int
 	// all is sitemap's --all: every record of the list, page by page from
-	// start, its --offset.
-	all   bool
-	start int
+	// start, its --offset. pageSize is how many records a page of results or
+	// list holds: --limit, or the API's own.
+	all      bool
+	start    int
+	pageSize int
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -913,9 +915,9 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 		if all && hasLimit {
 			return nil, errors.New("--all reads every page, and --limit one page of N; use one or the other")
 		}
-		op := &operation{method: "GET", path: "/sitemap" + id, output: output, records: "jobs", all: all}
+		op := &operation{method: "GET", path: "/sitemap" + id, output: output, records: "jobs", all: all, pageSize: 20}
 		if action == "results" {
-			op.path, op.records = op.path+"/urls", "urls"
+			op.path, op.records, op.pageSize = op.path+"/urls", "urls", 1000
 		}
 		var query []string
 		if hasLimit {
@@ -924,6 +926,7 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 				return nil, err
 			}
 			query = append(query, "limit="+strconv.FormatInt(n, 10))
+			op.pageSize = int(n)
 		}
 		if hasOffset {
 			n, err := boundedInteger(offset, "--offset", 0, "nonnegative")
@@ -1278,8 +1281,18 @@ func execute(list []string, rt runtime) error {
 			return ended
 		}
 	}
+	// What a crawl's answer leads to ends its JSON, and stderr says the first.
+	// A wait that failed has its own steps, in its error.
+	var next []nextCommand
+	if op.command == "sitemap" && ended == nil {
+		next = sitemapNext(op, data, rt.switches)
+		data = withNext(data, next)
+	}
 	if err := caller.emit(op, data); err != nil {
 		return err
+	}
+	if len(next) > 0 && !rt.quiet {
+		fmt.Fprint(rt.stderr, nextLine(next))
 	}
 	return ended
 }
@@ -1516,10 +1529,8 @@ func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([
 		case "canceled":
 			return status, &failure{exit: exitFailure, code: "crawl_canceled", message: "The crawl was canceled."}
 		case "awaiting_approval":
-			approve := withSwitches([]string{"sitemap", "approve", job, "--wait"}, c.rt.switches)
-			line := commandLine(approve)
-			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `" + line + "`",
-				next: []nextCommand{{Type: stepFix, Command: line, Argv: append([]string{"string"}, approve...), Why: "starts the crawl at its quoted cost, which needs the user's go"}}}
+			approve := approveStep(job, string(quote.Cost), c.rt.switches)
+			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `" + approve.Command + "`", next: []nextCommand{approve}}
 		case "running":
 		default:
 			// Waiting on a status string doesn't know could last forever.

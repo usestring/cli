@@ -131,11 +131,11 @@ func TestSitemapWaitRedrawsOnlyForAPerson(t *testing.T) {
 	// the rest every 3s, so the seventh running one comes at 15s.
 	statuses := []string{crawlRunning, crawlRunning, crawlRunning, crawlRunning, crawlRunning, crawlRunning, crawlRunning, `{"jobId":"job-1","status":"completed"}`}
 	person := runCrawl((&crawlAPI{statuses: statuses}).start(t), execCtx{stderrTTY: true}, "sitemap", "status", "job-1", "--wait")
-	if person.status != 0 || !strings.Contains(person.errors, "\r\x1b[KCrawling: 1200 pages done, 3400 queued") || strings.Contains(person.errors, "waiting:") || !strings.HasSuffix(person.errors, "queued\n") {
+	if person.status != 0 || !strings.Contains(person.errors, "\r\x1b[KCrawling: 1200 pages done, 3400 queued") || strings.Contains(person.errors, "waiting:") || !strings.HasSuffix(person.errors, "queued\nnext: string sitemap results job-1 --limit 100\n") {
 		t.Errorf("a person: %+v", person)
 	}
 	agent := runCrawl((&crawlAPI{statuses: statuses}).start(t), execCtx{stdinTTY: true, stdoutTTY: true, stderrTTY: true, agent: "codex"}, "sitemap", "status", "job-1", "--wait")
-	if want := "job job-1 · running · resume: string sitemap status job-1 --wait\nwaiting: running · 1,200 pages done, 3,400 queued · 15s\n"; agent.status != 0 || agent.errors != want {
+	if want := "job job-1 · running · resume: string sitemap status job-1 --wait\nwaiting: running · 1,200 pages done, 3,400 queued · 15s\nnext: string sitemap results job-1 --limit 100\n"; agent.status != 0 || agent.errors != want {
 		t.Errorf("an agent at a terminal: %+v, want stderr %q", agent, want)
 	}
 }

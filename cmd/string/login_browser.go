@@ -74,7 +74,7 @@ func startBrowserSignIn(rt runtime, wait bool, envFile string) (pendingLogin, er
 	var shown []byte
 	// The poll prints the key it saves, not this link, so it leaves out
 	// --fields: see carried.
-	poll := commandLine(withSwitches([]string{"login", "--poll"}, carried(rt.switches)))
+	poll := nextStep(stepWait, withSwitches([]string{"login", "--poll"}, carried(rt.switches)), "saves the key once the user signs in at the link")
 	switch {
 	case rt.json:
 		var encoded bytes.Buffer
@@ -85,13 +85,14 @@ func startBrowserSignIn(rt runtime, wait bool, envFile string) (pendingLogin, er
 			"verification_uri_complete": link,
 			"expires_in":                int(browserWindow / time.Second),
 			"interval":                  pending.Interval,
-			"next":                      poll,
+			"next":                      poll.Command,
+			"next_commands":             []nextCommand{poll},
 		})
 		shown = encoded.Bytes()
 	case wait:
 		shown = []byte(open + link + "\n")
 	default:
-		shown = []byte(fmt.Sprintf("%s%s\nThen run %s to save the key. The link expires in %d minutes.\n", open, link, poll, int(browserWindow/time.Minute)))
+		shown = []byte(fmt.Sprintf("%s%s\nThen run %s to save the key. The link expires in %d minutes.\n", open, link, poll.Command, int(browserWindow/time.Minute)))
 	}
 	if err := write(rt.stdout, shown); err != nil {
 		return pendingLogin{}, err

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -327,5 +328,45 @@ func TestTrialClaimStopsWhenTheClaimCannotGoOn(t *testing.T) {
 	saved, err := loadCredentials(filepath.Join(dir, "credentials.json"))
 	if err != nil || saved.APIKey != "trial-key" {
 		t.Errorf("a claim that didn't finish replaced the key: %+v, %v", saved, err)
+	}
+}
+
+// trial claim --json gives the link and code with the step that waits for
+// the person, which repeats the global switches given.
+func TestTrialClaimJSONEndsWithThePollStep(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, claimAttemptAnswer)
+	}))
+	t.Cleanup(server.Close)
+	defer func(p string) { portalURL = p }(portalURL)
+	portalURL = server.URL
+
+	home, _ := claimHome(t)
+	var stdout, stderr bytes.Buffer
+	rt := runtime{
+		env:    envOf(map[string]string{"HOME": home}),
+		client: http.DefaultClient,
+		stdout: &stdout,
+		stderr: &stderr,
+		sleep:  func(time.Duration) {},
+	}
+	poll := []nextCommand{{Type: stepWait, Command: "string trial claim --poll --json", Argv: []string{"string", "trial", "claim", "--poll", "--json"}, Why: "saves a key on their account once they enter the code"}}
+	for _, list := range [][]string{
+		{"trial", "claim", "--email", "dev@localhost", "--json"},
+		// The poll prints the key, not this link, so it leaves out --fields.
+		{"trial", "claim", "--email", "dev@localhost", "--json", "--fields", "user_code,next,next_commands"},
+	} {
+		stdout.Reset()
+		if status := run(list, rt); status != 0 {
+			t.Fatalf("string %s: status %d: %s", strings.Join(list, " "), status, stderr.String())
+		}
+		var shown struct {
+			UserCode string        `json:"user_code"`
+			Next     string        `json:"next"`
+			Steps    []nextCommand `json:"next_commands"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &shown); err != nil || shown.UserCode != "123456" || shown.Next != "string trial claim --poll --json" || !reflect.DeepEqual(shown.Steps, poll) {
+			t.Errorf("string %s printed %s, %v", strings.Join(list, " "), stdout.String(), err)
+		}
 	}
 }

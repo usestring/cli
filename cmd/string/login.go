@@ -574,7 +574,7 @@ func startSignIn(rt runtime, browser, wait bool, envFile, deviceName string) (pe
 	var shown []byte
 	// The poll prints the key it saves, not this link, so it leaves out
 	// --fields: see carried.
-	poll := commandLine(withSwitches([]string{"login", "--poll"}, carried(rt.switches)))
+	poll := nextStep(stepWait, withSwitches([]string{"login", "--poll"}, carried(rt.switches)), "saves the key once the user approves at the link")
 	switch {
 	case rt.json:
 		shown, _ = json.Marshal(map[string]any{
@@ -582,13 +582,14 @@ func startSignIn(rt runtime, browser, wait bool, envFile, deviceName string) (pe
 			"user_code":                 device.UserCode,
 			"expires_in":                device.ExpiresIn,
 			"interval":                  device.Interval,
-			"next":                      poll,
+			"next":                      poll.Command,
+			"next_commands":             []nextCommand{poll},
 		})
 		shown = append(shown, '\n')
 	case wait:
 		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s.\n", link, device.UserCode))
 	default:
-		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s.\nThen run %s to save the key. The code expires in %d minutes.\n", link, device.UserCode, poll, device.ExpiresIn/60))
+		shown = []byte(fmt.Sprintf("Open %s and confirm the code %s.\nThen run %s to save the key. The code expires in %d minutes.\n", link, device.UserCode, poll.Command, device.ExpiresIn/60))
 	}
 	if err := write(rt.stdout, shown); err != nil {
 		return pendingLogin{}, err

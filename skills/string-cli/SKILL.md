@@ -128,8 +128,8 @@ page, about ten results, is billed as one search, so ask `--searchCount` for onl
 stderr ends with `error: …` and a `next:` line naming the step to take. With `--json`, or
 `--errors json`, the error is one JSON object, the last line of stderr:
 `{"error":{"code","message","exit_code","retryable","user_action_required","next_commands",…}}`.
-Each entry of `next_commands` has a `type`. Run `fix_command`, `retry` and `wait` steps yourself;
-`login`, `trial` and `env` steps follow the key rules above; `tell_user` and `pay` go to the user.
+Each entry of `next_commands` has a `type`. Run `fix_command`, `retry`, `wait` and `read` yourself;
+`login`, `trial` and `env` follow the key rules above; `spend`, `tell_user` and `pay` go to the user.
 
 | Exit | Meaning | What to do |
 | --- | --- | --- |

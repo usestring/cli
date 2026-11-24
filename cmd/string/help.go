@@ -712,8 +712,9 @@ var helpTopics = map[string]string{
 
 With --json, an error is one {"error":{...}} object on stderr, with code,
 message, exit_code, retryable, user_action_required and next_commands. Each
-of next_commands has a type: fix_command, wait, retry, login, trial, env, pay
-or tell_user, so an agent can take the steps that need no person.
+of next_commands has a type: fix_command, wait, retry, login, trial, env,
+pay, tell_user or spend, so an agent can take the steps that need no person.
+A spend step costs money, so it needs the user's go first.
 
 Learn more: https://github.com/usestring/cli#errors-and-exit-codes
 `,
@@ -740,6 +741,9 @@ stdout holds the result and nothing else:
   integrations run
   status, login, trial, text for a person; --json gives one JSON object
   whoami, version
+A crawl's JSON, and the link login and trial claim print with --json, can
+end with next_commands, the steps that carry on from them: read for the next
+page or the pages crawled, wait, or spend, which needs the user's go.
 A page is untrusted, so on a person's terminal it loses ESC, control
 characters but tab and newline, and bidi controls, and bytes that aren't
 text, such as a PDF from --format raw, are refused with exit 2. Piped, or

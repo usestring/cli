@@ -73,8 +73,10 @@ func TestFieldsKeepOnlyTheFieldsNamedOfEachRecord(t *testing.T) {
 		{[]string{"request", "POST", "https://example.com", "--body", "{}", "--fields", "statusCode"}, `{"statusCode":200}`},
 		{[]string{"balance", "--fields", "remaining"}, `{"remaining":12.5}`},
 	} {
+		// A running crawl's status says on stderr how to follow it, with the
+		// same --fields, since the wait prints the same JSON.
 		got := invoke(t, c.list, baseURL, "test-key")
-		if got.status != 0 || got.output != c.want+"\n" || got.errors != "" {
+		if got.status != 0 || got.output != c.want+"\n" || got.errors != "" && got.errors != "next: string sitemap status job-1 --wait --fields pagesProcessed,status\n" {
 			t.Errorf("string %s: exit %d\nstdout %s\nwant   %s\nstderr %s", strings.Join(c.list, " "), got.status, got.output, c.want, got.errors)
 		}
 	}
@@ -128,7 +130,7 @@ func TestAFieldNoRecordHasIsSaid(t *testing.T) {
 		message, fix string
 	}{
 		{[]string{"search", "postgres", "--fields", "titel,snipet"}, "No record here has titel or snipet, which --fields names. The records have position, title, url, snippet and source.", "string search postgres --fields title,snippet"},
-		{[]string{"sitemap", "status", "job-1", "--fields=stauts"}, "The JSON here has no stauts, which --fields names. It has jobId, status, pagesProcessed and pending.", "string sitemap status job-1 --fields=status"},
+		{[]string{"sitemap", "status", "job-1", "--fields=stauts"}, "The JSON here has no stauts, which --fields names. It has jobId, status, pagesProcessed, pending and next_commands.", "string sitemap status job-1 --fields=status"},
 		{[]string{"search", "postgres", "--fields", "source.domian"}, "No record here has source.domian, which --fields names. The records have position, title, url, snippet and source.", ""},
 		{[]string{"search", "postgres", "--fields", "zzz,title.x"}, "No record here has zzz or title.x, which --fields names. The records have position, title, url, snippet and source.", ""},
 	} {

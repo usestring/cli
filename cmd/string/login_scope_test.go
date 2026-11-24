@@ -113,10 +113,11 @@ func TestLoginShowsAndOpensStringsApprovalPage(t *testing.T) {
 		}
 		if args[1] == "--json" {
 			started := decode(t, stdout.String()).(map[string]any)
-			if fields := slices.Sorted(maps.Keys(started)); !reflect.DeepEqual(fields, []string{"expires_in", "interval", "next", "user_code", "verification_uri_complete"}) {
+			if fields := slices.Sorted(maps.Keys(started)); !reflect.DeepEqual(fields, []string{"expires_in", "interval", "next", "next_commands", "user_code", "verification_uri_complete"}) {
 				t.Errorf("--json fields %q", fields)
 			}
-			if started["verification_uri_complete"] != want || started["user_code"] != "ABCD-EFGH" {
+			poll := []any{map[string]any{"type": "wait", "command": "string login --poll --json", "argv": []any{"string", "login", "--poll", "--json"}, "why": "saves the key once the user approves at the link"}}
+			if started["verification_uri_complete"] != want || started["user_code"] != "ABCD-EFGH" || !reflect.DeepEqual(started["next_commands"], poll) {
 				t.Errorf("--json printed %q", stdout.String())
 			}
 		} else if !strings.HasPrefix(stdout.String(), "Open "+want+" and confirm the code ABCD-EFGH.\n") {

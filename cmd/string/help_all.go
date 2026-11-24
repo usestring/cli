@@ -496,7 +496,7 @@ var errorSchema = map[string]any{
 						"type":     "object",
 						"required": []string{"type"},
 						"properties": map[string]any{
-							"type":    map[string]any{"enum": []string{stepFix, stepWait, stepRetry, stepLogin, stepTrial, stepEnv, stepPay, stepTell}},
+							"type":    map[string]any{"enum": []string{stepFix, stepWait, stepRetry, stepLogin, stepTrial, stepEnv, stepPay, stepTell, stepRead, stepSpend}},
 							"command": map[string]any{"type": "string"},
 							"argv":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 							"why":     map[string]any{"type": "string"},
