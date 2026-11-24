@@ -385,7 +385,7 @@ func loginCommand(list []string, rt runtime) error {
 	if parsed.help {
 		return write(rt.stdout, []byte(helpFor("login")))
 	}
-	if err := expectPositionals(parsed.positionals, 0, "string login [--with-token | --no-wait | --poll] [--browser] [--env-file PATH] [--device-name NAME]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 0, "string login [--with-token | --no-wait | --poll] [--browser] [--env-file FILE] [--device-name NAME]"); err != nil {
 		return usage(err)
 	}
 	if _, ok := parsed.value("input"); ok {

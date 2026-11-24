@@ -733,7 +733,7 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 		return nil, err
 	}
 	method := strings.ToUpper(parsed.positionals[0])
-	if method != "POST" && method != "PUT" && method != "PATCH" {
+	if !slices.Contains(requestMethods, method) {
 		return nil, errors.New("Request method must be POST, PUT, or PATCH")
 	}
 	text, hasText := parsed.value("body")
@@ -1044,6 +1044,12 @@ func (rt runtime) suggested(args ...string) string {
 }
 
 func run(list []string, rt runtime) int {
+	// A shell asks what can come next on the line it completes, which is
+	// words as typed and not flags for string to act on.
+	if len(list) > 0 && list[0] == "__complete" {
+		completeCommand(list[1:], rt)
+		return 0
+	}
 	list, global := takeGlobalSwitches(list)
 	rt.json, rt.exec.noOpen = global.json, global.noOpen
 	rt.exec.noInput = rt.exec.noInput || global.noInput
@@ -1135,6 +1141,8 @@ func execute(list []string, rt runtime) error {
 		return balanceCommand(list[1:], rt)
 	case "update":
 		return updateCommand(list[1:], rt)
+	case "completion":
+		return completionCommand(list[1:], rt)
 	}
 	op, err := operationFor(list[0], list[1:], rt.switches, rt.stdin)
 	if err != nil {
