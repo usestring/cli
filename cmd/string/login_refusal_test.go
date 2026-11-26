@@ -62,6 +62,9 @@ type signInService struct {
 	token  []signInAnswer
 	key    []signInAnswer
 	status []signInAnswer
+	// trial answers trial registrations in turn. Without it the stand-in
+	// offers no trial keys, as a 404.
+	trial []signInAnswer
 	// during, when set, runs as each request arrives, given its path.
 	during func(path string)
 
@@ -136,6 +139,12 @@ func (s *signInService) start(t *testing.T) {
 			}
 			s.asked = append(s.asked, check)
 			next(&s.status, w, r)
+		case "/api/agent-signup/identity":
+			if s.trial == nil {
+				http.NotFound(w, r)
+				return
+			}
+			next(&s.trial, w, r)
 		default:
 			http.NotFound(w, r)
 		}

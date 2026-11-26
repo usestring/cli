@@ -97,6 +97,43 @@ func trialCommand(list []string, rt runtime) error {
 	if saved.APIKey != "" {
 		return usage(fmt.Errorf("A key is already saved in %s. Run string logout first to replace it with a trial key.", path))
 	}
+	trial, err := registerTrial(rt, path)
+	if err != nil {
+		return err
+	}
+	if rt.json {
+		var expiresAt *time.Time // null: the key doesn't expire
+		if !trial.expires.IsZero() {
+			expiresAt = &trial.expires
+		}
+		shown, _ := json.Marshal(map[string]any{
+			"status":              "registered",
+			"balance_usd":         trial.balanceUSD,
+			"expires_at":          expiresAt,
+			"credentials":         path,
+			"claim_token_expires": trial.claimTokenExpires,
+			"trial":               trial.file,
+		})
+		return write(rt.stdout, append(shown, '\n'))
+	}
+	return write(rt.stdout, []byte(trial.text(path)))
+}
+
+// registeredTrial is a trial key that registerTrial saved.
+type registeredTrial struct {
+	balanceUSD string
+	// expires is zero for a key that doesn't expire.
+	expires           time.Time
+	claimTokenExpires time.Time
+	// file is trial.json, which holds the claim token.
+	file string
+}
+
+// registerTrial asks the portal for a trial key, solving its proof of work,
+// and saves the key in path, with the claim token in trial.json beside it. A
+// portal that doesn't offer trial keys gives a trial_unavailable failure.
+// string trial and string init both register through it.
+func registerTrial(rt runtime, path string) (registeredTrial, error) {
 	registrationFile, _ := trialPath(rt.env)
 
 	endpoint := portalURL + "/api/agent-signup/identity"
@@ -108,23 +145,23 @@ func trialCommand(list []string, rt runtime) error {
 	for attempt := 0; err == nil && status == http.StatusUnauthorized && answer.Error == "proof_of_work_required" && attempt < 2; attempt++ {
 		nonce, solveErr := solveProofOfWork(rt, answer.ProofOfWork)
 		if solveErr != nil {
-			return solveErr
+			return registeredTrial{}, solveErr
 		}
 		request["proof"] = map[string]string{"challenge": answer.ProofOfWork.Challenge, "nonce": nonce}
 		answer = trialAnswer{}
 		status, err = postJSON(rt, endpoint, request, &answer)
 	}
 	if notOffered(status, err, answer.portalRefusal) {
-		return trialUnavailable(status)
+		return registeredTrial{}, trialUnavailable(status)
 	}
 	if err != nil {
-		return err
+		return registeredTrial{}, err
 	}
 	if status != http.StatusOK {
-		return trialFailure(status, answer.portalRefusal, "Trial registration")
+		return registeredTrial{}, trialFailure(status, answer.portalRefusal, "Trial registration")
 	}
 	if answer.AccessToken == "" || !validKey(answer.AccessToken) || answer.ClaimToken == "" {
-		return errors.New("The portal did not return a usable trial key")
+		return registeredTrial{}, errors.New("The portal did not return a usable trial key")
 	}
 
 	expires := trialKeyExpiry(answer.AccessTokenExpires, rt.clock())
@@ -136,33 +173,24 @@ func trialCommand(list []string, rt runtime) error {
 		ClaimTokenExpires: answer.ClaimTokenExpires,
 	}
 	if err := writePrivate(registrationFile, registration); err != nil {
-		return err
+		return registeredTrial{}, err
 	}
 	if err := saveCredentials(path, credentials{APIKey: answer.AccessToken}); err != nil {
-		return err
+		return registeredTrial{}, err
 	}
-	if rt.json {
-		var expiresAt *time.Time // null: the key doesn't expire
-		if !expires.IsZero() {
-			expiresAt = &expires
-		}
-		shown, _ := json.Marshal(map[string]any{
-			"status":              "registered",
-			"balance_usd":         answer.BalanceUSD,
-			"expires_at":          expiresAt,
-			"credentials":         path,
-			"claim_token_expires": answer.ClaimTokenExpires,
-			"trial":               registrationFile,
-		})
-		return write(rt.stdout, append(shown, '\n'))
-	}
+	return registeredTrial{balanceUSD: answer.BalanceUSD, expires: expires, claimTokenExpires: answer.ClaimTokenExpires, file: registrationFile}, nil
+}
+
+// text says what the key in path can spend, how long it lasts and how long a
+// person has to claim the agent, without printing the key or the token.
+func (t registeredTrial) text(path string) string {
 	lifetime := "It doesn't expire"
-	if !expires.IsZero() {
-		lifetime = "It works until " + expires.UTC().Format(time.RFC1123)
+	if !t.expires.IsZero() {
+		lifetime = "It works until " + t.expires.UTC().Format(time.RFC1123)
 	}
-	return write(rt.stdout, []byte(fmt.Sprintf(
+	return fmt.Sprintf(
 		"Registered a trial key with $%s of credit. %s and is saved in %s.\nA person can claim this agent onto their String account until %s. The claim token is saved in %s.\n",
-		answer.BalanceUSD, lifetime, path, answer.ClaimTokenExpires.UTC().Format(time.RFC1123), registrationFile)))
+		t.balanceUSD, lifetime, path, t.claimTokenExpires.UTC().Format(time.RFC1123), t.file)
 }
 
 // trialKeyExpiry is when a trial key stops working, or the zero time when it
