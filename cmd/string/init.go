@@ -244,10 +244,11 @@ func initCommand(list []string, rt runtime) error {
 			// Nobody here approves a sign-in, so init first registers a trial
 			// key, which needs nobody: the agent can use it at once, and a
 			// person can claim the agent onto their account later. --browser
-			// and --device-name ask for a sign-in instead. A key setting init
-			// could not read, a portal without trial keys, or one that refuses
-			// this one leaves the sign-in below as it was.
-			if path, ok := credentialsPath(rt.env); ok && keyErr == nil && !browser && deviceName == "" {
+			// only picks the sign-in init falls back to, while --device-name
+			// names a sign-in's key, so it asks for the sign-in instead. A key
+			// setting init could not read, a portal without trial keys, or one
+			// that refuses this one leaves the sign-in below as it was.
+			if path, ok := credentialsPath(rt.env); ok && keyErr == nil && deviceName == "" {
 				trial, err := registerTrial(rt, path)
 				if err == nil {
 					fmt.Fprintf(&report, "\n%s", trial.text(path))

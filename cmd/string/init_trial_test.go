@@ -114,7 +114,6 @@ func TestInitRegistersATrialKeyOnlyWhenNobodyCanApproveASignIn(t *testing.T) {
 		{about: "a person at a terminal", terminal: true},
 		{about: "CI", env: map[string]string{"CI": "true"}},
 		{about: "--no-login under an agent", env: map[string]string{"STRING_AGENT": "my-bot"}, args: []string{"--no-login"}},
-		{about: "--browser under an agent", env: map[string]string{"STRING_AGENT": "my-bot"}, args: []string{"--browser"}},
 		{about: "--device-name under an agent", env: map[string]string{"STRING_AGENT": "my-bot"}, args: []string{"--device-name", "build box"}},
 		{about: "a key set under an agent", env: map[string]string{"STRING_AGENT": "my-bot", "STRING_API_KEY": "set-key"}},
 		{about: "a key setting init cannot use", env: map[string]string{"STRING_AGENT": "my-bot", "STRING_API_KEY": "not a key"}},
@@ -136,6 +135,29 @@ func TestInitRegistersATrialKeyOnlyWhenNobodyCanApproveASignIn(t *testing.T) {
 		if _, err := os.Stat(session.file("trial.json")); !os.IsNotExist(err) {
 			t.Errorf("%s: trial.json is there: %v", c.about, err)
 		}
+	}
+}
+
+// --browser picks the sign-in init falls back to; the trial key still comes
+// first.
+func TestInitBrowserUnderAnAgentFallsBackToTheBrowserSignIn(t *testing.T) {
+	service := &signInService{trial: []signInAnswer{{http.StatusOK, trialRegistered, ""}}}
+	service.start(t)
+	session := newSignInSession(t)
+	if got := session.run("init", "--browser"); got.status != 0 || !strings.Contains(got.output, "\n\nRegistered a trial key with $0.50 of credit.") || strings.Contains(got.output, "Signing in") || len(service.checks()) != 0 {
+		t.Errorf("init --browser with trial keys offered: %+v", got)
+	}
+
+	service = &signInService{status: []signInAnswer{browserPending, browserComplete}}
+	service.start(t)
+	session = newSignInSession(t)
+	got := session.run("init", "--browser")
+	link := browserLink(t, got.output, service.checks())
+	if !strings.HasSuffix(got.output, "\n\nSigning in. string fetch and string search already work without a key, within a daily allowance. For more:\nOpen this link, sign in to String or create an account, and click Authorize:\n"+link+"\nThen run string login --poll to save the key. The link expires in 15 minutes.\n") || service.requests("/api/agent-signup/identity") != 1 {
+		t.Errorf("init --browser with no trial keys: %+v", got)
+	}
+	if done := session.run("login", "--poll"); done.status != 0 || !strings.HasPrefix(done.output, "Logged in to Acme.") {
+		t.Errorf("login --poll after init --browser: %+v", done)
 	}
 }
 

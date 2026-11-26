@@ -442,7 +442,7 @@ var commandDocs = map[string]commandDoc{
 			{name: "agent", value: "NAME[,NAME...]", about: "only these agents, each in its own skills directory, such as claude-code, codex, cursor or gemini-cli"},
 			{name: "no-mcp", about: "don't add String's MCP server to Claude Code and Codex"},
 			{name: "no-login", about: "skip the sign-in and the trial key"},
-			{name: "browser", about: "sign in as string login --browser does, with no trial key"},
+			{name: "browser", about: "sign in as string login --browser does"},
 			{name: "device-name", value: "NAME", about: "the machine's name in the new key's name"},
 		},
 		more: "https://github.com/usestring/cli#agent-skills",
