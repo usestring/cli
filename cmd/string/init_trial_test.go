@@ -31,7 +31,7 @@ func TestInitUnderAnAgentRegistersATrialKeyAndStartsNoSignIn(t *testing.T) {
 
 	got := session.run("init")
 
-	registered := fmt.Sprintf("\n\nRegistered a trial key with $0.50 of credit. It doesn't expire and is saved in %s.\nA person can claim this agent onto their String account until Wed, 25 Nov 2026 12:00:00 UTC. The claim token is saved in %s.\n", session.file("credentials.json"), session.file("trial.json"))
+	registered := fmt.Sprintf("\n\nRegistered a trial key with $0.50 of credit. It doesn't expire and is saved in %s.\nA person can claim this agent onto their String account until Wed, 25 Nov 2026 12:00:00 UTC. The claim token is saved in %s.\nRun string fetch https://example.com to check the key.\n", session.file("credentials.json"), session.file("trial.json"))
 	if got.status != 0 || got.errors != "" || !strings.HasPrefix(got.output, "Installed the string-cli skill") || !strings.HasSuffix(got.output, registered) {
 		t.Errorf("init under an agent: %+v\nwant exit 0 and output ending\n%s", got, registered)
 	}
