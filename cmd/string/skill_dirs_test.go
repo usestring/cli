@@ -216,8 +216,16 @@ func TestTheSkillTeachesOnlyWhatStringHas(t *testing.T) {
 		t.Errorf("the skill has %d lines, want 150 or fewer", lines)
 	}
 	front, _, _ := strings.Cut(strings.TrimPrefix(skill, "---\n"), "\n---\n")
-	description, _ := strings.CutPrefix(front[strings.Index(front, "description:"):], "description: |\n")
-	if !strings.HasPrefix(front, "name: string-cli\n") || len(description) > 1024 {
+	// The description is the indented lines under it; allowed-tools follows.
+	description := ""
+	_, block, _ := strings.Cut(front, "description: |\n")
+	for line := range strings.Lines(block) {
+		if !strings.HasPrefix(line, "  ") {
+			break
+		}
+		description += line
+	}
+	if !strings.HasPrefix(front, "name: string-cli\n") || description == "" || len(description) > 1024 {
 		t.Errorf("the frontmatter is\n%s", front)
 	}
 

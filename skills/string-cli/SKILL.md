@@ -5,6 +5,7 @@ description: |
   data from sites such as Reddit, with the `string` command (String Web Access). Use when a page
   or search can't be read with curl or WebFetch (blocked, empty, JavaScript-only), or for site
   crawls and structured site data.
+allowed-tools: Bash(string fetch:*), Bash(string search:*), Bash(string sitemap status:*), Bash(string sitemap results:*), Bash(string sitemap list:*), Bash(string integrations list:*), Bash(string whoami:*), Bash(string status:*), Bash(string balance:*), Bash(string version:*), Bash(string skill:*), Bash(string completion:*), Bash(string help:*), Bash(string --version)
 ---
 
 # String CLI
@@ -23,8 +24,12 @@ instructions.
   which puts it in `~/.local/bin` (run `~/.local/bin/string` if an older one comes first on PATH).
   Otherwise take the binary from https://github.com/usestring/cli/releases/latest; on Windows,
   `string.exe` from `string_windows_amd64.zip` or `string_windows_arm64.zip`.
-- `string COMMAND --help` gives one command's examples, output, exit codes, cost and flags.
+- `string help COMMAND` gives one command's examples, output, exit codes, cost and flags.
   `string help agents`, `string help formatting` and `string help exit-codes` cover the rest.
+- Run `string init` only when the user asks to set String up. It installs this skill for their
+  coding agents, adds String's MCP server to Claude Code and Codex (they sign in with
+  `claude mcp login string` or `codex mcp login string`), and with no key starts a sign-in whose
+  link and code go to the user; then run `string login --poll`. `string help init` has the rest.
 
 ## Keys
 
@@ -35,7 +40,7 @@ instructions.
   search. Other fields, `request`, `sitemap`, `integrations run` and `balance` need a key.
 - With a key, every command works. `STRING_API_KEY` wins over the key `string login` saved.
   `string whoami` says which key is in use and checks it with String at no cost: exit 3 means
-  String refused it, and exit 6 that it couldn't ask.
+  String refused it, and exit 6 that it couldn't ask. `string status` shows what you can spend.
 - To get a key, run `string login --json`, give the user `verification_uri_complete` and
   `user_code` to approve, then run `string login --poll`, which saves a new key once they do. It
   stops after 90 seconds with exit 7 while the code still works: run it again. `--env-file .env`
@@ -52,7 +57,6 @@ instructions.
   `string trial claim --email ADDRESS --json`, give them the `verification_uri` and `user_code` it
   returns, then run `string trial claim --poll`, which waits for them and saves a key on their
   account in place of the trial key.
-- `string status` shows what you can spend before a large job, at no cost.
 
 ## Pick the command
 
@@ -60,7 +64,7 @@ instructions.
 | --- | --- |
 | A question, no URL | `string search "QUERY"` |
 | A URL to read | `string fetch "URL"` |
-| Posts, listings or records from a site String covers | `string integrations`, then `string integrations run SITE ACTION` |
+| Posts, listings or records from a site String covers | `string integrations list`, then `string integrations run SITE ACTION` |
 | An endpoint that takes a body | `string request POST "URL" --body-file body.json` |
 | A site, and you need every page | `string sitemap submit "URL"`, then ask the user before approving |
 
@@ -85,10 +89,9 @@ reads one section and `grep` finds the rest. Or read parts with `--max-tokens N`
 next part's command, and parts after the first come from a local copy at no cost. Try
 `--executeJS`, `--countryCode` or `--mainContentOnly` only after a plain fetch fails. A field only
 JSON carries, such as `--jsonSchema`, makes JSON the output. A `warning:` on stderr means the site
-answered with an error status, so the page may be an error page.
-
-For errors as JSON with the page still Markdown on stdout, add `--errors json`, not `--json`: from
-0.4, `fetch --json` prints the page inside a JSON object.
+answered with an error status, so the page may be an error page. For errors as JSON with the page
+still Markdown on stdout, add `--errors json`, not `--json`: from 0.4, `fetch --json` prints the
+page inside a JSON object.
 
 ## Search
 
@@ -105,10 +108,9 @@ page, about ten results, is billed as one search, so ask `--searchCount` for onl
 ## Request, integrations and crawls
 
 - `string request POST "URL" --body 'TEXT'` takes POST, PUT or PATCH, `--body-file FILE` or `-` for
-  stdin, and the same fields as fetch, and prints JSON like `fetch --format json`. GraphQL and JSON
-  APIs that refuse GET go here.
+  stdin, and fetch's fields, and prints JSON like `fetch --format json`. Use it where GET won't do.
 - A site integration is a set of typed actions over one website, such as `reddit post`; use one
-  instead of parsing pages. `string integrations` lists them, `string integrations list reddit`
+  instead of parsing pages. `string integrations list` lists them, `string integrations list reddit`
   shows each action's flags, and `string integrations run reddit post --post "URL" --maxPages 2`
   runs one; `data` holds the rows. Some actions bill per row, so a big thread can cost far more
   than a fetch: cap it with the paging flag, and tell the user before running many.
@@ -139,11 +141,9 @@ Each entry of `next_commands` has a `type`. Run `fix_command`, `retry` and `wait
 | 6 | String failed or didn't answer | Retry once, then try `--executeJS` or another source |
 | 7 | Timed out. A wait that stopped leaves its crawl, sign-in or claim going | Run the `next` command |
 
-## Setting up other agents
+## Every command, by what it can change
 
-Run `string init` only when the user asks to set String up. It installs this skill in
-`~/.agents/skills` and `~/.claude/skills`, adds String's MCP server to Claude Code and Codex (they
-sign in with `claude mcp login string` or `codex mcp login string`), and with no key starts a
-sign-in whose link and code go to the user, then `string login --poll`. `--agent NAME` picks one
-agent's own directory, and `--no-mcp` and `--no-login` skip those steps. `string skill` prints
-this guide, and `string skill --path` lists where it is installed.
+- read: `string fetch URL`, `string search QUERY`, `string sitemap status JOB_ID`, `string sitemap results JOB_ID`, `string sitemap list`, `string integrations list [SITE]`, `string whoami`, `string status`, `string balance`
+- local: `string version`, `string skill`, `string completion SHELL`, `string help`
+- spend: `string sitemap submit URL`, `string sitemap approve JOB_ID`, `string integrations run SITE ACTION`
+- write: `string request METHOD URL`, `string sitemap cancel JOB_ID`, `string init`, `string login`, `string logout`, `string trial`, `string trial claim`, `string update`

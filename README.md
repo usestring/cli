@@ -282,6 +282,8 @@ String uses them to tell people, scripts, CI and each agent apart in its own req
 
 `skills/string-cli` is an [Agent Skills](https://agentskills.io) skill that teaches a coding agent the `string` commands: keyless first, big pages to a file or in parts, exit codes and `next_commands`, and what never to spend without asking. The native binary carries it, and `string skill` prints it, so an agent can read it without installing anything.
 
+The skill's last section lists every command by what it can change: read, local (no request at all), spend or write. Its `allowed-tools` let Claude Code run the read and local ones without asking. That includes `-o FILE`, with which `fetch`, `search` and the `sitemap` reads save the response to whatever file the agent names. A command that spends, or changes a key, an install or a crawl, goes through Claude Code's usual permission check. Both come from the command table in `cmd/string/help.go`: after changing a command there, `go test ./cmd/string -run TestTheSkillListsEveryCommand -update` rewrites them.
+
 `string init` installs it in two places that between them reach almost every coding agent:
 
 - `~/.agents/skills`, which Codex, Cursor, Gemini CLI, OpenCode, GitHub Copilot, Goose, Droid and others read;
