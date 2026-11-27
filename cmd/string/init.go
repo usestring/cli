@@ -223,7 +223,8 @@ func initCommand(list []string, rt runtime) error {
 	if _, err := rt.lookPath("string"); err != nil {
 		report.WriteString("\nAgents run the skill's commands as `string`, which is not on your PATH. " + pathHint(rt) + "\n")
 	}
-	if key, err := apiKey(rt.env); err == nil && key != "" {
+	key, keyErr := apiKey(rt.env)
+	if keyErr == nil && key != "" {
 		return write(rt.stdout, []byte(report.String()))
 	}
 	// Nobody approves a sign-in in CI. A person who pipes install.sh into sh
@@ -240,6 +241,24 @@ func initCommand(list []string, rt runtime) error {
 			report.Reset()
 			err = signIn(rt, browser, "", deviceName)
 		} else {
+			// Nobody here approves a sign-in, so init first registers a trial
+			// key, which needs nobody: the agent can use it at once, and a
+			// person can claim the agent onto their account later. --browser
+			// only picks the sign-in init falls back to, while --device-name
+			// names a sign-in's key, so it asks for the sign-in instead. A key
+			// setting init could not read, a portal without trial keys, or one
+			// that refuses this one leaves the sign-in below as it was.
+			if path, ok := credentialsPath(rt.env); ok && keyErr == nil && deviceName == "" {
+				trial, err := registerTrial(rt, path)
+				if err == nil {
+					fmt.Fprintf(&report, "\n%s", trial.text(path))
+					return write(rt.stdout, []byte(report.String()))
+				}
+				if refused := asFailure(err); refused.code != "trial_unavailable" {
+					why, _, _ := strings.Cut(refused.message, "\n")
+					fmt.Fprintf(&report, "\nNo trial key: %s.\n", strings.TrimSuffix(why, "."))
+				}
+			}
 			// Nobody approves while init waits under an agent or with
 			// --no-input, so init hands back the link and code, as string
 			// login does there, and string login --poll saves the key. init

@@ -53,7 +53,7 @@ Without a key, `fetch` and `search` go to the keyless tier. Each IPv4 address, o
 
 A key lifts those limits and unlocks every option, `request` and `sitemap`. There are three ways to give the CLI one:
 
-- `string login` prints a code and, for a person at a terminal, opens String in the browser; `--no-open` stops that. Once you approve, String creates a new API key for that sign-in and the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when no key is set, unless you pass `--no-login`: a person at a terminal waits for the approval there, and under a coding agent, with `--no-input`, or when its output is captured outside CI, it prints the link and code as `string login` does there. If that sign-in doesn't finish, init still succeeds and says how to sign in later. Under a coding agent, in CI, in a pipe, or with `--no-input` or `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
+- `string login` prints a code and, for a person at a terminal, opens String in the browser; `--no-open` stops that. Once you approve, String creates a new API key for that sign-in and the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when no key is set, unless you pass `--no-login`: a person at a terminal waits for the approval there, and under a coding agent, with `--no-input`, or when its output is captured outside CI, it first registers a trial key, as `string trial` below does, where the server offers one, and otherwise prints the link and code as `string login` does there. `--browser` makes that sign-in the one `string login --browser` gives, and `--device-name`, which names a sign-in's key, asks for the sign-in instead of the trial key. If that sign-in doesn't finish, init still succeeds and says how to sign in later. Under a coding agent, in CI, in a pipe, or with `--no-input` or `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
 
   ```bash
   string login --json          # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll --json"}
@@ -294,7 +294,7 @@ An agent found on the machine that reads neither, such as Windsurf, Kiro CLI, Qw
 ```bash
 string init                            # ~/.agents/skills, ~/.claude/skills, and agents that read neither
 string init --agent claude-code,codex  # only these, each in its own directory
-string init --no-login                 # without signing in, even at a terminal
+string init --no-login                 # without signing in or a trial key, even at a terminal
 string skill                           # print the skill
 string skill --path                    # list the installed copies
 npx skills add usestring/cli           # the same skill through the skills installer
