@@ -182,14 +182,16 @@ func registerTrial(rt runtime, path string) (registeredTrial, error) {
 }
 
 // text says what the key in path can spend, how long it lasts and how long a
-// person has to claim the agent, without printing the key or the token.
+// person has to claim the agent, without printing the key or the token. It
+// ends with a fetch to run, so an agent set up with no person there checks
+// the key and has a result to report.
 func (t registeredTrial) text(path string) string {
 	lifetime := "It doesn't expire"
 	if !t.expires.IsZero() {
 		lifetime = "It works until " + t.expires.UTC().Format(time.RFC1123)
 	}
 	return fmt.Sprintf(
-		"Registered a trial key with $%s of credit. %s and is saved in %s.\nA person can claim this agent onto their String account until %s. The claim token is saved in %s.\n",
+		"Registered a trial key with $%s of credit. %s and is saved in %s.\nA person can claim this agent onto their String account until %s. The claim token is saved in %s.\nRun string fetch https://example.com to check the key.\n",
 		t.balanceUSD, lifetime, path, t.claimTokenExpires.UTC().Format(time.RFC1123), t.file)
 }
 
