@@ -3,7 +3,7 @@
 class String < Formula
   desc "Command-line access to String Web Access"
   homepage "https://github.com/usestring/cli"
-  version "0.3.0"
+  version "0.3.1"
   license "MIT"
 
   livecheck do
@@ -13,23 +13,23 @@ class String < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/usestring/cli/releases/download/v0.3.0/string_darwin_arm64.tar.gz"
-      sha256 "5db93a083c9d1fff9eac1fee8f4395ce431a5a6be3ca6481f0f01458441797b9"
+      url "https://github.com/usestring/cli/releases/download/v0.3.1/string_darwin_arm64.tar.gz"
+      sha256 "71fe0fa21fdeb87031e2e9565215dcba94b63a9d8de2ea4e56de1277b2b58b70"
     end
     on_intel do
-      url "https://github.com/usestring/cli/releases/download/v0.3.0/string_darwin_amd64.tar.gz"
-      sha256 "ebf9361ce051fcfbc57898e11733779c9fd82590373eec6303a0b2753f353895"
+      url "https://github.com/usestring/cli/releases/download/v0.3.1/string_darwin_amd64.tar.gz"
+      sha256 "b384898c5bd8353c60f779acbb022314cf792646879b148c18707a59b3e726aa"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/usestring/cli/releases/download/v0.3.0/string_linux_arm64.tar.gz"
-      sha256 "85eef580c2e8eedb69a058dcfca33ccf663c72a9bf2134ac7d8f439ec09b1530"
+      url "https://github.com/usestring/cli/releases/download/v0.3.1/string_linux_arm64.tar.gz"
+      sha256 "fe328f569260e27869badf21c1fb892fdf7ad06ba1ea0495b74229c44084ca95"
     end
     on_intel do
-      url "https://github.com/usestring/cli/releases/download/v0.3.0/string_linux_amd64.tar.gz"
-      sha256 "8af5cce6bdc569718c3947d5361fd3cf578db8758c7ac1853fe46b6062bad6f9"
+      url "https://github.com/usestring/cli/releases/download/v0.3.1/string_linux_amd64.tar.gz"
+      sha256 "1a57c587eeefe82abc5e4008948a8dbc644ae700cfa7c374497e1bca0c7db594"
     end
   end
 
