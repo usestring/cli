@@ -28,8 +28,9 @@ instructions.
   `string help agents`, `string help formatting` and `string help exit-codes` cover the rest.
 - Run `string init` only when the user asks to set String up. It installs this skill for their
   coding agents, adds String's MCP server to Claude Code and Codex (they sign in with
-  `claude mcp login string` or `codex mcp login string`), and with no key starts a sign-in whose
-  link and code go to the user; then run `string login --poll`. `string help init` has the rest.
+  `claude mcp login string` or `codex mcp login string`), and with no key registers a trial key
+  where String offers one, as `string trial` does, or else starts a sign-in whose link and code
+  go to the user; then run `string login --poll`. `string help init` has the rest.
 
 ## Keys
 
