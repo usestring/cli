@@ -73,7 +73,9 @@ type nextCommand struct {
 
 // The types of step: get a trial key, sign in, set a variable, pay, wait on
 // or resume something still going, run the same command again, run a
-// corrected command, or tell the user something only they can act on.
+// corrected command, or tell the user something only they can act on. After
+// a command that went well, a step can also read what it found, or spend,
+// which needs the user's go.
 const (
 	stepTrial = "trial"
 	stepLogin = "login"
@@ -83,6 +85,8 @@ const (
 	stepRetry = "retry"
 	stepFix   = "fix_command"
 	stepTell  = "tell_user"
+	stepRead  = "read"
+	stepSpend = "spend"
 )
 
 // backticked finds the commands that a next step names in backticks.

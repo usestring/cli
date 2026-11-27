@@ -62,8 +62,8 @@ func TestErrorsSayTheirExitCodeAndTheStepsOutOfThem(t *testing.T) {
 			[]nextCommand{{Type: stepRetry, Why: "run the same command again"}}},
 		{"one String says not to retry", "test-key", []string{"search", "coffee", "--json"}, answer(503, "", `{"error":"Unavailable","retryable":false}`), exitUpstream, false, false, []nextCommand{}},
 		{"a bad request", "test-key", []string{"search", "coffee", "--json"}, answer(400, "", `{"error":"bad query"}`), exitUsage, false, false, []nextCommand{}},
-		{"a crawl that waits for approval", "test-key", []string{"sitemap", "status", "job-1", "--wait", "--json"}, answer(200, "", `{"jobId":"job-1","status":"awaiting_approval"}`), exitUsage, false, true,
-			[]nextCommand{{Type: stepFix, Command: "string sitemap approve job-1 --wait --json", Argv: []string{"string", "sitemap", "approve", "job-1", "--wait", "--json"}, Why: "starts the crawl at its quoted cost, which needs the user's go"}}},
+		{"a crawl that waits for approval", "test-key", []string{"sitemap", "status", "job-1", "--wait", "--json"}, answer(200, "", `{"jobId":"job-1","status":"awaiting_approval","estimatedCostUsd":"1.05"}`), exitUsage, false, true,
+			[]nextCommand{{Type: stepSpend, Command: "string sitemap approve job-1 --wait --json", Argv: []string{"string", "sitemap", "approve", "job-1", "--wait", "--json"}, Why: "starts the crawl at its quoted cost, up to $1.05, which needs the user's go"}}},
 	} {
 		base := api(t, c.handler)
 		got, envelope := runWith(t, http.DefaultClient, map[string]string{"STRING_API_KEY": c.key, "STRING_API_BASE_URL": base}, c.list...)

@@ -56,7 +56,7 @@ A key lifts those limits and unlocks every option, `request` and `sitemap`. Ther
 - `string login` prints a code and, for a person at a terminal, opens String in the browser; `--no-open` stops that. Once you approve, String creates a new API key for that sign-in and the CLI saves it in `~/.config/string/credentials.json` (under `$XDG_CONFIG_HOME` when that is set), readable only by you. `string init` runs it for you when no key is set, unless you pass `--no-login`: a person at a terminal waits for the approval there, and under a coding agent, with `--no-input`, or when its output is captured outside CI, it first registers a trial key, as `string trial` below does, where the server offers one, and otherwise prints the link and code as `string login` does there. `--browser` makes that sign-in the one `string login --browser` gives, and `--device-name`, which names a sign-in's key, asks for the sign-in instead of the trial key. If that sign-in doesn't finish, init still succeeds and says how to sign in later. Under a coding agent, in CI, in a pipe, or with `--no-input` or `--no-wait`, `string login` prints the link and code and exits at once; `string login --poll` then waits for the approval and saves the key. Add `--json` to get both as JSON:
 
   ```bash
-  string login --json          # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll --json"}
+  string login --json          # {"verification_uri_complete":"…","user_code":"…","expires_in":600,"interval":5,"next":"string login --poll --json","next_commands":[{"type":"wait","command":"string login --poll --json",…}]}
   string login --poll --json   # after the person approves
   ```
 
@@ -142,6 +142,19 @@ A bare domain works too: `string example.com` fetches `https://example.com`. Whe
 
 `--input FILE` reads more fields from a JSON object, or `--input -` from stdin, and flags win over it. The command's URL, query and method win over both.
 
+`--fields` keeps only the fields it names of the JSON a command prints, so an agent reads only what it needs. Where the JSON holds a list of records, the names apply to each record and the rest of the answer stays as it came. The lists are search's `results` (or `images`, `places` or `products` for those search types), a crawl's `urls`, `sitemap list`'s `jobs`, and the `sites` and `data` of integrations. Elsewhere the names apply to the object itself, and a dotted name reaches inside one:
+
+```bash
+string search "postgres vacuum tuning" --fields title,url
+# {"results":[{"title":"…","url":"…"},…],"zeroResults":false}
+string sitemap status JOB_ID --fields status,pagesProcessed
+string integrations run reddit post --post URL --fields title,comments.score
+```
+
+`string search QUERY --limit N` prints only the first N results. `string` cuts them once the answer comes, so `--limit` works without a key and costs nothing; `--searchCount` and `--page` still decide what the API returns and bills.
+
+`string help --json` names each command's list in `returns.records`. A name that no record has is left out, and stderr warns about it. When none of the names is there, the command prints nothing, exits 2 and lists the fields there are. A command that spends or writes, such as `integrations run`, has done so by then, so it prints its answer whole instead and says so on stderr: there is no need to run it again. `--fields` needs JSON on stdout, so before anything is sent it refuses a command that would print text: `fetch` needs `--format json`, and `status` or `login` need `--json`. Help is printed as it is.
+
 A sitemap crawl starts with a quote, which costs nothing. `--approve` starts the crawl at the quoted cost, and `--wait` waits for it to finish:
 
 ```bash
@@ -158,6 +171,10 @@ string sitemap status JOB_ID
 string sitemap list
 string sitemap cancel JOB_ID
 ```
+
+`--all` prints every record of every page from `--offset` on, one JSON object a line, so `string sitemap results JOB_ID --all --fields url,statusCode` lists a whole crawl. When a page after the first fails, the error gives the `--offset` that reads on from it. With `-o FILE`, the file is written once every page is read.
+
+A sitemap answer's JSON ends with `next_commands` when a step carries the crawl on, and stderr names the first after `next:`. A quote's step approves it, of type `spend`, so it needs the user's go. A running crawl's step waits for it, and a finished one's reads its pages. A page of `results` or `list` with more after it leads to the next page, or, when it was saved with `-o FILE`, to `--all -o FILE`, which writes FILE again with every record from that page on, one JSON object a line.
 
 `--wait` first prints the job and the command that resumes the wait to stderr:
 
@@ -208,11 +225,15 @@ Add `--json` to any command to get the error as one JSON object on stderr instea
 | --- | --- |
 | `fix_command` | run the corrected `command` |
 | `wait` | run `command` to pick up a crawl, sign-in or claim that keeps going |
+| `read` | run `command` to read on: the next page, or the pages a crawl found |
 | `retry` | run the same command again, as `why` says |
 | `login`, `trial` | get a key with `command` |
 | `env` | set the variable `why` names |
 | `pay` | pay for the call |
+| `spend` | ask the user, then run `command`, which costs money, as `why` says |
 | `tell_user` | tell the person what `why` says |
+
+A command that goes well can end its JSON with `next_commands` too: a crawl's answer (see [sitemap crawls](#commands)), and the link that `login --json` and `trial claim --json` print, whose `wait` step is `--poll`.
 
 `reason`, when there is one, is finer than `code`: a request that got no answer says `dns`, `connect`, `tls` or, inside a sandbox that blocks the network, `sandbox`. When the API sends `code`, `retryable` or `next_actions`, they are passed through.
 

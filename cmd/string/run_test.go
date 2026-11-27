@@ -199,7 +199,7 @@ func TestSitemapApproveAndWaitFollowTheCrawlToItsEnd(t *testing.T) {
 	if want := []string{"POST /v1/sitemap", "POST /v1/sitemap/job-1/approve", "GET /v1/sitemap/job-1", "GET /v1/sitemap/job-1"}; !reflect.DeepEqual(calls, want) {
 		t.Errorf("calls %v, want %v", calls, want)
 	}
-	expectJSON(t, stdout.String(), `{"jobId":"job-1","status":"completed","pagesProcessed":3}`)
+	expectJSON(t, stdout.String(), `{"jobId":"job-1","status":"completed","pagesProcessed":3,"next_commands":[{"type":"read","command":"string sitemap results job-1 --limit 100","argv":["string","sitemap","results","job-1","--limit","100"],"why":"lists the first 100 pages it crawled"}]}`)
 	if !strings.Contains(stderr.String(), "Crawling: 1 pages done, 2 queued") {
 		t.Errorf("progress %q", stderr.String())
 	}

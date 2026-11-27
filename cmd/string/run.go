@@ -71,6 +71,9 @@ type runtime struct {
 	// switches are the global switches as given, such as --json, which a
 	// command string suggests repeats.
 	switches []string
+	// fields is --fields when it was given, which stands in for stdout and
+	// keeps only the fields it names of the JSON printed there.
+	fields *fieldFilter
 }
 
 func (rt runtime) binary() (string, error) {
@@ -139,6 +142,17 @@ type operation struct {
 	// contentType is the answer's Content-Type, the site's own for --format
 	// raw.
 	contentType string
+	// records is the key of the list in the answer that holds its records,
+	// such as search's results, and limit is search's --limit: how many of
+	// them to print, or 0 for all.
+	records string
+	limit   int
+	// all is sitemap's --all: every record of the list, page by page from
+	// start, its --offset. pageSize is how many records a page of results or
+	// list holds: --limit, or the API's own.
+	all      bool
+	start    int
+	pageSize int
 }
 
 // args is a parsed command line. Every command takes --help and --input;
@@ -789,12 +803,16 @@ func requestCommand(list []string, stdin io.Reader) (*operation, error) {
 // lists with each field.
 var searchAliases = map[string]string{"count": "searchCount"}
 
+// searchRecords are the lists that search's answer holds its records in for
+// each searchType that doesn't answer in results.
+var searchRecords = map[string]string{"images": "images", "places": "places", "shopping": "products"}
+
 func searchCommand(list []string, stdin io.Reader) (*operation, error) {
-	parsed, err := parse(list, spec{options: []string{"output"}, fields: searchFields, aliases: searchAliases})
+	parsed, err := parse(list, spec{options: []string{"output", "limit"}, fields: searchFields, aliases: searchAliases})
 	if err != nil || parsed.help {
 		return nil, err
 	}
-	if err := expectPositionals(parsed.positionals, 1, "string search QUERY [--FIELD VALUE ...] [--input FILE] [--output FILE]"); err != nil {
+	if err := expectPositionals(parsed.positionals, 1, "string search QUERY [--FIELD VALUE ...] [--limit N] [--input FILE] [--output FILE]"); err != nil {
 		return nil, err
 	}
 	body, err := requestFields(parsed, stdin)
@@ -802,7 +820,21 @@ func searchCommand(list []string, stdin io.Reader) (*operation, error) {
 		return nil, err
 	}
 	body["query"] = parsed.positionals[0]
-	return &operation{method: "POST", path: "/search", body: body, output: parsed.values["output"], flagged: flagged(parsed)}, nil
+	op := &operation{method: "POST", path: "/search", body: body, output: parsed.values["output"], flagged: flagged(parsed),
+		records: cmp.Or(searchRecords[jsString(field(body, "searchType"))], "results")}
+	// --limit cuts the results here, after the API answers: it sends nothing,
+	// so it works without a key and costs nothing.
+	if limit, ok := parsed.value("limit"); ok {
+		n, err := boundedInteger(limit, "--limit", 1, "positive")
+		if err != nil {
+			return nil, err
+		}
+		if jsString(field(body, "format")) == "raw" {
+			return nil, errors.New("--limit cuts the results, and --format raw prints the results page as HTML; use one or the other")
+		}
+		op.limit = int(n)
+	}
+	return op, nil
 }
 
 func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
@@ -810,14 +842,17 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 		return nil, nil
 	}
 	action := list[0]
-	parsed, err := parse(list[1:], spec{options: []string{"limit", "offset", "output"}, switches: []string{"approve", "wait"}, fields: sitemapFields})
+	parsed, err := parse(list[1:], spec{options: []string{"limit", "offset", "output"}, switches: []string{"approve", "wait", "all"}, fields: sitemapFields})
 	if err != nil || parsed.help {
 		return nil, err
 	}
 	limit, hasLimit := parsed.value("limit")
 	offset, hasOffset := parsed.value("offset")
-	approve, wait := parsed.switches["approve"], parsed.switches["wait"]
+	approve, wait, all := parsed.switches["approve"], parsed.switches["wait"], parsed.switches["all"]
 	errPaging := errors.New("--limit and --offset apply to list or results")
+	if all && action != "results" && action != "list" {
+		return nil, errors.New("--all applies to sitemap results or list")
+	}
 	if action != "submit" {
 		if fields := flagged(parsed); len(fields) > 0 {
 			return nil, fmt.Errorf("--%s applies only to sitemap submit", fields[0])
@@ -877,6 +912,13 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 		}
 		return &operation{method: methods[action], path: path, output: output, wait: wait, job: parsed.positionals[0], changes: action != "status"}, nil
 	case "results", "list":
+		if all && hasLimit {
+			return nil, errors.New("--all reads every page, and --limit one page of N; use one or the other")
+		}
+		op := &operation{method: "GET", path: "/sitemap" + id, output: output, records: "jobs", all: all, pageSize: 20}
+		if action == "results" {
+			op.path, op.records, op.pageSize = op.path+"/urls", "urls", 1000
+		}
 		var query []string
 		if hasLimit {
 			n, err := boundedInteger(limit, "--limit", 1, "positive")
@@ -884,6 +926,7 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 				return nil, err
 			}
 			query = append(query, "limit="+strconv.FormatInt(n, 10))
+			op.pageSize = int(n)
 		}
 		if hasOffset {
 			n, err := boundedInteger(offset, "--offset", 0, "nonnegative")
@@ -891,15 +934,13 @@ func sitemapCommand(list []string, stdin io.Reader) (*operation, error) {
 				return nil, err
 			}
 			query = append(query, "offset="+strconv.FormatInt(n, 10))
+			op.start = int(n)
 		}
-		path := "/sitemap" + id
-		if action == "results" {
-			path += "/urls"
+		// --all asks for each page itself.
+		if len(query) > 0 && !all {
+			op.path += "?" + strings.Join(query, "&")
 		}
-		if len(query) > 0 {
-			path += "?" + strings.Join(query, "&")
-		}
-		return &operation{method: "GET", path: path, output: output}, nil
+		return op, nil
 	}
 	return nil, fmt.Errorf("Unknown sitemap command: %s", action)
 }
@@ -966,6 +1007,8 @@ type globalSwitches struct {
 	hasTimeout bool   // --timeout
 	timeout    string // --timeout's value
 	errors     string // --errors's value: json or text
+	hasFields  bool   // --fields
+	fields     string // --fields's value
 	quiet      bool   // -q or --quiet
 	// given are the switches as they were given, in order, which a command
 	// string suggests repeats.
@@ -979,7 +1022,7 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 	kept := make([]string, 0, len(list))
 	for i := 0; i < len(list); i++ {
 		arg, from := list[i], i
-		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout", "--errors", "--quiet"}); ok {
+		if global, ok := flagNamed(arg, []string{"--json", "--no-open", "--no-input", "--yes", "--timeout", "--errors", "--fields", "--quiet"}); ok {
 			arg = global
 		}
 		switch {
@@ -1015,6 +1058,15 @@ func takeGlobalSwitches(list []string) ([]string, globalSwitches) {
 			}
 		case strings.HasPrefix(arg, "--errors="):
 			found.errors = strings.TrimPrefix(arg, "--errors=")
+		case arg == "--fields":
+			// Its value always follows, as --timeout's does.
+			found.hasFields, found.fields = true, ""
+			if i+1 < len(list) {
+				i++
+				found.fields = list[i]
+			}
+		case strings.HasPrefix(arg, "--fields="):
+			found.hasFields, found.fields = true, strings.TrimPrefix(arg, "--fields=")
 		default:
 			kept = append(kept, arg)
 			continue
@@ -1037,8 +1089,8 @@ func withSwitches(list, switches []string) []string {
 
 // suggested is the command string for args with the global switches given,
 // put back as withSwitches puts them: a command that carries this one on,
-// such as login --poll after login --no-wait, so that it runs as this one
-// did.
+// such as sitemap status JOB --wait after a wait stops, so that it runs as
+// this one did. One that prints other JSON takes carried's switches instead.
 func (rt runtime) suggested(args ...string) string {
 	return commandLine(withSwitches(args, rt.switches))
 }
@@ -1068,10 +1120,28 @@ func run(list []string, rt runtime) int {
 		}
 		rt.timeout = &limit
 	}
-	if err := execute(list, rt); err != nil {
+	if global.hasFields {
+		paths, err := parseFields(global.fields)
+		if err != nil {
+			return report(rt.stderr, usage(err), jsonErrors)
+		}
+		rt.fields = newFieldFilter(paths, rt.stdout)
+		rt.stdout = rt.fields
+	}
+	err := execute(list, rt)
+	if err == nil && rt.fields != nil {
+		err = rt.fields.end(rt.stderr, rt.quiet)
+	}
+	if err != nil {
 		return report(rt.stderr, err, jsonErrors)
 	}
 	return 0
+}
+
+// asksHelp says that list asks for help, which --fields leaves as it is
+// unless --json makes it JSON.
+func asksHelp(list []string) bool {
+	return len(list) == 0 || slices.Contains([]string{"", "--help", "help"}, list[0]) || slices.Contains(beforeDashes(list), "--help")
 }
 
 func execute(list []string, rt runtime) error {
@@ -1079,6 +1149,11 @@ func execute(list []string, rt runtime) error {
 	// --help before a command asks for that command's help.
 	if len(list) > 1 && list[0] == "--help" && !strings.HasPrefix(list[1], "-") {
 		list = append(slices.Clone(list[1:]), "--help")
+	}
+	if rt.fields != nil && !asksHelp(list) {
+		if err := rt.fields.allows(list, rt); err != nil {
+			return err
+		}
 	}
 	if len(list) == 0 || slices.Contains([]string{"", "--help"}, list[0]) {
 		if rt.json {
@@ -1152,6 +1227,11 @@ func execute(list []string, rt runtime) error {
 		return write(rt.stdout, []byte(helpFor(list[0])))
 	}
 	op.command, op.line = list[0], withSwitches(list, rt.switches)
+	if rt.fields != nil {
+		if err := rt.fields.allowsOp(op); err != nil {
+			return err
+		}
+	}
 	if op.output != "" && op.output != "-" {
 		if err := checkOutput(op.output); err != nil {
 			return err
@@ -1177,6 +1257,9 @@ func execute(list []string, rt runtime) error {
 		return usage(err)
 	}
 	caller := apiClient{rt: rt, base: base, key: key}
+	if op.all {
+		return caller.everyPage(op)
+	}
 	started := rt.clock()
 	// The parts of a page after the first come from the local copy the first
 	// part saved, so reading a long page in parts spends one fetch.
@@ -1198,8 +1281,18 @@ func execute(list []string, rt runtime) error {
 			return ended
 		}
 	}
+	// What a crawl's answer leads to ends its JSON, and stderr says the first.
+	// A wait that failed has its own steps, in its error.
+	var next []nextCommand
+	if op.command == "sitemap" && ended == nil {
+		next = sitemapNext(op, data, rt.switches)
+		data = withNext(data, next)
+	}
 	if err := caller.emit(op, data); err != nil {
 		return err
+	}
+	if len(next) > 0 && !rt.quiet {
+		fmt.Fprint(rt.stderr, nextLine(next))
 	}
 	return ended
 }
@@ -1300,6 +1393,23 @@ func (c apiClient) emit(op *operation, data []byte) error {
 		fmt.Fprint(c.rt.stderr, pageFooter(op.line, len(whole), op.maxTokens, start, end, next, op.fromCopy))
 		return nil
 	}
+	if op.limit > 0 {
+		data = firstRecords(data, op.records, op.limit)
+	}
+	// --fields keeps only the fields it names, so a size or a saved file is
+	// that of what it keeps. When none of them is there, the answer of a
+	// command that changed something stays whole.
+	stdout := c.rt.stdout
+	if f := c.rt.fields; f != nil && json.Valid(data) {
+		chosen := append(f.choose(data), '\n')
+		stdout = f.out
+		switch {
+		case !f.missedAll():
+			data = chosen
+		case !f.changes:
+			return f.missed()
+		}
+	}
 	if person {
 		data = []byte(forTerminal(string(data)))
 	}
@@ -1309,7 +1419,7 @@ func (c apiClient) emit(op *operation, data []byte) error {
 		if fetched && len(data) > largeBody && !c.rt.quiet && !(c.rt.exec.stdoutTTY && c.rt.exec.agent == "") {
 			fmt.Fprint(c.rt.stderr, sizeNotice(c.rt, jsString(op.body["url"]), len(data), op.line))
 		}
-		return write(c.rt.stdout, data)
+		return write(stdout, data)
 	}
 	if err := os.WriteFile(op.output, data, 0o644); err != nil {
 		return err
@@ -1419,10 +1529,8 @@ func (c apiClient) followCrawl(op *operation, data []byte, started time.Time) ([
 		case "canceled":
 			return status, &failure{exit: exitFailure, code: "crawl_canceled", message: "The crawl was canceled."}
 		case "awaiting_approval":
-			approve := withSwitches([]string{"sitemap", "approve", job, "--wait"}, c.rt.switches)
-			line := commandLine(approve)
-			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `" + line + "`",
-				next: []nextCommand{{Type: stepFix, Command: line, Argv: append([]string{"string"}, approve...), Why: "starts the crawl at its quoted cost, which needs the user's go"}}}
+			approve := approveStep(job, string(quote.Cost), c.rt.switches)
+			return status, &failure{exit: exitUsage, code: "awaiting_approval", message: "The crawl is waiting for approval.", nextStep: "run `" + approve.Command + "`", next: []nextCommand{approve}}
 		case "running":
 		default:
 			// Waiting on a status string doesn't know could last forever.

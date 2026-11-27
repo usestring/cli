@@ -306,6 +306,9 @@ func loadTrialRegistration(env func(string) (string, bool)) (string, trialRegist
 // startClaim asks the portal for a code that the person at email enters on its
 // claim page, shows them both, and records the claim for --poll.
 func startClaim(rt runtime, registrationFile string, registration trialRegistration, email string, wait bool) (trialRegistration, error) {
+	// The poll prints the key it collects, not a claim's link, so it leaves
+	// out --fields: see carried.
+	poll := nextStep(stepWait, withSwitches([]string{"trial", "claim", "--poll"}, carried(rt.switches)), "saves a key on their account once they enter the code")
 	var answer struct {
 		portalRefusal
 		ClaimAttempt struct {
@@ -325,7 +328,7 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 	if status != http.StatusOK {
 		f := trialFailure(status, answer.portalRefusal, "Starting the claim")
 		if answer.Error == "claimed_or_in_flight" {
-			f.nextStep = "run `" + rt.suggested("trial", "claim", "--poll") + "` to collect the key"
+			f.nextStep = "run `" + poll.Command + "` to collect the key"
 		}
 		return registration, f
 	}
@@ -349,7 +352,6 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 	}
 	// The person may be anywhere, so the link is shown rather than opened here.
 	var shown string
-	poll := rt.suggested("trial", "claim", "--poll")
 	if rt.json {
 		data, _ := json.Marshal(map[string]any{
 			"email":            email,
@@ -357,13 +359,14 @@ func startClaim(rt runtime, registrationFile string, registration trialRegistrat
 			"user_code":        attempt.UserCode,
 			"expires_in":       attempt.ExpiresIn,
 			"interval":         attempt.Interval,
-			"next":             poll,
+			"next":             poll.Command,
+			"next_commands":    []nextCommand{poll},
 		})
 		shown = string(data) + "\n"
 	} else {
 		shown = fmt.Sprintf("Ask %[1]s to open %[2]s, sign in to String as %[1]s and enter the code %[3]s.\n", email, attempt.VerificationURI, attempt.UserCode)
 		if !wait {
-			shown += fmt.Sprintf("Then run %s to collect the key. The code expires in %d minutes.\n", poll, attempt.ExpiresIn/60)
+			shown += fmt.Sprintf("Then run %s to collect the key. The code expires in %d minutes.\n", poll.Command, attempt.ExpiresIn/60)
 		}
 	}
 	return registration, write(rt.stdout, []byte(shown))

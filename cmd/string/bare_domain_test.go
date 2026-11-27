@@ -34,7 +34,7 @@ func TestABareDomainIsFetchedOverHTTPS(t *testing.T) {
 		{[]string{"fetch", "localhost:8080/health"}, "/v1/fetch", "https://localhost:8080/health", "localhost:8080/health names no scheme, so string uses https://localhost:8080/health\n"},
 		{[]string{"HTTPS://Example.com/Path"}, "/v1/fetch", "https://example.com/Path", ""},
 		{[]string{"request", "POST", "api.example.com/orders", "--body", "{}"}, "/v1/fetch", "https://api.example.com/orders", "api.example.com/orders names no scheme, so string uses https://api.example.com/orders\n"},
-		{[]string{"sitemap", "submit", "docs.example.com"}, "/v1/sitemap", "https://docs.example.com/", "docs.example.com names no scheme, so string uses https://docs.example.com/\n"},
+		{[]string{"sitemap", "submit", "docs.example.com"}, "/v1/sitemap", "https://docs.example.com/", "docs.example.com names no scheme, so string uses https://docs.example.com/\nnext, with the user's go: string sitemap approve job-1 --wait\n"},
 	} {
 		mu.Lock()
 		bodies = nil

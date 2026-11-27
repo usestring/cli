@@ -98,7 +98,8 @@ func TestLoginBrowserSavesTheKeyOnceThePersonAuthorizes(t *testing.T) {
 	started := session.run("login", "--browser", "--json")
 	shown := decode(t, started.output).(map[string]any)
 	link = browserLink(t, started.output, service.checks())
-	if want := map[string]any{"verification_uri_complete": link, "expires_in": 900.0, "interval": 3.0, "next": "string login --poll --json"}; started.status != 0 || !reflect.DeepEqual(shown, want) {
+	poll := map[string]any{"type": "wait", "command": "string login --poll --json", "argv": []any{"string", "login", "--poll", "--json"}, "why": "saves the key once the user signs in at the link"}
+	if want := map[string]any{"verification_uri_complete": link, "expires_in": 900.0, "interval": 3.0, "next": "string login --poll --json", "next_commands": []any{poll}}; started.status != 0 || !reflect.DeepEqual(shown, want) {
 		t.Errorf("login --browser --json: %+v, want %v", started, want)
 	}
 	var pending pendingLogin

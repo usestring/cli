@@ -97,7 +97,7 @@ page inside a JSON object.
 
 ```bash
 string search "QUERY"
-string search "QUERY" --searchCount 30 | jq -r '.results[] | "\(.title)\t\(.url)"'
+string search "QUERY" --searchCount 30 --fields title,url   # each result's title and url
 ```
 
 The JSON has `results` (each with `title`, `url`, `snippet`), `entity`, `places` and
@@ -118,7 +118,7 @@ page, about ten results, is billed as one search, so ask `--searchCount` for onl
   `estimatedPages`) and charges nothing. Show the user the quote and get their approval before
   `string sitemap approve JOB_ID --wait`, which starts the crawl and the charge; `submit --approve`
   skips the quote, so use it only when they already agreed to the spend. Then read
-  `string sitemap results JOB_ID --limit 100 --offset 0`.
+  `string sitemap results JOB_ID --limit 100`, or every page with `--all -o urls.ndjson`.
 - `--wait` first prints the command that resumes it. Under an agent it stops after 90 seconds with
   exit 7 and the crawl keeps running: run the `next` command. A `409` with `partial_state` from
   `approve` or `status` means the approval didn't complete: run the approve command again.
@@ -128,8 +128,8 @@ page, about ten results, is billed as one search, so ask `--searchCount` for onl
 stderr ends with `error: …` and a `next:` line naming the step to take. With `--json`, or
 `--errors json`, the error is one JSON object, the last line of stderr:
 `{"error":{"code","message","exit_code","retryable","user_action_required","next_commands",…}}`.
-Each entry of `next_commands` has a `type`. Run `fix_command`, `retry` and `wait` steps yourself;
-`login`, `trial` and `env` steps follow the key rules above; `tell_user` and `pay` go to the user.
+Each entry of `next_commands` has a `type`. Run `fix_command`, `retry`, `wait` and `read` yourself;
+`login`, `trial` and `env` follow the key rules above; `spend`, `tell_user` and `pay` go to the user.
 
 | Exit | Meaning | What to do |
 | --- | --- | --- |
